@@ -22,7 +22,7 @@ pub fn target(name: &str, arguments: &Value) -> String {
         }
         "element_update" => "element".into(),
         "deck_inspect" | "deck_validate" | "deck_advanced" => "deck".into(),
-        "render_deck" => "preview render".into(),
+        "render_deck" => "preview".into(),
         "set_active_slide" => numbered("slide", arguments, "index"),
         "list_dir" => path_target(arguments, "folder"),
         "read_file" | "write_file" | "edit_file" => path_target(arguments, "file"),

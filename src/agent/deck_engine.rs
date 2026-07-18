@@ -1,4 +1,6 @@
 //! Transactional adapter around the non-`Sync` OfficeCli PowerPoint handler.
+
+use super::inspection_geometry;
 use anyhow::{anyhow, bail, Context, Result};
 use handler_common::{
     output_format::{RawOptions, ViewOptions},
@@ -98,6 +100,11 @@ impl DeckEngine {
         self.generation.load(Ordering::Acquire)
     }
 
+    /// Advance render correlation after the deck watcher observes a content change.
+    pub fn record_file_change(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     pub async fn create(path: impl AsRef<Path>, template: Option<&Path>) -> Result<Self> {
         let engine = Self::new(path)?;
         let _guard = engine.lock.lock().await;
@@ -176,10 +183,13 @@ impl DeckEngine {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
             let handler = open(&path, false)?;
-            match path_query {
-                Some(p) => Ok(serde_json::to_value(handler.get(&p, 4)?)?),
-                None => handler.view_as_outline_json().map_err(Into::into),
-            }
+            let mut inspected = match path_query {
+                Some(p) => serde_json::to_value(handler.get(&p, 4)?)?,
+                None => handler.view_as_outline_json()?,
+            };
+            let html = handler.view_as_html(ViewOptions::default())?;
+            inspection_geometry::enrich(&mut inspected, &html);
+            Ok(inspected)
         })
         .await?
     }
@@ -894,3 +904,7 @@ mod tests {
         assert_eq!(before, std::fs::read(&p).unwrap());
     }
 }
+
+#[cfg(test)]
+#[path = "deck_engine_inspection_tests.rs"]
+mod inspection_tests;
