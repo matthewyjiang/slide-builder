@@ -118,6 +118,83 @@ fn failed_decode_is_reported_for_the_requested_size() {
 }
 
 #[test]
+fn reactivating_a_rendered_kitty_slide_swaps_in_a_preencoded_protocol() {
+    let directory = tempfile::tempdir().unwrap();
+    let paths: Vec<_> = (1..=2)
+        .map(|index| directory.path().join(format!("slide-{index}.png")))
+        .collect();
+    for path in &paths {
+        write_test_image(path);
+    }
+    let cells = Size::new(40, 20);
+    let first_key = CacheKey {
+        path: paths[0].clone(),
+        cells,
+    };
+    let second_key = CacheKey {
+        path: paths[1].clone(),
+        cells,
+    };
+    let mut preview = PreviewImage::detect_with_budget("kitty", 64);
+    preview.preload_deck(paths.clone());
+    preview.warm_for_sizes(&paths[0], &[cells]);
+    wait_until_idle(&mut preview);
+
+    preview.activate(&first_key);
+    assert!(preview.protocols.contains_key(&first_key));
+    preview.protocols.get_mut(&first_key).unwrap().rendered = true;
+    preview.activate(&second_key);
+    preview.activate(&first_key);
+
+    assert!(preview.protocols.contains_key(&first_key));
+    assert!(preview.protocols[&first_key].standby.is_none());
+    assert!(preview.pending.contains(&first_key));
+    assert!(preview.protocols.contains_key(&second_key));
+
+    wait_until_idle(&mut preview);
+    assert!(preview.protocols.contains_key(&first_key));
+    assert!(preview.protocols[&first_key].standby.is_some());
+
+    preview.protocols.get_mut(&first_key).unwrap().rendered = true;
+    preview.activate(&second_key);
+    preview.activate(&first_key);
+    assert!(preview.protocols.contains_key(&first_key));
+    assert!(preview.pending.contains(&first_key));
+}
+
+#[test]
+fn reactivating_a_halfblocks_slide_reuses_its_cached_protocol() {
+    let directory = tempfile::tempdir().unwrap();
+    let paths: Vec<_> = (1..=2)
+        .map(|index| directory.path().join(format!("slide-{index}.png")))
+        .collect();
+    for path in &paths {
+        write_test_image(path);
+    }
+    let cells = Size::new(40, 20);
+    let first_key = CacheKey {
+        path: paths[0].clone(),
+        cells,
+    };
+    let second_key = CacheKey {
+        path: paths[1].clone(),
+        cells,
+    };
+    let mut preview = PreviewImage::detect_with_budget("halfblocks", 32);
+    preview.preload_deck(paths.clone());
+    preview.warm_for_sizes(&paths[0], &[cells]);
+    wait_until_idle(&mut preview);
+
+    preview.activate(&first_key);
+    preview.protocols.get_mut(&first_key).unwrap().rendered = true;
+    preview.activate(&second_key);
+    preview.activate(&first_key);
+
+    assert!(preview.protocols.contains_key(&first_key));
+    assert!(preview.attempted.contains(&first_key));
+}
+
+#[test]
 fn terminal_protocol_cache_is_memory_bounded() {
     let directory = tempfile::tempdir().unwrap();
     let paths: Vec<_> = (1..=3)
