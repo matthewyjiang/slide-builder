@@ -228,7 +228,7 @@ pub fn render(frame: &mut Frame<'_>, state: &FileSystemPickerState) {
                 file_name(&entry.path)
             };
             ListItem::new(Span::raw(format!("  {name}"))).style(if index == state.selected {
-                Style::default().bg(theme::ACCENT_SOFT).fg(theme::TEXT)
+                theme::accent_block()
             } else {
                 Style::default().fg(theme::TEXT)
             })

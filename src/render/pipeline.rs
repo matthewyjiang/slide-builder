@@ -402,10 +402,7 @@ fn strip_active_content(source: &str) -> (String, bool) {
     for tag in [
         "script", "iframe", "frame", "object", "embed", "applet", "form",
     ] {
-        loop {
-            let Some(start) = find_ascii_case_insensitive(&value, &format!("<{tag}")) else {
-                break;
-            };
+        while let Some(start) = find_ascii_case_insensitive(&value, &format!("<{tag}")) {
             let close = format!("</{tag}>");
             let end = find_ascii_case_insensitive(&value[start..], &close)
                 .map(|p| start + p + close.len())
@@ -419,10 +416,7 @@ fn strip_active_content(source: &str) -> (String, bool) {
 }
 fn strip_void_tag(source: &str, tag: &str) -> String {
     let mut value = source.to_owned();
-    loop {
-        let Some(start) = find_ascii_case_insensitive(&value, &format!("<{tag}")) else {
-            break;
-        };
+    while let Some(start) = find_ascii_case_insensitive(&value, &format!("<{tag}")) {
         let end = value[start..]
             .find('>')
             .map(|x| start + x + 1)
