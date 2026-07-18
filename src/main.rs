@@ -475,6 +475,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
             format!("{}/{}", config.provider, config.model)
         },
         mode: format!("{:?}", config.permission_mode).to_lowercase(),
+        config: config.clone(),
         ..App::default()
     };
     app.transcript
@@ -548,6 +549,37 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             ));
                         }
                     },
+                    AppAction::SaveConfiguration(next) => {
+                        let next = *next;
+                        let restart_required = next != config;
+                        match next.save() {
+                            Ok(()) => {
+                                config = next;
+                                app.config = config.clone();
+                                app.transcript.push(slide_builder::tui::TranscriptItem::Message(
+                                    slide_builder::tui::Message {
+                                        role: slide_builder::tui::Role::System,
+                                        text: if restart_required {
+                                            "Configuration saved. Restart slide-builder to apply the changes."
+                                                .into()
+                                        } else {
+                                            "Configuration saved.".into()
+                                        },
+                                        complete: true,
+                                    },
+                                ));
+                            }
+                            Err(error) => app.transcript.push(
+                                slide_builder::tui::TranscriptItem::Message(
+                                    slide_builder::tui::Message {
+                                        role: slide_builder::tui::Role::System,
+                                        text: format!("Could not save configuration: {error:#}"),
+                                        complete: true,
+                                    },
+                                ),
+                            ),
+                        }
+                    }
                     AppAction::RespondApproval { id, decision } => {
                         if let Some(mut pending) = pending_approvals
                             .lock()

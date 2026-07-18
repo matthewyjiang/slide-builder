@@ -4,7 +4,12 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::event::{AgentEvent, AppAction, AppEvent, ApprovalDecision, RenderManifest};
-use super::modal::ModalState;
+use super::modal::{
+    exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
+    CommandPaletteState, ConfigurationEvent, ConfigurationState, ModalState, SlashCommand,
+    SlashCommandAction,
+};
+use crate::config::Config;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Focus {
@@ -18,9 +23,9 @@ pub enum Focus {
 impl Focus {
     pub fn next(self) -> Self {
         match self {
-            Self::Chat => Self::Outline,
-            Self::Outline => Self::Preview,
-            Self::Preview => Self::Input,
+            Self::Chat => Self::Preview,
+            Self::Preview => Self::Outline,
+            Self::Outline => Self::Input,
             Self::Input => Self::Chat,
         }
     }
@@ -28,9 +33,9 @@ impl Focus {
     pub fn previous(self) -> Self {
         match self {
             Self::Chat => Self::Input,
-            Self::Outline => Self::Chat,
-            Self::Preview => Self::Outline,
-            Self::Input => Self::Preview,
+            Self::Preview => Self::Chat,
+            Self::Outline => Self::Preview,
+            Self::Input => Self::Outline,
         }
     }
 }
@@ -144,12 +149,38 @@ pub struct InputState {
     /// Byte offset, always kept on a UTF-8 boundary.
     pub cursor: usize,
     pub attach_active_slide: bool,
+    pub slash_selection: usize,
+    pub slash_menu_hidden: bool,
 }
 
 impl InputState {
+    pub fn slash_suggestions(&self) -> Vec<SlashCommand> {
+        if self.slash_menu_hidden
+            || self.cursor != self.text.len()
+            || !self.text.starts_with('/')
+            || self.text.chars().any(char::is_whitespace)
+        {
+            return vec![];
+        }
+        matching_slash_commands(&self.text)
+    }
+
+    fn reset_slash_menu(&mut self) {
+        self.slash_selection = 0;
+        self.slash_menu_hidden = false;
+    }
+
+    fn set_text(&mut self, text: &str) {
+        self.text.clear();
+        self.text.push_str(text);
+        self.cursor = self.text.len();
+        self.reset_slash_menu();
+    }
+
     pub fn insert(&mut self, c: char) {
         self.text.insert(self.cursor, c);
         self.cursor += c.len_utf8();
+        self.reset_slash_menu();
     }
     pub fn newline(&mut self) {
         self.insert('\n');
@@ -165,6 +196,7 @@ impl InputState {
             .unwrap_or(0);
         self.text.replace_range(previous..self.cursor, "");
         self.cursor = previous;
+        self.reset_slash_menu();
     }
     pub fn delete(&mut self) {
         if self.cursor == self.text.len() {
@@ -177,6 +209,7 @@ impl InputState {
             .unwrap_or(0)
             + self.cursor;
         self.text.replace_range(self.cursor..next, "");
+        self.reset_slash_menu();
     }
     pub fn move_left(&mut self) {
         if self.cursor > 0 {
@@ -194,6 +227,8 @@ impl InputState {
     }
     pub fn take(&mut self) -> String {
         self.cursor = 0;
+        self.slash_selection = 0;
+        self.slash_menu_hidden = false;
         std::mem::take(&mut self.text)
     }
 }
@@ -215,6 +250,7 @@ pub struct App {
     pub mode: String,
     pub model: String,
     pub token_usage: Option<(u64, u64)>,
+    pub config: Config,
 }
 
 impl Default for App {
@@ -235,6 +271,7 @@ impl Default for App {
             mode: "supervised".into(),
             model: "-".into(),
             token_usage: None,
+            config: Config::default(),
         }
     }
 }
@@ -298,8 +335,41 @@ impl App {
         if self.fullscreen {
             return self.handle_fullscreen_key(key);
         }
+        if matches!(key.code, KeyCode::F(1) | KeyCode::F(2)) {
+            self.modal = if key.code == KeyCode::F(1) {
+                ModalState::Help
+            } else {
+                ModalState::CommandPalette(CommandPaletteState::default())
+            };
+            return vec![];
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return match key.code {
+                KeyCode::Char('k' | 'K') => {
+                    self.modal = ModalState::CommandPalette(CommandPaletteState::default());
+                    vec![]
+                }
+                KeyCode::Char(',') => {
+                    self.modal =
+                        ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
+                    vec![]
+                }
+                KeyCode::Char('1') => {
+                    self.focus = Focus::Chat;
+                    vec![]
+                }
+                KeyCode::Char('2') => {
+                    self.focus = Focus::Preview;
+                    vec![]
+                }
+                KeyCode::Char('3') => {
+                    self.focus = Focus::Outline;
+                    vec![]
+                }
+                KeyCode::Char('4') => {
+                    self.focus = Focus::Input;
+                    vec![]
+                }
                 KeyCode::Char('p') => {
                     self.modal = ModalState::DesignPicker(Default::default());
                     vec![AppAction::OpenDesignPicker]
@@ -321,6 +391,12 @@ impl App {
                 _ => vec![],
             };
         }
+        if self.focus == Focus::Input
+            && key.code == KeyCode::Tab
+            && !self.input.slash_suggestions().is_empty()
+        {
+            return self.handle_input_key(key);
+        }
         match key.code {
             KeyCode::Tab => {
                 self.focus = if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -335,6 +411,28 @@ impl App {
                 vec![]
             }
             KeyCode::Esc if self.run_active => vec![AppAction::CancelRun],
+            KeyCode::Enter if self.focus == Focus::Preview || self.focus == Focus::Outline => {
+                if self.preview.slide_count() > 0 {
+                    self.fullscreen = true;
+                }
+                vec![]
+            }
+            KeyCode::Up if self.focus == Focus::Chat => {
+                self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                vec![]
+            }
+            KeyCode::Down if self.focus == Focus::Chat => {
+                self.chat_scroll = self.chat_scroll.saturating_add(1);
+                vec![]
+            }
+            KeyCode::PageUp if self.focus == Focus::Chat => {
+                self.chat_scroll = self.chat_scroll.saturating_sub(8);
+                vec![]
+            }
+            KeyCode::PageDown if self.focus == Focus::Chat => {
+                self.chat_scroll = self.chat_scroll.saturating_add(8);
+                vec![]
+            }
             KeyCode::Char('f') if self.focus != Focus::Input => {
                 self.fullscreen = true;
                 vec![]
@@ -355,12 +453,44 @@ impl App {
     }
 
     fn handle_input_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        let suggestions = self.input.slash_suggestions();
         match key.code {
+            KeyCode::Esc if !suggestions.is_empty() => {
+                self.input.slash_menu_hidden = true;
+                vec![]
+            }
+            KeyCode::Up if !suggestions.is_empty() => {
+                self.input.slash_selection = self.input.slash_selection.saturating_sub(1);
+                vec![]
+            }
+            KeyCode::Down if !suggestions.is_empty() => {
+                self.input.slash_selection =
+                    (self.input.slash_selection + 1).min(suggestions.len() - 1);
+                vec![]
+            }
+            KeyCode::Tab if !suggestions.is_empty() => {
+                let selected = self.input.slash_selection.min(suggestions.len() - 1);
+                self.input.set_text(suggestions[selected].name);
+                vec![]
+            }
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.input.newline();
                 vec![]
             }
             KeyCode::Enter => {
+                let slash_action = exact_slash_command(self.input.text.trim()).or_else(|| {
+                    suggestions
+                        .get(
+                            self.input
+                                .slash_selection
+                                .min(suggestions.len().saturating_sub(1)),
+                        )
+                        .map(|suggestion| suggestion.action)
+                });
+                if let Some(action) = slash_action {
+                    self.input.take();
+                    return self.run_slash_command(action);
+                }
                 if self.input.text.trim().is_empty() || self.run_active {
                     return vec![];
                 }
@@ -424,6 +554,33 @@ impl App {
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        if let ModalState::CommandPalette(state) = &mut self.modal {
+            let event = state.handle_key(key);
+            return match event {
+                CommandPaletteEvent::None => vec![],
+                CommandPaletteEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                CommandPaletteEvent::Run(command) => {
+                    self.modal = ModalState::None;
+                    self.run_command(command)
+                }
+            };
+        }
+        if let ModalState::Configuration(state) = &mut self.modal {
+            return match state.handle_key(key) {
+                ConfigurationEvent::None => vec![],
+                ConfigurationEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                ConfigurationEvent::Save(config) => {
+                    self.modal = ModalState::None;
+                    vec![AppAction::SaveConfiguration(config)]
+                }
+            };
+        }
         if let ModalState::Approval(request) = &self.modal {
             let decision = match key.code {
                 KeyCode::Char('a') | KeyCode::Enter => Some(ApprovalDecision::AllowOnce),
@@ -446,6 +603,53 @@ impl App {
             self.modal = ModalState::None;
         }
         vec![]
+    }
+
+    fn run_slash_command(&mut self, action: SlashCommandAction) -> Vec<AppAction> {
+        match action {
+            SlashCommandAction::OpenPalette => {
+                self.modal = ModalState::CommandPalette(CommandPaletteState::default());
+                vec![]
+            }
+            SlashCommandAction::Run(command) => self.run_command(command),
+        }
+    }
+
+    fn run_command(&mut self, command: Command) -> Vec<AppAction> {
+        match command {
+            Command::OpenDeck => {
+                self.modal = ModalState::DeckPicker(Default::default());
+                vec![AppAction::OpenDeckPicker]
+            }
+            Command::ChangeDesign => {
+                self.modal = ModalState::DesignPicker(Default::default());
+                vec![AppAction::OpenDesignPicker]
+            }
+            Command::RenderPreview => vec![AppAction::RequestRender],
+            Command::Configure => {
+                self.modal =
+                    ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
+                vec![]
+            }
+            Command::ToggleAttachment => {
+                self.input.attach_active_slide = !self.input.attach_active_slide;
+                vec![]
+            }
+            Command::Present => {
+                if self.preview.slide_count() > 0 {
+                    self.fullscreen = true;
+                }
+                vec![]
+            }
+            Command::ShowHelp => {
+                self.modal = ModalState::Help;
+                vec![]
+            }
+            Command::Quit => {
+                self.should_quit = true;
+                vec![AppAction::Quit]
+            }
+        }
     }
 
     fn navigate_previous(&mut self) -> Vec<AppAction> {
@@ -662,6 +866,28 @@ mod tests {
         );
     }
     #[test]
+    fn config_command_opens_grouped_configuration_menu() {
+        let mut app = App::default();
+        app.input.text = "/config".into();
+        app.input.cursor = app.input.text.len();
+        assert!(app.handle_key(key(KeyCode::Enter)).is_empty());
+        let ModalState::Configuration(state) = &app.modal else {
+            panic!("configuration modal was not opened")
+        };
+        assert!(state.menu.groups.len() >= 4);
+        assert!(app.input.text.is_empty());
+    }
+
+    #[test]
+    fn configuration_save_emits_persistence_action() {
+        let mut app = App::default();
+        app.modal = ModalState::Configuration(Box::new(ConfigurationState::new(&app.config)));
+        let actions = app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(actions, vec![AppAction::SaveConfiguration(Box::default())]);
+        assert_eq!(app.modal, ModalState::None);
+    }
+
+    #[test]
     fn approval_event_produces_owned_response_action() {
         let mut app = App::default();
         app.modal = ModalState::Approval(super::super::event::ApprovalRequest {
@@ -680,3 +906,7 @@ mod tests {
         assert_eq!(app.modal, ModalState::None);
     }
 }
+
+#[cfg(test)]
+#[path = "app_controls_tests.rs"]
+mod controls_tests;

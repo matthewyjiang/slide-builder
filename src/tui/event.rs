@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::config::Config;
 use crossterm::event::Event as TerminalEvent;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,6 +96,7 @@ pub enum AppAction {
     RequestRender,
     OpenDeckPicker,
     OpenDesignPicker,
+    SaveConfiguration(Box<Config>),
     RespondApproval {
         id: String,
         decision: ApprovalDecision,
