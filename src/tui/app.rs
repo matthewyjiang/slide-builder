@@ -338,9 +338,11 @@ impl App {
             };
             return vec![];
         }
-        // Alt+S opens the slide prefix. Avoid Ctrl+B: herdr/tmux claim that chord, so the
-        // follow-up key never reaches this app and prefix mode appears stuck.
-        if key.modifiers == KeyModifiers::ALT && matches!(key.code, KeyCode::Char('s' | 'S')) {
+        // Ctrl+B is the documented slide prefix. Alt+S is also accepted as a fallback
+        // in hosts that intercept Ctrl+B.
+        if (key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Char('b' | 'B')))
+            || (key.modifiers == KeyModifiers::ALT && matches!(key.code, KeyCode::Char('s' | 'S')))
+        {
             self.enter_prefix();
             return vec![];
         }
@@ -404,6 +406,8 @@ impl App {
     fn handle_prefix_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
         // Toggle / cancel without running a slide action.
         if key.code == KeyCode::Esc
+            || (key.modifiers == KeyModifiers::CONTROL
+                && matches!(key.code, KeyCode::Char('b' | 'B')))
             || (key.modifiers == KeyModifiers::ALT && matches!(key.code, KeyCode::Char('s' | 'S')))
         {
             self.clear_prefix();
@@ -799,7 +803,7 @@ mod tests {
         assert_eq!(app.preview.active, 0);
         assert_eq!(app.input.cursor, 0);
 
-        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT));
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
         assert!(app.prefix_active);
         assert_eq!(
             app.handle_key(key(KeyCode::Char('l'))),

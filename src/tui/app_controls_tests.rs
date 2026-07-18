@@ -93,13 +93,13 @@ fn slide_prefix_refreshes_and_presents_without_leaving_prompt_input() {
         image_path: None,
     });
 
-    app.handle_key(shortcut(KeyCode::Char('s'), KeyModifiers::ALT));
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
     assert_eq!(
         app.handle_key(shortcut(KeyCode::Char('r'), KeyModifiers::NONE)),
         vec![AppAction::RequestRender]
     );
 
-    app.handle_key(shortcut(KeyCode::Char('s'), KeyModifiers::ALT));
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
     assert!(app
         .handle_key(shortcut(KeyCode::Char('f'), KeyModifiers::NONE))
         .is_empty());
@@ -110,17 +110,18 @@ fn slide_prefix_refreshes_and_presents_without_leaving_prompt_input() {
 #[test]
 fn slide_prefix_cancels_with_escape_toggle_and_timeout() {
     let mut app = App::default();
-    app.handle_key(shortcut(KeyCode::Char('s'), KeyModifiers::ALT));
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
     assert!(app.prefix_active);
 
     app.handle_key(shortcut(KeyCode::Esc, KeyModifiers::NONE));
     assert!(!app.prefix_active);
 
-    app.handle_key(shortcut(KeyCode::Char('s'), KeyModifiers::ALT));
-    app.handle_key(shortcut(KeyCode::Char('s'), KeyModifiers::ALT));
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
     assert!(!app.prefix_active);
 
     app.handle_key(shortcut(KeyCode::Char('s'), KeyModifiers::ALT));
+    assert!(app.prefix_active);
     let deadline = app.prefix_deadline.expect("prefix sets a deadline");
     app.apply(AppEvent::Tick(deadline));
     assert!(!app.prefix_active);

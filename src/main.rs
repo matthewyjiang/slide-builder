@@ -4,7 +4,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use notify::{EventKind, Watcher};
 use slide_builder::{
     agent::{
@@ -513,6 +513,10 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         let mut input = EventStream::new();
         // Interaction always wins: wait for work first, draw only when dirty, and keep
         // heavy image decode/encode off this path.
+        //
+        // Never drain EventStream with now_or_never/poll-once helpers. Crossterm's
+        // EventStream parks a background waker on Pending; dropping that poll future
+        // leaves a no-op waker and the next select! never wakes for keyboard input.
         let mut needs_draw = true;
         loop {
             if let Some(path) = app.preview.active_image_path() {
@@ -550,16 +554,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         return Ok(());
                     }
                     needs_draw = true;
-
-                    // Drain ready input before redrawing so typing stays ahead of paint.
-                    while let Some(ready) = input.next().now_or_never() {
-                        let Some(ready) = ready else {
-                            return Ok(());
-                        };
-                        let event = match ready {
-                            Ok(event) => AppEvent::Input(event),
-                            Err(error) => return Err(error.into()),
-                        };
+                    // Batch only non-input work here. Keyboard events must stay on the
+                    // select! path so EventStream keeps a live waker.
+                    while let Ok(event) = event_rx.try_recv() {
                         if dispatch_app_event(
                             event,
                             &mut app,
@@ -573,18 +570,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             return Ok(());
                         }
                     }
-                    while let Ok(event) = event_rx.try_recv() {
-                        if dispatch_app_event(
-                            event,
-                            &mut app,
-                            &mut config,
-                            &agent,
-                            &engine,
-                            &render_service,
-                            &event_tx,
-                            &pending_approvals,
-                        )? {
-                            return Ok(());
+                    while let Ok(preview_event) = preview_worker_rx.try_recv() {
+                        if preview_image.apply_worker_event(preview_event) {
+                            needs_draw = true;
                         }
                     }
                 }
@@ -606,8 +594,6 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         return Ok(());
                     }
                     needs_draw = true;
-
-                    // Batch async work, then prefer any pending keystrokes before paint.
                     while let Ok(event) = event_rx.try_recv() {
                         if dispatch_app_event(
                             event,
@@ -622,25 +608,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             return Ok(());
                         }
                     }
-                    while let Some(ready) = input.next().now_or_never() {
-                        let Some(ready) = ready else {
-                            return Ok(());
-                        };
-                        let event = match ready {
-                            Ok(event) => AppEvent::Input(event),
-                            Err(error) => return Err(error.into()),
-                        };
-                        if dispatch_app_event(
-                            event,
-                            &mut app,
-                            &mut config,
-                            &agent,
-                            &engine,
-                            &render_service,
-                            &event_tx,
-                            &pending_approvals,
-                        )? {
-                            return Ok(());
+                    while let Ok(preview_event) = preview_worker_rx.try_recv() {
+                        if preview_image.apply_worker_event(preview_event) {
+                            needs_draw = true;
                         }
                     }
                 }
@@ -659,15 +629,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             needs_draw = true;
                         }
                     }
-                    // Image work must never starve keyboard input.
-                    while let Some(ready) = input.next().now_or_never() {
-                        let Some(ready) = ready else {
-                            return Ok(());
-                        };
-                        let event = match ready {
-                            Ok(event) => AppEvent::Input(event),
-                            Err(error) => return Err(error.into()),
-                        };
+                    while let Ok(event) = event_rx.try_recv() {
                         if dispatch_app_event(
                             event,
                             &mut app,

@@ -96,7 +96,7 @@ pub fn render_actions(frame: &mut Frame<'_>, area: Rect, app: &App) {
         vec![
             key("Esc"),
             text(" cancel run  "),
-            key("Alt+S"),
+            key("Ctrl+B"),
             text(" slides  "),
             key("F1"),
             text(" help  "),
@@ -107,7 +107,7 @@ pub fn render_actions(frame: &mut Frame<'_>, area: Rect, app: &App) {
             text(" send  "),
             key("⇧Enter"),
             text(" newline  "),
-            key("Alt+S"),
+            key("Ctrl+B"),
             text(" slides  "),
             key("Ctrl+K/F2"),
             text(" actions  "),

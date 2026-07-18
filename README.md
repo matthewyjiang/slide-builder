@@ -27,10 +27,10 @@ pinned `rho-providers` registry is supported:
 
 The workspace keeps the active deck, preview state, and contextual controls visible.
 The conversation, preview, and slide list are read-only status surfaces; keyboard input
-stays in the prompt editor. Use the `Alt+S` slide prefix, followed by
+stays in the prompt editor. Use the `Ctrl+B` slide prefix (or `Alt+S`), followed by
 `h`/`k` to move to the previous slide or `j`/`l` to move to the next, `g`/`G`
 to jump to the first/last slide, `r` to refresh the preview, or Enter/`f` to
-present. Press `Esc` or `Alt+S` again to cancel the prefix; it also expires after
+present. Press `Esc` or the prefix key again to cancel; the prefix also expires after
 two seconds. `Ctrl+K` opens the complete action menu, with `F2` as a fallback for
 terminal hosts that reserve `Ctrl+K`; `F1` opens keyboard help. Direct shortcuts
 include `Ctrl+O` for decks, `Ctrl+P` for designs, `Ctrl+R` for preview refresh,
