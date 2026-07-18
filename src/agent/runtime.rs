@@ -19,6 +19,12 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+/// Keep complex deck-building turns from hitting rho-sdk's small safety default.
+/// This mirrors Rho's interactive application while still bounding runaway loops.
+fn run_step_limit() -> NonZeroUsize {
+    NonZeroUsize::new(10_000).expect("step limit is nonzero")
+}
+
 /// Owns a rho session and exposes a cancellation handle independently of the
 /// task that is draining the active run.
 #[derive(Clone)]
@@ -196,7 +202,8 @@ pub fn build_rho(
         .workspace(workspace)
         .workspace_policy(policy)
         .approval_handler(approvals)
-        .reasoning_level(reasoning);
+        .reasoning_level(reasoning)
+        .max_steps(run_step_limit());
     for tool in rho_agent_tools::coding_tools(rho_agent_tools::CodingToolOptions::new()) {
         builder = builder.tool_shared(tool)
     }
