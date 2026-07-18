@@ -42,7 +42,8 @@ impl PreviewImage {
             // Scale fills the available area (Fit only downscales to natural size, which is often
             // undersized when pixel geometry queries fail inside multiplexers like herdr).
             let resize = Resize::Scale(None);
-            let render_area = centered_image_area(area, protocol.size_for(resize.clone(), area.as_size()));
+            let render_area =
+                centered_image_area(area, protocol.size_for(resize.clone(), area.as_size()));
             if render_area.width > 0 && render_area.height > 0 {
                 frame.render_stateful_widget(
                     StatefulImage::new().resize(resize),
