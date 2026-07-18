@@ -253,10 +253,7 @@ pub fn render_menu(frame: &mut Frame<'_>, menu: &MenuState) {
                 Span::styled(
                     format!("{}{}", item.value.visual_display(), edit),
                     if selected {
-                        Style::default()
-                            .fg(theme::TEXT)
-                            .bg(theme::ACCENT_SOFT)
-                            .add_modifier(Modifier::BOLD)
+                        theme::accent_block().add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme::MUTED)
                     },

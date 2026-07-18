@@ -223,7 +223,7 @@ pub fn render(frame: &mut Frame<'_>, state: &CommandPaletteState) {
             Span::styled(format!(" {:>8} ", item.shortcut), theme::keycap()),
         ]))
         .style(if selected {
-            Style::default().bg(theme::ACCENT_SOFT)
+            theme::accent_block()
         } else {
             Style::default()
         })

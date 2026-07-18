@@ -501,6 +501,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = ratatui::backend::CrosstermBackend::new(out);
     let mut terminal = ratatui::Terminal::new(backend)?;
+    slide_builder::tui::theme::initialize_from_terminal();
     let mut preview_image = PreviewImage::detect(&config.preview.protocol);
     let mut app = App {
         deck_name: engine

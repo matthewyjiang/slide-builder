@@ -59,3 +59,7 @@ For PRs:
 - Prefer `pretty_assertions::assert_eq` when available and whole-object comparisons over field-by-field assertions.
 - Do not test static constants or add negative tests solely for removed behavior.
 - Avoid mutating process environment; pass environment-derived values or dependencies explicitly when possible.
+
+## Design context
+
+Before changing the TUI or other user-facing surfaces, read `PRODUCT.md` for product strategy and `DESIGN.md` for the normative visual system. Preserve the Focused Studio principles, terminal-derived ANSI palette, keyboard-first operation, and narrow-terminal support. `.impeccable/design.json` contains matching machine-readable design metadata.
