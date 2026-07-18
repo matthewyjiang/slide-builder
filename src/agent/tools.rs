@@ -34,7 +34,8 @@ impl Tool for UiTool {
         if self.name == "render_deck" {
             ToolSpec {
                 name: self.name.into(),
-                description: "Render every slide and wait for the generation result".into(),
+                description: "Request a fresh preview render for every slide in the active deck"
+                    .into(),
                 input_schema: json!({"type":"object"}),
             }
         } else {
@@ -60,6 +61,12 @@ impl Tool for UiTool {
                             "index must be a positive integer",
                         )
                     })?;
+                if i == 0 || i > usize::MAX as u64 {
+                    return Err(ToolError::new(
+                        ToolErrorKind::InvalidArguments,
+                        "index must be a positive integer",
+                    ));
+                }
                 UiToolCommand::SetActiveSlide(i as usize)
             };
             self.tx.send(cmd).map_err(|_| {

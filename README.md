@@ -54,6 +54,12 @@ slide-builder opens model setup on launch and preselects Rho's default or cached
 model when available. The provider-specific environment variables exposed by
 Rho can also be used for automation.
 
+At startup, slide-builder discovers project skills from `.agents/skills`, user
+skills from `~/.agents/skills`, and its embedded deck-authoring skills. Matching
+skills are advertised to the agent and loaded on demand through the built-in
+`load_skill` tool. Project skills take precedence over user and embedded skills
+with the same name.
+
 ## Run
 
 ```sh

@@ -292,6 +292,11 @@ impl App {
                 self.preview.status = PreviewStatus::Unavailable { reason };
                 vec![]
             }
+            AppEvent::AgentRenderRequested => vec![AppAction::RequestRender],
+            AppEvent::AgentSetActiveSlide(index) => {
+                self.preview.select(index.saturating_sub(1));
+                vec![]
+            }
             AppEvent::DeckFileChanged => {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
@@ -664,11 +669,13 @@ impl App {
                 }));
             }
             AgentEvent::ToolStarted { id } => self.update_tool(&id, ToolStatus::Running, None),
-            AgentEvent::ToolUpdated { id, detail } => {
-                self.update_tool(&id, ToolStatus::Running, Some(detail))
+            AgentEvent::ToolUpdated { id, .. } => {
+                // Progress payloads are often raw JSON or streamed command output. The
+                // conversation only needs to show that the action is still running.
+                self.update_tool(&id, ToolStatus::Running, None)
             }
             AgentEvent::ToolFinished { id, result } => match result {
-                Ok(detail) => self.update_tool(&id, ToolStatus::Succeeded, Some(detail)),
+                Ok(()) => self.update_tool(&id, ToolStatus::Succeeded, Some(String::new())),
                 Err(detail) => self.update_tool(&id, ToolStatus::Failed, Some(detail)),
             },
             AgentEvent::RunFinished => self.run_active = false,
@@ -770,22 +777,47 @@ mod tests {
         assert_eq!(input.cursor, 0);
     }
     #[test]
-    fn tool_events_update_card_in_place() {
+    fn successful_tool_events_hide_raw_progress_and_output() {
         let mut app = App::default();
         app.apply_agent_event(AgentEvent::ToolProposed {
             id: "1".into(),
-            name: "render".into(),
-            summary: "deck".into(),
+            name: "shape_add".into(),
+            summary: "rectangle to slide 2".into(),
+        });
+        app.apply_agent_event(AgentEvent::ToolUpdated {
+            id: "1".into(),
+            detail: r#"{"affected":["shape:42"]}"#.into(),
         });
         app.apply_agent_event(AgentEvent::ToolFinished {
             id: "1".into(),
-            result: Ok("done".into()),
+            result: Ok(()),
         });
         assert_eq!(app.transcript.len(), 1);
         let TranscriptItem::Tool(card) = &app.transcript[0] else {
             panic!()
         };
         assert_eq!(card.status, ToolStatus::Succeeded);
+        assert_eq!(card.summary, "rectangle to slide 2");
+        assert!(card.detail.is_empty());
+    }
+
+    #[test]
+    fn failed_tool_events_keep_the_error() {
+        let mut app = App::default();
+        app.apply_agent_event(AgentEvent::ToolProposed {
+            id: "1".into(),
+            name: "shape_add".into(),
+            summary: "rectangle to slide 2".into(),
+        });
+        app.apply_agent_event(AgentEvent::ToolFinished {
+            id: "1".into(),
+            result: Err("shape is outside the slide".into()),
+        });
+        let TranscriptItem::Tool(card) = &app.transcript[0] else {
+            panic!()
+        };
+        assert_eq!(card.status, ToolStatus::Failed);
+        assert_eq!(card.detail, "shape is outside the slide");
     }
     #[test]
     fn stale_render_completion_cannot_overflow_selection() {
@@ -849,6 +881,10 @@ mod tests {
         assert_eq!(app.modal, ModalState::None);
     }
 }
+
+#[cfg(test)]
+#[path = "app_agent_tools_tests.rs"]
+mod agent_tools_tests;
 
 #[cfg(test)]
 #[path = "app_controls_tests.rs"]

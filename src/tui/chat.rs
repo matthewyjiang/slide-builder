@@ -47,16 +47,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     ToolStatus::Succeeded => ("✓", theme::SUCCESS),
                     ToolStatus::Failed => ("✗", theme::DANGER),
                 };
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("{glyph} {}", card.name),
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("  {}", card.summary),
-                        Style::default().fg(theme::TEXT),
-                    ),
-                ]));
+                lines.push(Line::from(Span::styled(
+                    format!("{glyph} {}", tool_status_text(card)),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )));
                 if !card.detail.is_empty() {
                     lines.push(Line::styled(
                         format!("  {}", card.detail),
@@ -101,3 +95,56 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         regions[1],
     );
 }
+
+struct ToolVerbs {
+    proposed: &'static str,
+    running: &'static str,
+    succeeded: &'static str,
+}
+
+fn tool_status_text(card: &super::app::ToolCard) -> String {
+    let verbs = tool_verbs(&card.name);
+    let verb = match card.status {
+        ToolStatus::Proposed => verbs.proposed,
+        ToolStatus::Running => verbs.running,
+        ToolStatus::Succeeded => verbs.succeeded,
+        ToolStatus::Failed => {
+            return format!(
+                "Could not {} {}",
+                verbs.proposed.to_lowercase(),
+                card.summary
+            )
+        }
+    };
+    format!("{verb} {}", card.summary)
+}
+
+fn tool_verbs(name: &str) -> ToolVerbs {
+    let (proposed, running, succeeded) = match name {
+        "slide_create" | "text_add" | "image_add" | "shape_add" => ("Add", "Adding", "Added"),
+        "slide_duplicate" => ("Duplicate", "Duplicating", "Duplicated"),
+        "slide_delete" => ("Delete", "Deleting", "Deleted"),
+        "slide_reorder" => ("Move", "Moving", "Moved"),
+        "element_update" | "deck_advanced" => ("Update", "Updating", "Updated"),
+        "deck_inspect" => ("Inspect", "Inspecting", "Inspected"),
+        "deck_validate" => ("Validate", "Validating", "Validated"),
+        "render_deck" => ("Request", "Requesting", "Requested"),
+        "set_active_slide" => ("Select", "Selecting", "Selected"),
+        "list_dir" => ("List", "Listing", "Listed"),
+        "read_file" | "get_search_content" => ("Read", "Reading", "Read"),
+        "write_file" => ("Write", "Writing", "Wrote"),
+        "edit_file" => ("Edit", "Editing", "Edited"),
+        "load_skill" | "discover_instructions" => ("Load", "Loading", "Loaded"),
+        "web_search" => ("Search", "Searching", "Searched"),
+        _ => ("Run", "Running", "Ran"),
+    };
+    ToolVerbs {
+        proposed,
+        running,
+        succeeded,
+    }
+}
+
+#[cfg(test)]
+#[path = "chat_tests.rs"]
+mod tests;

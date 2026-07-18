@@ -69,14 +69,111 @@ fn schema(name: &str) -> Value {
         }
         "deck_inspect" => json!({"type":"object","properties":{"path":{"type":"string"}}}),
         "deck_validate" => json!({"type":"object","properties":{}}),
-        _ => {
-            json!({"type":"object","required":["mutation"],"properties":{"mutation":{"type":"object"}}})
-        }
+        "deck_advanced" => json!({
+            "type":"object",
+            "required":["mutation"],
+            "properties":{"mutation":{"oneOf":[
+                {
+                    "type":"object",
+                    "required":["operation","parent","element_type"],
+                    "properties":{
+                        "operation":{"const":"add"},
+                        "parent":{"type":"string"},
+                        "element_type":{"type":"string"},
+                        "properties":{"type":"object","additionalProperties":{"type":"string"}}
+                    },
+                    "additionalProperties":false
+                },
+                {
+                    "type":"object",
+                    "required":["operation","path","properties"],
+                    "properties":{
+                        "operation":{"const":"set"},
+                        "path":{"type":"string"},
+                        "properties":{"type":"object","additionalProperties":{"type":"string"}}
+                    },
+                    "additionalProperties":false
+                },
+                {
+                    "type":"object",
+                    "required":["operation","path"],
+                    "properties":{"operation":{"const":"remove"},"path":{"type":"string"}},
+                    "additionalProperties":false
+                },
+                {
+                    "type":"object",
+                    "required":["operation","source"],
+                    "properties":{
+                        "operation":{"const":"move"},
+                        "source":{"type":"string"},
+                        "target_parent":{"type":["string","null"]},
+                        "index":{"type":["integer","null"],"minimum":1}
+                    },
+                    "additionalProperties":false
+                },
+                {
+                    "type":"object",
+                    "required":["operation","source","target_parent"],
+                    "properties":{
+                        "operation":{"const":"copy"},
+                        "source":{"type":"string"},
+                        "target_parent":{"type":"string"},
+                        "index":{"type":["integer","null"],"minimum":1}
+                    },
+                    "additionalProperties":false
+                },
+                {
+                    "type":"object",
+                    "required":["operation","left","right"],
+                    "properties":{
+                        "operation":{"const":"swap"},
+                        "left":{"type":"string"},
+                        "right":{"type":"string"}
+                    },
+                    "additionalProperties":false
+                },
+                {
+                    "type":"object",
+                    "required":["operation","part","xpath","action"],
+                    "properties":{
+                        "operation":{"const":"raw_set"},
+                        "part":{"type":"string"},
+                        "xpath":{"type":"string"},
+                        "action":{"type":"string"},
+                        "xml":{"type":["string","null"]}
+                    },
+                    "additionalProperties":false
+                }
+            ]}},
+            "additionalProperties":false
+        }),
+        _ => json!({"type":"object"}),
     }
 }
+fn description(name: &str) -> &'static str {
+    match name {
+        "slide_create" => "Add one blank slide to the end of the active deck.",
+        "slide_duplicate" => "Duplicate a one-based slide index.",
+        "slide_delete" => "Delete a one-based slide index.",
+        "slide_reorder" => "Move a slide from one one-based position to another.",
+        "text_add" => "Add a text box to a slide using inch-based geometry.",
+        "image_add" => "Add a local image to a slide using inch-based geometry.",
+        "shape_add" => "Add a rectangle, ellipse, line, or connector using inch-based geometry.",
+        "element_update" => "Update an existing element by the stable ID returned by deck_inspect or an add operation. Put all changed values inside properties.",
+        "deck_inspect" => "Inspect the active deck or one optional handler path before editing. Returns slide geometry, elements, and stable IDs.",
+        "deck_validate" => "Validate the active deck after meaningful edits.",
+        "deck_advanced" => "Apply one advanced add, set, remove, move, copy, swap, or raw_set mutation. Use semantic tools for normal edits and follow the exact nested mutation schema.",
+        _ => "Operate on the active PowerPoint deck.",
+    }
+}
+
 impl Tool for DeckTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec{name:self.name.into(),description:format!("Native PowerPoint operation `{}` on the active deck. Mutations are atomic and validated.",self.name),input_schema:schema(self.name)}
+        ToolSpec {
+            name: self.name.into(),
+            description: description(self.name).into(),
+            input_schema: schema(self.name),
+        }
     }
     fn start_metadata(&self, _: &Value) -> ToolMetadata {
         ToolMetadata::new()
@@ -403,3 +500,7 @@ mod tests {
         assert!(validate_geometry(13., 0., 1., 1.).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "deck_tool_schema_tests.rs"]
+mod schema_tests;

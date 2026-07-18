@@ -1,4 +1,10 @@
-use crate::agent::deck_engine::DeckEngine;
+use crate::agent::{
+    deck_engine::DeckEngine,
+    skill_tool::LoadSkillTool,
+    tool_summary,
+    tools::{UiTool, UiToolCommand},
+};
+use crate::skills::Skill;
 use crate::tui::{AgentEvent, AppEvent};
 use anyhow::{Context, Result};
 use rho_sdk::{
@@ -114,11 +120,14 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
             run_id: run_id.to_string(),
         },
         RunEvent::AssistantTextDelta { text } => AppEvent::Run(AgentEvent::TextDelta(text)),
-        RunEvent::ToolProposed { call } => AppEvent::Run(AgentEvent::ToolProposed {
-            id: call.id,
-            name: call.name,
-            summary: call.arguments.to_string(),
-        }),
+        RunEvent::ToolProposed { call } => {
+            let summary = tool_summary::target(&call.name, &call.arguments);
+            AppEvent::Run(AgentEvent::ToolProposed {
+                id: call.id,
+                name: call.name,
+                summary,
+            })
+        }
         RunEvent::ToolStarted { call_id, .. } => AppEvent::Run(AgentEvent::ToolStarted {
             id: call_id.to_string(),
         }),
@@ -130,7 +139,7 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
         }),
         RunEvent::ToolFinished { call_id, result } => {
             let result = match result {
-                ToolCompletion::Success(output) => Ok(output.content().to_owned()),
+                ToolCompletion::Success(_) => Ok(()),
                 ToolCompletion::Failure(error) => Err(error.message().to_owned()),
                 ToolCompletion::Unavailable => Err("tool unavailable".into()),
                 _ => Err("unknown tool completion".into()),
@@ -161,6 +170,8 @@ pub fn build_rho(
     repo: &Path,
     decks: &Path,
     design: Option<&Path>,
+    skills: &[Skill],
+    ui_tools: mpsc::UnboundedSender<UiToolCommand>,
     engine: DeckEngine,
     policy: crate::agent::policy::SlidePolicy,
 ) -> Result<(Rho, ApprovalRequestReceiver)> {
@@ -192,6 +203,9 @@ pub fn build_rho(
     builder = builder.tool_shared(rho_agent_tools::shell_tool(
         rho_agent_tools::DEFAULT_MAX_OUTPUT_BYTES,
     ));
+    builder = builder.tool(LoadSkillTool::new(skills.to_vec()));
+    builder = builder.tool(UiTool::render(ui_tools.clone()));
+    builder = builder.tool(UiTool::set_active(ui_tools));
     builder = register_deck_tools(builder, engine);
     Ok((builder.build()?, receiver))
 }
