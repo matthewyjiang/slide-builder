@@ -51,6 +51,28 @@ pub fn save_api_key(provider: &str, key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn save_codex_tokens(tokens: &rho_providers::credentials::CodexTokens) -> anyhow::Result<()> {
+    rho_providers::credentials::save_codex_tokens(&SlideCredentialStore, tokens)?;
+    Ok(())
+}
+
+pub fn save_github_copilot_tokens(
+    tokens: &rho_providers::credentials::GitHubCopilotTokens,
+) -> anyhow::Result<()> {
+    rho_providers::credentials::save_github_copilot_tokens(&SlideCredentialStore, tokens)?;
+    Ok(())
+}
+
+pub fn save_kimi_tokens(tokens: &rho_providers::credentials::KimiTokens) -> anyhow::Result<()> {
+    rho_providers::credentials::save_kimi_tokens(&SlideCredentialStore, tokens)?;
+    Ok(())
+}
+
+pub fn save_xai_tokens(tokens: &rho_providers::credentials::XaiTokens) -> anyhow::Result<()> {
+    rho_providers::credentials::save_xai_tokens(&SlideCredentialStore, tokens)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

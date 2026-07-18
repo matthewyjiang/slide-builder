@@ -41,7 +41,6 @@ For PRs:
 - For async traits, return an explicit future with a `Send` bound. Do not use `#[async_trait]` or `#[allow(async_fn_in_trait)]`.
 - Avoid one-use helpers unless they materially improve readability or isolate a clear invariant.
 - Follow Clippy and rustfmt style: collapse nested `if` statements when possible, inline format arguments (`format!("hello {name}")`), and prefer method references to redundant closures.
-- After Rust changes, run `cargo fmt`, `python3 scripts/check_architecture.py`, and the narrowest relevant tests when practical. Use the `rho-rust-change-validation` skill for the full workflow.
 
 ## Architecture and module boundaries
 

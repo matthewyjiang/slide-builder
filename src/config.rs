@@ -89,8 +89,16 @@ impl Config {
                 CONFIG_SCHEMA_VERSION
             );
         }
-        if self.provider.trim().is_empty() {
-            bail!("provider cannot be empty");
+        if rho_providers::provider::provider_descriptor(self.provider.trim()).is_none() {
+            let available = rho_providers::provider::providers()
+                .iter()
+                .map(|provider| provider.name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "unsupported provider {:?}; available providers: {available}",
+                self.provider
+            );
         }
         if self.reasoning.trim().is_empty() {
             bail!("reasoning cannot be empty");
@@ -273,6 +281,41 @@ mod tests {
         config.schema_version = 1;
         config.preview.width = 0;
         assert!(config.validate().unwrap_err().to_string().contains("width"));
+    }
+
+    #[test]
+    fn empty_model_is_a_valid_setup_state() {
+        let config = Config {
+            model: String::new(),
+            ..Config::default()
+        };
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn every_rho_provider_is_accepted() {
+        for provider in rho_providers::provider::providers() {
+            let config = Config {
+                provider: provider.name.into(),
+                ..Config::default()
+            };
+            config
+                .validate()
+                .unwrap_or_else(|error| panic!("{} was rejected: {error}", provider.name));
+        }
+    }
+
+    #[test]
+    fn unknown_provider_lists_available_choices() {
+        let config = Config {
+            provider: "not-a-provider".into(),
+            ..Config::default()
+        };
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("unsupported provider"));
+        for provider in rho_providers::provider::providers() {
+            assert!(error.contains(provider.name));
+        }
     }
 
     #[test]

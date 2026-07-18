@@ -80,14 +80,233 @@ fn print_help() {
     println!("slide-builder\n\nUSAGE:\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty and Chromium for previews.")
 }
 
-fn provider_uses_api_key(provider: &str) -> bool {
-    rho_providers::provider::PROVIDERS.iter().any(|descriptor| {
-        descriptor.name == provider
-            && matches!(
-                descriptor.auth_kind,
-                rho_providers::provider::ProviderAuthKind::ApiKey { .. }
+fn run_model_setup(provider: &str) -> Result<String> {
+    use crossterm::event::{read, Event, KeyCode, KeyEventKind};
+    use ratatui::{
+        layout::{Constraint, Flex, Layout},
+        style::{Color, Style},
+        text::{Line, Text},
+        widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    };
+
+    let mut model =
+        rho_providers::model::catalog::default_model_for_provider(provider).unwrap_or_default();
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout))?;
+    let result = (|| -> Result<String> {
+        loop {
+            terminal.draw(|frame| {
+                let area = frame.area();
+                let vertical = Layout::vertical([Constraint::Length(11)])
+                    .flex(Flex::Center)
+                    .split(area)[0];
+                let popup = Layout::horizontal([Constraint::Length(72)])
+                    .flex(Flex::Center)
+                    .split(vertical)[0];
+                frame.render_widget(Clear, popup);
+                let body = Text::from(vec![
+                    Line::from(format!("Choose a model for provider {provider}:")),
+                    Line::from(""),
+                    Line::styled(model.as_str(), Style::default().fg(Color::Cyan)),
+                    Line::from(""),
+                    Line::styled(
+                        "Enter: save and continue · Esc: cancel",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]);
+                frame.render_widget(
+                    Paragraph::new(body).wrap(Wrap { trim: true }).block(
+                        Block::default()
+                            .title(" model setup ")
+                            .borders(Borders::ALL),
+                    ),
+                    popup,
+                );
+            })?;
+            if let Event::Key(key) = read()? {
+                if key.kind == KeyEventKind::Release {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Enter if !model.trim().is_empty() => {
+                        break Ok(model.trim().to_string());
+                    }
+                    KeyCode::Esc => break Err(anyhow::anyhow!("model setup cancelled")),
+                    KeyCode::Backspace => {
+                        model.pop();
+                    }
+                    KeyCode::Char(character) if !character.is_control() => model.push(character),
+                    _ => {}
+                }
+            }
+        }
+    })();
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
+}
+
+fn provider_descriptor(
+    provider: &str,
+) -> Option<&'static rho_providers::provider::ProviderDescriptor> {
+    rho_providers::provider::provider_descriptor(provider)
+}
+
+fn missing_provider_credential(error: &anyhow::Error) -> bool {
+    use rho_providers::ModelError;
+
+    matches!(
+        error.downcast_ref::<ModelError>(),
+        Some(
+            ModelError::MissingApiKey
+                | ModelError::MissingCodexAuth
+                | ModelError::MissingAnthropicApiKey
+                | ModelError::MissingGithubCopilotAuth
+                | ModelError::MissingXaiApiKey
+                | ModelError::MissingXaiAuth
+                | ModelError::MissingMoonshotApiKey
+                | ModelError::MissingOpenRouterApiKey
+                | ModelError::MissingKimiAuth
+        )
+    )
+}
+
+async fn run_provider_login(provider: &str, diagnostic: &str) -> Result<()> {
+    use rho_providers::{
+        auth::{codex_oauth, github_copilot_device, kimi_oauth, xai_oauth},
+        provider::ProviderAuthKind,
+    };
+
+    let descriptor = provider_descriptor(provider)
+        .with_context(|| format!("unsupported provider {provider}"))?;
+    match descriptor.auth_kind {
+        ProviderAuthKind::ApiKey { .. } => run_api_key_login(provider, diagnostic),
+        ProviderAuthKind::CodexOAuth { .. } => {
+            let login = codex_oauth::start_codex_device_login().await?;
+            let verification_uri = login.verification_uri.clone();
+            let user_code = login.user_code.clone();
+            let tokens = show_device_login(
+                descriptor.login_label,
+                diagnostic,
+                &verification_uri,
+                &user_code,
+                codex_oauth::complete_codex_device_login(login),
             )
-    })
+            .await?;
+            slide_builder::credentials::save_codex_tokens(&tokens)
+        }
+        ProviderAuthKind::GithubCopilotDevice { .. } => {
+            let login = github_copilot_device::start_github_copilot_device_login().await?;
+            let verification_uri = login.verification_uri.clone();
+            let user_code = login.user_code.clone();
+            let tokens = show_device_login(
+                descriptor.login_label,
+                diagnostic,
+                &verification_uri,
+                &user_code,
+                github_copilot_device::complete_github_copilot_device_login(login),
+            )
+            .await?;
+            slide_builder::credentials::save_github_copilot_tokens(&tokens)
+        }
+        ProviderAuthKind::KimiOAuth { .. } => {
+            let login = kimi_oauth::start_kimi_device_login().await?;
+            let verification_uri = login.verification_uri.clone();
+            let user_code = login.user_code.clone();
+            let tokens = show_device_login(
+                descriptor.login_label,
+                diagnostic,
+                &verification_uri,
+                &user_code,
+                kimi_oauth::complete_kimi_device_login(login),
+            )
+            .await?;
+            slide_builder::credentials::save_kimi_tokens(&tokens)
+        }
+        ProviderAuthKind::XaiOAuth { .. } => {
+            let login = xai_oauth::start_xai_device_login().await?;
+            let verification_uri = login.verification_uri.clone();
+            let user_code = login.user_code.clone();
+            let tokens = show_device_login(
+                descriptor.login_label,
+                diagnostic,
+                &verification_uri,
+                &user_code,
+                xai_oauth::complete_xai_device_login(login),
+            )
+            .await?;
+            slide_builder::credentials::save_xai_tokens(&tokens)
+        }
+    }
+}
+
+async fn show_device_login<T, E, F>(
+    label: &str,
+    diagnostic: &str,
+    verification_uri: &str,
+    user_code: &str,
+    completion: F,
+) -> Result<T>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    F: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    use ratatui::{
+        layout::{Constraint, Flex, Layout},
+        style::{Color, Style},
+        text::{Line, Text},
+        widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    };
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout))?;
+    terminal.draw(|frame| {
+        let area = frame.area();
+        let vertical = Layout::vertical([Constraint::Length(14)])
+            .flex(Flex::Center)
+            .split(area)[0];
+        let popup = Layout::horizontal([Constraint::Length(72)])
+            .flex(Flex::Center)
+            .split(vertical)[0];
+        frame.render_widget(Clear, popup);
+        let body = Text::from(vec![
+            Line::styled(
+                "No slide-builder credential is available.",
+                Style::default().fg(Color::Yellow),
+            ),
+            Line::from(diagnostic),
+            Line::from(""),
+            Line::from("Open this URL in a browser:"),
+            Line::styled(verification_uri, Style::default().fg(Color::Cyan)),
+            Line::from(""),
+            Line::from("Enter this code:"),
+            Line::styled(user_code, Style::default().fg(Color::Cyan)),
+            Line::from(""),
+            Line::styled(
+                "Waiting for authorization...",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(body).wrap(Wrap { trim: true }).block(
+                Block::default()
+                    .title(format!(" {label} "))
+                    .borders(Borders::ALL),
+            ),
+            popup,
+        );
+    })?;
+
+    let result = completion.await.map_err(anyhow::Error::new);
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
 }
 
 /// Credential bootstrap deliberately runs inside a terminal UI instead of
@@ -172,7 +391,11 @@ fn run_api_key_login(provider: &str, diagnostic: &str) -> Result<()> {
 }
 
 async fn run_tui(engine: DeckEngine) -> Result<()> {
-    let config = Config::load()?;
+    let mut config = Config::load()?;
+    if config.model.trim().is_empty() {
+        config.model = run_model_setup(&config.provider)?;
+        config.save()?;
+    }
     let cwd = std::env::current_dir()?;
     let paths = AppPaths::discover()?;
     paths.create_app_dirs()?;
@@ -207,8 +430,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         policy.clone(),
     ) {
         Ok(runtime) => runtime,
-        Err(error) if provider_uses_api_key(&config.provider) => {
-            run_api_key_login(&config.provider, &error.to_string())?;
+        Err(error) if missing_provider_credential(&error) => {
+            run_provider_login(&config.provider, &error.to_string()).await?;
             build_rho(
                 &config.provider,
                 &config.model,

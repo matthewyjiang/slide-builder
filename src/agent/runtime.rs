@@ -1,6 +1,6 @@
 use crate::agent::deck_engine::DeckEngine;
 use crate::tui::{AgentEvent, AppEvent};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rho_sdk::{
     approval_channel, model::ImageContent, ApprovalRequestReceiver, Rho, Session, SessionOptions,
     SystemPrompt, UserInput, Workspace,
@@ -166,14 +166,14 @@ pub fn build_rho(
 ) -> Result<(Rho, ApprovalRequestReceiver)> {
     let reasoning = rho_sdk::ReasoningLevel::Medium;
     let options = rho_providers::ProviderBuildOptions::new(provider, model, reasoning)
-        .map_err(|e| anyhow::anyhow!("provider configuration failed: {e}"))?;
+        .map_err(anyhow::Error::new)
+        .context("provider configuration failed")?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         std::sync::Arc::new(crate::credentials::SlideCredentialStore),
     );
-    let provider =
-        rho_providers::build_sdk_provider_with_source(options, &credentials).map_err(|e| {
-            anyhow::anyhow!("provider setup failed: {e}; log in from slide-builder setup")
-        })?;
+    let provider = rho_providers::build_sdk_provider_with_source(options, &credentials)
+        .map_err(anyhow::Error::new)
+        .context("provider setup failed; log in from slide-builder setup")?;
     let mut workspace = Workspace::new(repo)?.with_granted_root(decks)?;
     if let Some(path) = design {
         workspace = workspace.with_granted_root(path)?;
