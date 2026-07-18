@@ -1,4 +1,6 @@
 use std::fs;
+use std::path::PathBuf;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tempfile::tempdir;
@@ -80,4 +82,81 @@ fn managed_design_picker_selects_a_package() {
         vec![AppAction::SelectDesign(path)]
     );
     assert_eq!(app.modal, ModalState::None);
+}
+
+#[test]
+fn import_events_update_app_state_without_entering_transcript() {
+    let mut app = App::default();
+    app.apply(AppEvent::ImportDesignStarted {
+        source: PathBuf::from("/tmp/acme.pptx"),
+    });
+    assert!(app.run_active);
+    assert_eq!(
+        app.import_design_status,
+        Some(ImportDesignStatus::Running(ImportProgress {
+            source_name: "acme.pptx".into(),
+            stage: ImportDesignStage::Reading,
+            percent: None,
+            animation_frame: 0,
+        }))
+    );
+
+    app.apply(AppEvent::ImportDesignProgress {
+        stage: ImportDesignStage::Building,
+        percent: Some(140),
+    });
+    let Some(ImportDesignStatus::Running(progress)) = &app.import_design_status else {
+        panic!("import was not running");
+    };
+    assert_eq!(progress.stage, ImportDesignStage::Building);
+    assert_eq!(progress.percent, Some(100));
+    assert!(app.transcript.is_empty());
+}
+
+#[test]
+fn tick_animates_indeterminate_import_and_expires_confirmation() {
+    let mut app = App::default();
+    app.apply(AppEvent::ImportDesignStarted {
+        source: PathBuf::from("acme.pptx"),
+    });
+    let tick = std::time::Instant::now() + Duration::from_millis(100);
+    app.apply(AppEvent::Tick(tick));
+    let Some(ImportDesignStatus::Running(progress)) = &app.import_design_status else {
+        panic!("import was not running");
+    };
+    assert_eq!(progress.animation_frame, 1);
+
+    app.apply(AppEvent::ImportDesignCompleted {
+        design_name: "Acme".into(),
+    });
+    assert!(!app.run_active);
+    let Some(ImportDesignStatus::Completed { expires_at, .. }) = &app.import_design_status else {
+        panic!("completion was not shown");
+    };
+    let expires_at = *expires_at;
+    app.apply(AppEvent::Tick(expires_at));
+    assert_eq!(app.import_design_status, None);
+}
+
+#[test]
+fn failed_import_persists_while_cancelled_import_expires() {
+    let mut app = App::default();
+    app.apply(AppEvent::ImportDesignFailed {
+        error: "unsupported theme".into(),
+    });
+    app.apply(AppEvent::Tick(
+        std::time::Instant::now() + Duration::from_secs(60),
+    ));
+    assert!(matches!(
+        app.import_design_status,
+        Some(ImportDesignStatus::Failed { .. })
+    ));
+
+    app.apply(AppEvent::ImportDesignCancelled);
+    let Some(ImportDesignStatus::Cancelled { expires_at }) = &app.import_design_status else {
+        panic!("cancellation was not shown");
+    };
+    let expires_at = *expires_at;
+    app.apply(AppEvent::Tick(expires_at));
+    assert_eq!(app.import_design_status, None);
 }

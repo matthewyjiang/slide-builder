@@ -56,6 +56,14 @@ pub struct ApprovalRequest {
     pub allow_for_session: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportDesignStage {
+    Reading,
+    Analyzing,
+    Building,
+    Installing,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppEvent {
     Input(TerminalEvent),
@@ -82,6 +90,20 @@ pub enum AppEvent {
     ImportDesignPickerOpened {
         start_directory: PathBuf,
     },
+    ImportDesignStarted {
+        source: PathBuf,
+    },
+    ImportDesignProgress {
+        stage: ImportDesignStage,
+        percent: Option<u8>,
+    },
+    ImportDesignCompleted {
+        design_name: String,
+    },
+    ImportDesignFailed {
+        error: String,
+    },
+    ImportDesignCancelled,
     DesignPickerOpened {
         entries: Vec<(String, PathBuf)>,
     },

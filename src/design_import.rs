@@ -38,6 +38,20 @@ const REQUIRED_HEADINGS: &[&str] = &[
     "## Evidence limitations",
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesignImportPreparationStage {
+    Validating,
+    Copying,
+    Extracting,
+    RenderingPreviews,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesignImportPublicationStage {
+    ValidatingPackage,
+    Publishing,
+}
+
 #[derive(Clone, Debug)]
 pub struct PreparedImport {
     pub source_name: String,
@@ -62,6 +76,27 @@ impl PreparedImport {
         configured_browser: Option<&Path>,
         render_timeout: Duration,
     ) -> Result<Self> {
+        Self::prepare_with_progress(
+            source,
+            cache_dir,
+            configured_browser,
+            render_timeout,
+            |_| {},
+        )
+        .await
+    }
+
+    pub async fn prepare_with_progress<F>(
+        source: &Path,
+        cache_dir: &Path,
+        configured_browser: Option<&Path>,
+        render_timeout: Duration,
+        mut progress: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(DesignImportPreparationStage) + Send,
+    {
+        progress(DesignImportPreparationStage::Validating);
         validate_source(source)?;
         let source_name = source
             .file_name()
@@ -81,6 +116,7 @@ impl PreparedImport {
         create_private_dir(&job_dir)
             .with_context(|| format!("creating import staging directory {}", job_dir.display()))?;
         let template = job_dir.join("template.pptx");
+        progress(DesignImportPreparationStage::Copying);
         if let Err(error) = std::fs::copy(source, &template) {
             let _ = std::fs::remove_dir_all(&job_dir);
             return Err(error).with_context(|| format!("copying template {}", source.display()));
@@ -89,6 +125,7 @@ impl PreparedImport {
             let _ = std::fs::remove_dir_all(&job_dir);
             return Err(error).context("validating staged PowerPoint template");
         }
+        progress(DesignImportPreparationStage::Extracting);
         let analysis_result = analyze(&template).await;
         let (analysis, snapshot) = match analysis_result {
             Ok(analysis) => analysis,
@@ -97,6 +134,7 @@ impl PreparedImport {
                 return Err(error);
             }
         };
+        progress(DesignImportPreparationStage::RenderingPreviews);
         let contact_sheet = render_contact_sheet(
             &template,
             &job_dir,
@@ -131,6 +169,19 @@ impl PreparedImport {
     }
 
     pub fn publish(&self, assistant_output: &str, packages_dir: &Path) -> Result<DesignPackage> {
+        self.publish_with_progress(assistant_output, packages_dir, |_| {})
+    }
+
+    pub fn publish_with_progress<F>(
+        &self,
+        assistant_output: &str,
+        packages_dir: &Path,
+        mut progress: F,
+    ) -> Result<DesignPackage>
+    where
+        F: FnMut(DesignImportPublicationStage),
+    {
+        progress(DesignImportPublicationStage::ValidatingPackage);
         let guidelines = extract_design_markdown(assistant_output)?;
         std::fs::create_dir_all(packages_dir).with_context(|| {
             format!(
@@ -154,6 +205,7 @@ impl PreparedImport {
                 toml::to_string_pretty(&manifest)?,
             )?;
             DesignPackage::load(&staging, None).context("validating generated design package")?;
+            progress(DesignImportPublicationStage::Publishing);
             let destination = publish_staging(&staging, packages_dir, &self.package_slug)?;
             Ok(destination)
         })();

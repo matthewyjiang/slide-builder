@@ -129,6 +129,35 @@ fn image_encoding_has_loading_ui_in_preview_and_presentation() {
 }
 
 #[test]
+fn import_progress_and_terminal_results_render_in_prompt_status() {
+    let mut app = App::default();
+    app.apply(crate::tui::AppEvent::ImportDesignStarted {
+        source: PathBuf::from("acme.pptx"),
+    });
+    let content = render_at(140, 30, &app);
+    assert!(content.contains("[━─────] Reading acme.pptx"));
+
+    app.apply(crate::tui::AppEvent::ImportDesignProgress {
+        stage: crate::tui::ImportDesignStage::Installing,
+        percent: Some(72),
+    });
+    let content = render_at(140, 30, &app);
+    assert!(content.contains("[ 72%] Installing acme.pptx"));
+
+    app.apply(crate::tui::AppEvent::ImportDesignCompleted {
+        design_name: "Acme".into(),
+    });
+    assert!(render_at(140, 30, &app).contains("Imported Acme"));
+
+    app.apply(crate::tui::AppEvent::ImportDesignFailed {
+        error: "unsupported theme".into(),
+    });
+    let content = render_at(140, 30, &app);
+    assert!(content.contains("Import failed: unsupported theme"));
+    assert!(content.contains("retry /import-design"));
+}
+
+#[test]
 fn workspace_uses_separators_without_numbered_panel_labels() {
     let content = render_at(140, 40, &App::default());
     assert!(content.contains('│'));

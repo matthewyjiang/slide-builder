@@ -11,11 +11,14 @@ use slide_builder::{
     agent::{
         deck_engine::DeckEngine,
         policy::{PermissionMode, SlidePolicy},
-        runtime::{build_import_rho, build_rho, AgentHandle},
+        runtime::{build_rho, AgentHandle},
         tools::UiToolCommand,
     },
     config::{Config, PermissionMode as ConfigPermissionMode},
-    design_import::{PreparedImport, IMPORT_SYSTEM_PROMPT},
+    design_import_workflow::{
+        DesignImportRequest, DesignImportWorkflow, DesignImportWorkflowEvent,
+        DesignImportWorkflowStage,
+    },
     paths::AppPaths,
     prompt::{self, PromptContext},
     render::{
@@ -25,8 +28,8 @@ use slide_builder::{
         RenderEvent, RenderRequest, RenderService,
     },
     tui::{
-        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, PreviewImage, RenderManifest,
-        SlideRender,
+        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, ImportDesignStage,
+        PreviewImage, RenderManifest, SlideRender,
     },
 };
 use std::{
@@ -472,7 +475,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let agent = AgentHandle::new(rho).await?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let (import_tx, mut import_rx) = mpsc::unbounded_channel::<Result<PreparedImport, String>>();
+    let design_import = DesignImportWorkflow::default();
+    let (import_tx, mut import_rx) = mpsc::unbounded_channel::<DesignImportWorkflowEvent>();
     pump_ui_tool_commands(ui_tool_rx, event_tx.clone());
     let _deck_watcher = watch_deck(engine.path(), event_tx.clone())?;
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
@@ -527,11 +531,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         ));
     }
 
-    let mut pending_design_import: Option<(PreparedImport, String)> = None;
     let mut pending_design_context: Option<String> = None;
-    let mut import_agent: Option<AgentHandle> = None;
-    let mut import_preparing = false;
-    let mut import_cancelled = false;
     let mut import_picker_directory = cwd.clone();
     let result = async {
         let mut input = EventStream::new();
@@ -546,105 +546,12 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                     None => return Ok(()),
                 },
                 event = event_rx.recv() => event,
-                imported = import_rx.recv(), if import_preparing => {
-                    import_preparing = false;
-                    match imported {
-                        Some(Ok(prepared)) if import_cancelled => {
-                            prepared.discard();
-                            app.run_active = false;
-                        }
-                        Some(Ok(prepared)) => {
-                            let prompt = prepared.prompt();
-                            let image_path = prepared.contact_sheet.clone();
-                            let display_name = prepared.source_name.clone();
-                            let rho = build_import_rho(
-                                &config.provider,
-                                &config.model,
-                                IMPORT_SYSTEM_PROMPT,
-                                &prepared.job_dir,
-                            );
-                            let handle = match rho {
-                                Ok(rho) => match AgentHandle::new(rho).await {
-                                    Ok(handle) => handle,
-                                    Err(error) => {
-                                        prepared.discard();
-                                        app.run_active = false;
-                                        push_system_message(
-                                            &mut app,
-                                            format!("Could not start design analysis: {error:#}"),
-                                        );
-                                        continue;
-                                    }
-                                },
-                                Err(error) => {
-                                    prepared.discard();
-                                    app.run_active = false;
-                                    push_system_message(
-                                        &mut app,
-                                        format!("Could not start design analysis: {error:#}"),
-                                    );
-                                    continue;
-                                }
-                            };
-                            pending_design_import = Some((prepared, String::new()));
-                            import_agent = Some(handle.clone());
-                            app.run_active = true;
-                            app.transcript.push(slide_builder::tui::TranscriptItem::Message(
-                                slide_builder::tui::Message {
-                                    role: slide_builder::tui::Role::User,
-                                    text: format!("Import design from {display_name}"),
-                                    complete: true,
-                                },
-                            ));
-                            let tx = event_tx.clone();
-                            tokio::spawn(async move {
-                                if let Err(error) =
-                                    handle.send(prompt, image_path, tx.clone()).await
-                                {
-                                    let _ = tx.send(AppEvent::Run(
-                                        slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
-                                    ));
-                                }
-                            });
-                        }
-                        Some(Err(_)) if import_cancelled => {
-                            app.run_active = false;
-                        }
-                        Some(Err(error)) => {
-                            app.run_active = false;
-                            push_system_message(
-                                &mut app,
-                                format!("Could not import design template: {error}"),
-                            );
-                        }
-                        None => {}
-                    }
-                    continue;
-                },
+                imported = import_rx.recv() => imported.map(import_workflow_app_event),
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
                     Some(AppEvent::Tick(std::time::Instant::now()))
                 }
             };
             let Some(event) = event else { return Ok(()) };
-            if let (
-                Some((_, output)),
-                AppEvent::Run(slide_builder::tui::AgentEvent::TextDelta(text)),
-            ) = (&mut pending_design_import, &event)
-            {
-                output.push_str(text);
-            }
-            let import_run_finished = matches!(
-                &event,
-                AppEvent::Run(slide_builder::tui::AgentEvent::RunFinished)
-            );
-            let import_run_failed = matches!(
-                &event,
-                AppEvent::Run(slide_builder::tui::AgentEvent::RunFailed(_))
-            );
-            let import_run_cancelled = matches!(
-                &event,
-                AppEvent::Run(slide_builder::tui::AgentEvent::RunCancelled)
-            );
             let preload_paths = match &event {
                 AppEvent::RenderDone {
                     generation,
@@ -659,35 +566,6 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                 _ => None,
             };
             let actions = app.apply(event);
-            if import_run_finished && !import_cancelled {
-                import_agent = None;
-                if let Some((prepared, output)) = pending_design_import.take() {
-                    match prepared.publish(&output, &paths.design_packages_dir()) {
-                        Ok(package) => {
-                            push_system_message(
-                                &mut app,
-                                format!(
-                                    "Imported design '{}' to {}. Use /design to activate it.",
-                                    package.name,
-                                    package.path.display()
-                                ),
-                            );
-                        }
-                        Err(error) => {
-                            prepared.discard();
-                            push_system_message(
-                                &mut app,
-                                format!("Could not finish design import: {error:#}"),
-                            );
-                        }
-                    }
-                }
-            } else if import_run_failed || import_run_cancelled {
-                import_agent = None;
-                if let Some((prepared, _)) = pending_design_import.take() {
-                    prepared.discard();
-                }
-            }
             if let Some(paths) = preload_paths {
                 preview_image.preload_deck(paths);
             }
@@ -717,17 +595,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         });
                     }
                     AppAction::CancelRun => {
-                        if import_preparing || pending_design_import.is_some() {
-                            import_cancelled = true;
-                            app.run_active = false;
-                            if let Some((prepared, _)) = pending_design_import.take() {
-                                prepared.discard();
-                            }
-                            if let Some(handle) = import_agent.take() {
-                                handle.cancel();
-                            }
-                            push_system_message(&mut app, "Design import cancelled.".into());
-                        } else {
+                        if !design_import.cancel() {
                             agent.cancel();
                         }
                     }
@@ -775,7 +643,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         ),
                     },
                     AppAction::OpenImportDesignPicker => {
-                        if app.run_active || import_preparing || pending_design_import.is_some() {
+                        if app.run_active || design_import.is_active() {
                             push_system_message(
                                 &mut app,
                                 "Finish the current operation before importing a design.".into(),
@@ -790,36 +658,33 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         if let Some(parent) = source.parent() {
                             import_picker_directory = parent.to_path_buf();
                         }
-                        if app.run_active || import_preparing || pending_design_import.is_some() {
+                        if app.run_active || design_import.is_active() {
                             push_system_message(
                                 &mut app,
                                 "Finish the current operation before importing a design.".into(),
                             );
                         } else {
-                            import_cancelled = false;
-                            import_preparing = true;
                             app.run_active = true;
-                            push_system_message(
-                                &mut app,
-                                format!("Reading design template {}...", source.display()),
-                            );
-                            let tx = import_tx.clone();
-                            let cache_dir = render_cache_dir.clone();
-                            let configured_browser = (config.render.browser_path
-                                != Path::new("auto"))
-                            .then(|| config.render.browser_path.clone());
-                            let render_timeout = Duration::from_millis(config.render.timeout_ms);
-                            tokio::spawn(async move {
-                                let result = PreparedImport::prepare(
-                                    &source,
-                                    &cache_dir,
-                                    configured_browser.as_deref(),
-                                    render_timeout,
-                                )
-                                    .await
-                                    .map_err(|error| format!("{error:#}"));
-                                let _ = tx.send(result);
+                            app.apply(AppEvent::ImportDesignStarted {
+                                source: source.clone(),
                             });
+                            let request = DesignImportRequest {
+                                source,
+                                cache_dir: render_cache_dir.clone(),
+                                packages_dir: paths.design_packages_dir(),
+                                configured_browser: (config.render.browser_path
+                                    != Path::new("auto"))
+                                .then(|| config.render.browser_path.clone()),
+                                render_timeout: Duration::from_millis(config.render.timeout_ms),
+                                provider: config.provider.clone(),
+                                model: config.model.clone(),
+                            };
+                            if let Err(error) = design_import.start(request, import_tx.clone()) {
+                                app.run_active = false;
+                                app.apply(AppEvent::ImportDesignFailed {
+                                    error: format!("{error:#}"),
+                                });
+                            }
                         }
                     }
                     AppAction::SaveConfiguration(next) => {
@@ -884,6 +749,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         }
     }
     .await;
+    design_import.shutdown().await;
     agent.cancel();
     if let Some(service) = &render_service {
         service.shutdown().await;
@@ -901,6 +767,31 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         }
     }
     result
+}
+
+fn import_workflow_app_event(event: DesignImportWorkflowEvent) -> AppEvent {
+    match event {
+        DesignImportWorkflowEvent::Stage(stage) => AppEvent::ImportDesignProgress {
+            stage: match stage {
+                DesignImportWorkflowStage::Validating | DesignImportWorkflowStage::Copying => {
+                    ImportDesignStage::Reading
+                }
+                DesignImportWorkflowStage::Extracting
+                | DesignImportWorkflowStage::RenderingPreviews
+                | DesignImportWorkflowStage::Analyzing => ImportDesignStage::Analyzing,
+                DesignImportWorkflowStage::ValidatingPackage => ImportDesignStage::Building,
+                DesignImportWorkflowStage::Publishing => ImportDesignStage::Installing,
+            },
+            percent: None,
+        },
+        DesignImportWorkflowEvent::Completed { package_name, .. } => {
+            AppEvent::ImportDesignCompleted {
+                design_name: package_name,
+            }
+        }
+        DesignImportWorkflowEvent::Failed(error) => AppEvent::ImportDesignFailed { error },
+        DesignImportWorkflowEvent::Cancelled => AppEvent::ImportDesignCancelled,
+    }
 }
 
 fn push_system_message(app: &mut App, text: String) {

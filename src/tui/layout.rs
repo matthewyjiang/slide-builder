@@ -1,4 +1,9 @@
-use super::{app::App, chat, modal, outline, preview, slideshow, statusline, theme};
+use super::{
+    app::{App, ImportDesignStatus},
+    chat,
+    event::ImportDesignStage,
+    modal, outline, preview, slideshow, statusline, theme,
+};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
@@ -169,10 +174,9 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
     } else {
         Span::raw("")
     };
-    let title = Line::from(vec![
-        Span::styled(" Prompt ", theme::panel_title()),
-        attachment,
-    ]);
+    let mut title_spans = vec![Span::styled(" Prompt ", theme::panel_title()), attachment];
+    title_spans.extend(import_status_spans(app));
+    let title = Line::from(title_spans);
     let display = if app.input.text.is_empty() {
         Text::from(Line::styled(
             "Describe what to create, revise, or explore...",
@@ -199,6 +203,52 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
             area.y + 1 + row.min(area.height - 2),
         ));
     }
+}
+
+fn import_status_spans(app: &App) -> Vec<Span<'static>> {
+    const INDICATORS: [&str; 6] = [
+        "[━─────]",
+        "[─━────]",
+        "[──━───]",
+        "[───━──]",
+        "[────━─]",
+        "[─────━]",
+    ];
+
+    let Some(status) = &app.import_design_status else {
+        return vec![];
+    };
+    let (text, style) = match status {
+        ImportDesignStatus::Running(progress) => {
+            let stage = match progress.stage {
+                ImportDesignStage::Reading => "Reading",
+                ImportDesignStage::Analyzing => "Analyzing",
+                ImportDesignStage::Building => "Building",
+                ImportDesignStage::Installing => "Installing",
+            };
+            let indicator = match progress.percent {
+                Some(percent) => format!("[{percent:>3}%]"),
+                None => INDICATORS[progress.animation_frame % INDICATORS.len()].into(),
+            };
+            (
+                format!("  {indicator} {stage} {} ", progress.source_name),
+                Style::default().fg(theme::ACCENT),
+            )
+        }
+        ImportDesignStatus::Completed { design_name, .. } => (
+            format!("  ✓ Imported {design_name} "),
+            Style::default().fg(theme::SUCCESS),
+        ),
+        ImportDesignStatus::Failed { error } => (
+            format!("  ✗ Import failed: {error} · retry /import-design "),
+            Style::default().fg(theme::DANGER),
+        ),
+        ImportDesignStatus::Cancelled { .. } => (
+            "  Import cancelled ".into(),
+            Style::default().fg(theme::MUTED),
+        ),
+    };
+    vec![Span::styled(text, style)]
 }
 
 fn render_slash_commands(frame: &mut Frame<'_>, input_area: Rect, app: &App) {
