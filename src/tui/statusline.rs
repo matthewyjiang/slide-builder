@@ -1,5 +1,5 @@
 use super::{
-    app::{App, Focus, PreviewStatus},
+    app::{App, PreviewStatus},
     theme,
 };
 use ratatui::{
@@ -65,35 +65,54 @@ pub fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 pub fn render_actions(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let mut spans = vec![
-        key("Tab"),
-        text(" panel  "),
-        key("Ctrl+K/F2"),
-        text(" actions  "),
-        key("F1"),
-        text(" help  "),
-    ];
-    match app.focus {
-        Focus::Chat => {
-            spans.extend([key("↑↓"), text(" scroll  ")]);
-        }
-        Focus::Preview | Focus::Outline => {
-            spans.extend([
-                key("←→"),
-                text(" slide  "),
-                key("Enter"),
-                text(" present  "),
-            ]);
-        }
-        Focus::Input => {
-            spans.extend([
-                key("Enter"),
-                text(" send  "),
-                key("⇧Enter"),
-                text(" newline  "),
-            ]);
-        }
-    }
+    let spans = if app.prefix_active {
+        vec![
+            key("PREFIX"),
+            key("h/k"),
+            text(" previous  "),
+            key("j/l"),
+            text(" next  "),
+            key("g/G"),
+            text(" first/last  "),
+            key("r"),
+            text(" render  "),
+            key("Enter/f"),
+            text(" present  "),
+        ]
+    } else if !app.input.slash_suggestions().is_empty() {
+        vec![
+            key("↑↓"),
+            text(" choose  "),
+            key("Tab"),
+            text(" complete  "),
+            key("Enter"),
+            text(" run  "),
+            key("Esc"),
+            text(" dismiss  "),
+        ]
+    } else if app.run_active {
+        vec![
+            key("Esc"),
+            text(" cancel run  "),
+            key("Ctrl+B"),
+            text(" slides  "),
+            key("F1"),
+            text(" help  "),
+        ]
+    } else {
+        vec![
+            key("Enter"),
+            text(" send  "),
+            key("⇧Enter"),
+            text(" newline  "),
+            key("Ctrl+B"),
+            text(" slides  "),
+            key("Ctrl+K/F2"),
+            text(" actions  "),
+            key("F1"),
+            text(" help  "),
+        ]
+    };
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(theme::SURFACE)),
         area,

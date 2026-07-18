@@ -13,23 +13,8 @@ pub const SUCCESS: Color = Color::Rgb(74, 222, 128);
 pub const WARNING: Color = Color::Rgb(250, 204, 21);
 pub const DANGER: Color = Color::Rgb(248, 113, 113);
 
-pub fn panel_border(focused: bool) -> Style {
-    if focused {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(SUBTLE)
-    }
-}
-
-pub fn panel_title(focused: bool) -> Style {
-    if focused {
-        Style::default()
-            .fg(TEXT)
-            .bg(ACCENT_SOFT)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(MUTED)
-    }
+pub fn panel_title() -> Style {
+    Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
 }
 
 pub fn keycap() -> Style {

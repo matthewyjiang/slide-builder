@@ -1,7 +1,4 @@
-use super::{
-    app::{App, Focus},
-    chat, modal, outline, preview, slideshow, statusline, theme,
-};
+use super::{app::App, chat, modal, outline, preview, slideshow, statusline, theme};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
@@ -35,38 +32,91 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let compact = area.width < 88 || area.height < 17;
-    if compact {
-        match app.focus {
-            Focus::Preview => preview::render(frame, area, app),
-            Focus::Outline => outline::render(frame, area, app),
-            Focus::Chat | Focus::Input => chat::render(frame, area, app),
-        }
+    if area.width < 88 {
+        let panels = Layout::vertical([
+            Constraint::Percentage(50),
+            Constraint::Length(1),
+            Constraint::Percentage(30),
+            Constraint::Length(1),
+            Constraint::Percentage(20),
+        ])
+        .split(area);
+        chat::render(frame, panels[0], app);
+        render_horizontal_separator(frame, panels[1]);
+        preview::render(frame, panels[2], app);
+        render_horizontal_separator(frame, panels[3]);
+        outline::render(frame, panels[4], app);
         return;
     }
 
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(56), Constraint::Percentage(44)])
-        .split(area);
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
-        .split(body[1]);
+    let body = Layout::horizontal([
+        Constraint::Percentage(56),
+        Constraint::Length(1),
+        Constraint::Percentage(44),
+    ])
+    .split(area);
+    let right = Layout::vertical([
+        Constraint::Percentage(68),
+        Constraint::Length(1),
+        Constraint::Percentage(32),
+    ])
+    .split(body[2]);
     chat::render(frame, body[0], app);
+    render_vertical_separator(frame, body[1]);
     preview::render(frame, right[0], app);
-    outline::render(frame, right[1], app);
+    render_horizontal_separator(frame, right[1]);
+    outline::render(frame, right[2], app);
+}
+
+fn render_vertical_separator(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::LEFT)
+            .border_style(Style::default().fg(theme::SUBTLE)),
+        area,
+    );
+}
+
+fn render_horizontal_separator(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(theme::SUBTLE)),
+        area,
+    );
 }
 
 fn input_height(app: &App, area: Rect) -> u16 {
-    let lines = app.input.text.lines().count().max(1) as u16;
-    lines
+    visual_line_count(&app.input.text, area.width)
         .saturating_add(2)
         .clamp(3, area.height.saturating_div(3).max(3))
 }
 
+fn visual_line_count(text: &str, width: u16) -> u16 {
+    let width = width.max(1) as usize;
+    text.split('\n')
+        .map(|line| Line::from(line).width().max(1).div_ceil(width) as u16)
+        .sum()
+}
+
+fn input_cursor_position(text: &str, width: u16) -> (u16, u16) {
+    let width = width.max(1) as usize;
+    let mut lines = text.split('\n').peekable();
+    let mut row = 0usize;
+    let mut col = 0usize;
+    while let Some(line) = lines.next() {
+        let line_width = Line::from(line).width();
+        if lines.peek().is_some() {
+            row += line_width.max(1).div_ceil(width);
+        } else {
+            row += line_width / width;
+            col = line_width % width;
+        }
+    }
+    (row as u16, col as u16)
+}
+
 fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let focused = app.focus == Focus::Input;
     let attachment = if app.input.attach_active_slide {
         Span::styled(
             "  ● active slide attached ",
@@ -76,17 +126,9 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Span::raw("")
     };
     let title = Line::from(vec![
-        Span::styled(" 4  Prompt ", theme::panel_title(focused)),
+        Span::styled(" Prompt ", theme::panel_title()),
         attachment,
     ]);
-    let slash_suggestions = app.input.slash_suggestions();
-    let hint = if app.run_active {
-        " Esc cancel current run "
-    } else if !slash_suggestions.is_empty() {
-        " ↑↓ choose  Tab complete  Enter run "
-    } else {
-        " Ctrl+V attach slide "
-    };
     let display = if app.input.text.is_empty() {
         Text::from(Line::styled(
             "Describe what to create, revise, or explore...",
@@ -99,27 +141,24 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(display).wrap(Wrap { trim: false }).block(
             Block::default()
                 .title(title)
-                .title_bottom(Line::from(hint).right_aligned())
-                .borders(Borders::ALL)
-                .border_style(theme::panel_border(focused)),
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .border_style(Style::default().fg(theme::SUBTLE)),
         ),
         area,
     );
 
-    if focused && !app.run_active && area.width > 2 && area.height > 2 {
+    if !app.run_active && area.width > 0 && area.height > 1 {
         let before = &app.input.text[..app.input.cursor];
-        let row = before.chars().filter(|c| *c == '\n').count() as u16;
-        let col = before.rsplit('\n').next().unwrap_or("").chars().count() as u16;
+        let (row, col) = input_cursor_position(before, area.width);
         frame.set_cursor_position((
-            area.x + 1 + col.min(area.width - 2),
+            area.x + col.min(area.width - 1),
             area.y + 1 + row.min(area.height - 2),
         ));
     }
 }
 
 fn render_slash_commands(frame: &mut Frame<'_>, input_area: Rect, app: &App) {
-    if app.focus != Focus::Input || app.run_active || !matches!(app.modal, modal::ModalState::None)
-    {
+    if app.run_active || !matches!(app.modal, modal::ModalState::None) {
         return;
     }
     let suggestions = app.input.slash_suggestions();
@@ -139,9 +178,9 @@ fn render_slash_commands(frame: &mut Frame<'_>, input_area: Rect, app: &App) {
         .saturating_add(1)
         .saturating_sub(visible_rows)
         .min(suggestions.len() - visible_rows);
-    let width = input_area.width.saturating_sub(2).clamp(1, 72);
+    let width = input_area.width.clamp(1, 72);
     let height = visible_rows as u16 + 2;
-    let area = Rect::new(input_area.x + 1, input_area.y - height, width, height);
+    let area = Rect::new(input_area.x, input_area.y - height, width, height);
     let items = suggestions[start..start + visible_rows]
         .iter()
         .enumerate()

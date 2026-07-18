@@ -1,22 +1,28 @@
 use super::{
-    app::{App, Focus, PreviewStatus},
+    app::{App, PreviewStatus},
     theme,
 };
 use ratatui::{
-    layout::{Alignment, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    text::{Line, Text},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let count = app.preview.slide_count();
     let title = if count == 0 {
-        " 2  Preview ".into()
+        " Preview ".into()
     } else {
-        format!(" 2  Preview  ·  {} / {count} ", app.preview.active + 1)
+        format!(" Preview  ·  {} / {count} ", app.preview.active + 1)
     };
+    let regions = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    frame.render_widget(
+        Paragraph::new(Line::styled(title, theme::panel_title())),
+        regions[0],
+    );
+
     let (message, detail, color) = match &app.preview.status {
         PreviewStatus::Empty => (
             "No preview yet",
@@ -46,9 +52,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .and_then(|s| s.image_path.as_ref())
             .and_then(|p| p.to_str())
             .map(|path| ("Rendered slide", path, theme::MUTED))
-            .unwrap_or(("Slide ready", "Press Enter to present.", theme::SUCCESS)),
+            .unwrap_or((
+                "Slide ready",
+                "Use Present from the actions menu.",
+                theme::SUCCESS,
+            )),
     };
-    let focused = app.focus == Focus::Preview;
     let text = Text::from(vec![
         Line::from(""),
         Line::styled(
@@ -61,20 +70,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(text)
             .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true })
-            .block(
-                Block::default()
-                    .title(Span::styled(title, theme::panel_title(focused)))
-                    .title_bottom(
-                        Line::styled(
-                            " ←→ navigate  Enter present ",
-                            Style::default().fg(theme::MUTED),
-                        )
-                        .right_aligned(),
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(theme::panel_border(focused)),
-            ),
-        area,
+            .wrap(Wrap { trim: true }),
+        regions[1],
     );
 }
