@@ -1,0 +1,1 @@
+`blank.pptx` is the versioned starter fixture derived from the Apache-2.0 OfficeCli-rust `textboxes-basic.pptx` fixture at revision acabe4959a37235dd587bbcc788565f19a824bb7. It is qualified by the deck round-trip tests.
