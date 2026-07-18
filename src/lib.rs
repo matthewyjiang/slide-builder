@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod config;
+pub mod credentials;
 pub mod design;
 pub mod paths;
 pub mod prompt;

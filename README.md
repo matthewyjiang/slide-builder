@@ -7,7 +7,7 @@ Linux terminal-first, AI-assisted PowerPoint authoring built on `rho-sdk` and th
 - Rust 1.85+
 - Kitty or Ghostty for inline slide images
 - Chromium, Chrome, or another Chromium-family browser for previews
-- Provider credentials configured through `rho login`
+- Provider credentials entered through slide-builder's in-TUI login (stored separately from rho)
 
 ## Run
 

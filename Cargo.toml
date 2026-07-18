@@ -15,6 +15,7 @@ directories = "6"
 futures = "0.3"
 handler-common = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+keyring = "4.1.5"
 notify = "8"
 pptx-handler = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 pulldown-cmark = "0.13"
@@ -31,6 +32,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 toml = "0.9"
 uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = "1"
 
 [dev-dependencies]
 tempfile = "3"

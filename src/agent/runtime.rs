@@ -165,8 +165,15 @@ pub fn build_rho(
     policy: crate::agent::policy::SlidePolicy,
 ) -> Result<(Rho, ApprovalRequestReceiver)> {
     let reasoning = rho_sdk::ReasoningLevel::Medium;
-    let provider = rho_providers::build_sdk_provider(provider, model, reasoning)
-        .map_err(|e| anyhow::anyhow!("provider setup failed: {e}; run `rho login`"))?;
+    let options = rho_providers::ProviderBuildOptions::new(provider, model, reasoning)
+        .map_err(|e| anyhow::anyhow!("provider configuration failed: {e}"))?;
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+        std::sync::Arc::new(crate::credentials::SlideCredentialStore),
+    );
+    let provider =
+        rho_providers::build_sdk_provider_with_source(options, &credentials).map_err(|e| {
+            anyhow::anyhow!("provider setup failed: {e}; log in from slide-builder setup")
+        })?;
     let mut workspace = Workspace::new(repo)?.with_granted_root(decks)?;
     if let Some(path) = design {
         workspace = workspace.with_granted_root(path)?;

@@ -13,7 +13,7 @@ The lockfile pins `rho-sdk`, `rho-providers`, `rho-agent-tools`, `pptx-handler`,
 
 Install one Chromium-family browser (`chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable`, `brave-browser`, or `microsoft-edge`) and run inside Kitty or Ghostty. Browser discovery never adds `--no-sandbox`; captures use isolated profiles and offline CSP.
 
-Provider credentials are shared with rho. If startup reports missing credentials, run `rho login`.
+Provider credentials are isolated under the `slide-builder` OS-keyring service and are never read from rho's credential entries. If a configured API-key provider has no credential, slide-builder opens a masked login form in the TUI and saves the key securely. Environment-variable overrides remain supported for automation.
 
 ## Qualification record
 

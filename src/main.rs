@@ -80,6 +80,97 @@ fn print_help() {
     println!("slide-builder\n\nUSAGE:\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty and Chromium for previews.")
 }
 
+fn provider_uses_api_key(provider: &str) -> bool {
+    rho_providers::provider::PROVIDERS.iter().any(|descriptor| {
+        descriptor.name == provider
+            && matches!(
+                descriptor.auth_kind,
+                rho_providers::provider::ProviderAuthKind::ApiKey { .. }
+            )
+    })
+}
+
+/// Credential bootstrap deliberately runs inside a terminal UI instead of
+/// delegating to `rho login`; slide-builder owns a separate keyring namespace.
+fn run_api_key_login(provider: &str, diagnostic: &str) -> Result<()> {
+    use crossterm::event::{read, Event, KeyCode, KeyEventKind};
+    use ratatui::{
+        layout::{Constraint, Flex, Layout},
+        style::{Color, Style},
+        text::{Line, Text},
+        widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    };
+    use zeroize::Zeroize;
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout))?;
+    let mut secret = String::new();
+    let result = (|| -> Result<()> {
+        loop {
+            terminal.draw(|frame| {
+                let area = frame.area();
+                let vertical = Layout::vertical([Constraint::Length(12)])
+                    .flex(Flex::Center)
+                    .split(area)[0];
+                let popup = Layout::horizontal([Constraint::Length(72)])
+                    .flex(Flex::Center)
+                    .split(vertical)[0];
+                frame.render_widget(Clear, popup);
+                let body = Text::from(vec![
+                    Line::styled(
+                        "No slide-builder credential is available.",
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Line::from(diagnostic),
+                    Line::from(""),
+                    Line::from(format!("{provider} API key:")),
+                    Line::styled(
+                        "•".repeat(secret.chars().count()),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Line::from(""),
+                    Line::styled(
+                        "Enter: save securely · Esc: cancel",
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]);
+                frame.render_widget(
+                    Paragraph::new(body).wrap(Wrap { trim: true }).block(
+                        Block::default()
+                            .title(" slide-builder login ")
+                            .borders(Borders::ALL),
+                    ),
+                    popup,
+                );
+            })?;
+            if let Event::Key(key) = read()? {
+                if key.kind == KeyEventKind::Release {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Enter if !secret.is_empty() => {
+                        slide_builder::credentials::save_api_key(provider, &secret)?;
+                        break Ok(());
+                    }
+                    KeyCode::Esc => break Err(anyhow::anyhow!("login cancelled")),
+                    KeyCode::Backspace => {
+                        secret.pop();
+                    }
+                    KeyCode::Char(character) if !character.is_control() => secret.push(character),
+                    _ => {}
+                }
+            }
+        }
+    })();
+    secret.zeroize();
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    result
+}
+
 async fn run_tui(engine: DeckEngine) -> Result<()> {
     let config = Config::load()?;
     let cwd = std::env::current_dir()?;
@@ -105,16 +196,32 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     };
     let cache_dir = paths.render_cache_dir(&cwd)?;
     let policy = SlidePolicy::new(policy_mode, deck_parent, &cache_dir);
-    let (rho, approvals) = build_rho(
+    let (rho, approvals) = match build_rho(
         &config.provider,
         &config.model,
-        prompt,
+        prompt.clone(),
         &cwd,
         deck_parent,
         None,
         engine.clone(),
-        policy,
-    )?;
+        policy.clone(),
+    ) {
+        Ok(runtime) => runtime,
+        Err(error) if provider_uses_api_key(&config.provider) => {
+            run_api_key_login(&config.provider, &error.to_string())?;
+            build_rho(
+                &config.provider,
+                &config.model,
+                prompt,
+                &cwd,
+                deck_parent,
+                None,
+                engine.clone(),
+                policy,
+            )?
+        }
+        Err(error) => return Err(error),
+    };
     let agent = AgentHandle::new(rho).await?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
