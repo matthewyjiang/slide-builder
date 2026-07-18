@@ -1,6 +1,6 @@
 use super::{
     app::{App, PreviewStatus},
-    preview_image::PreviewImage,
+    preview_image::{ImageRenderStatus, PreviewImage},
     theme,
 };
 use ratatui::{
@@ -38,14 +38,34 @@ pub fn render(
                 .get(app.preview.active)
                 .and_then(|slide| slide.image_path.as_deref()),
         ) {
-            if let Err(error) = image.render(frame, content_area, path) {
-                render_message(
+            let status = image.render(frame, content_area, path);
+            let fullscreen = frame.area();
+            image.warm_for_sizes(
+                path,
+                &[
+                    content_area.as_size(),
+                    ratatui::layout::Size::new(
+                        fullscreen.width.saturating_sub(2),
+                        fullscreen.height.saturating_sub(2),
+                    ),
+                ],
+            );
+            match status {
+                ImageRenderStatus::Ready => {}
+                ImageRenderStatus::Loading => render_message(
+                    frame,
+                    content_area,
+                    "Preparing slide…",
+                    "Optimizing this slide for your terminal.",
+                    theme::ACCENT,
+                ),
+                ImageRenderStatus::Error(error) => render_message(
                     frame,
                     content_area,
                     "Preview image could not display",
-                    &format!("{error:#}"),
+                    &error,
                     theme::DANGER,
-                );
+                ),
             }
             return;
         }

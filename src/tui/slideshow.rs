@@ -1,4 +1,8 @@
-use super::{app::App, preview_image::PreviewImage, theme};
+use super::{
+    app::App,
+    preview_image::{ImageRenderStatus, PreviewImage},
+    theme,
+};
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
@@ -38,27 +42,45 @@ pub fn render(
     let content_area = block.inner(area);
     frame.render_widget(block, area);
 
-    if let (Some(image), Some(path)) = (
+    let (message, detail, color) = if let (Some(image), Some(path)) = (
         preview_image,
         app.preview
             .slides
             .get(app.preview.active)
             .and_then(|slide| slide.image_path.as_deref()),
     ) {
-        if image.render(frame, content_area, path).is_ok() {
-            return;
+        let status = image.render(frame, content_area, path);
+        image.warm_for_sizes(path, &[content_area.as_size()]);
+        match status {
+            ImageRenderStatus::Ready => return,
+            ImageRenderStatus::Loading => (
+                "Preparing slide…".to_string(),
+                "It will appear automatically when ready.".to_string(),
+                theme::ACCENT,
+            ),
+            ImageRenderStatus::Error(error) => (
+                "Preview image unavailable".to_string(),
+                error,
+                theme::DANGER,
+            ),
         }
-    }
+    } else {
+        (
+            "Preview image unavailable".to_string(),
+            "No slide image is available.".to_string(),
+            theme::MUTED,
+        )
+    };
 
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::from(""),
             Line::styled(
-                "Preview image unavailable",
-                Style::default()
-                    .fg(theme::TEXT)
-                    .add_modifier(Modifier::BOLD),
+                message,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
+            Line::from(""),
+            Line::styled(detail, Style::default().fg(theme::MUTED)),
         ]))
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true }),
