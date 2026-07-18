@@ -57,20 +57,26 @@ pub struct SlideItem {
     pub image_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PreviewStatus {
+    #[default]
     Empty,
-    Rendering { generation: u64 },
-    Ready { generation: u64 },
-    Stale { generation: u64 },
-    Failed { generation: u64, error: String },
-    Unavailable { reason: String },
-}
-
-impl Default for PreviewStatus {
-    fn default() -> Self {
-        Self::Empty
-    }
+    Rendering {
+        generation: u64,
+    },
+    Ready {
+        generation: u64,
+    },
+    Stale {
+        generation: u64,
+    },
+    Failed {
+        generation: u64,
+        error: String,
+    },
+    Unavailable {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -103,7 +109,7 @@ impl PreviewState {
         self.active = next;
         changed
     }
-    pub fn next(&mut self) -> bool {
+    pub fn next_slide(&mut self) -> bool {
         self.select(self.active.saturating_add(1))
     }
     pub fn previous(&mut self) -> bool {
@@ -763,7 +769,7 @@ impl App {
         }
     }
     fn navigate_next(&mut self) -> Vec<AppAction> {
-        if self.preview.next() {
+        if self.preview.next_slide() {
             vec![AppAction::SetActiveSlide(self.preview.active)]
         } else {
             vec![]
@@ -1034,13 +1040,15 @@ mod tests {
 
     #[test]
     fn approval_event_produces_owned_response_action() {
-        let mut app = App::default();
-        app.modal = ModalState::Approval(super::super::event::ApprovalRequest {
-            id: "approval-1".into(),
-            title: "Write file?".into(),
-            detail: "repo/file".into(),
-            allow_for_session: true,
-        });
+        let mut app = App {
+            modal: ModalState::Approval(super::super::event::ApprovalRequest {
+                id: "approval-1".into(),
+                title: "Write file?".into(),
+                detail: "repo/file".into(),
+                allow_for_session: true,
+            }),
+            ..App::default()
+        };
         assert_eq!(
             app.handle_key(key(KeyCode::Char('a'))),
             vec![AppAction::RespondApproval {

@@ -249,12 +249,14 @@ mod tests {
     #[test]
     fn config_round_trip_preserves_values() {
         let path = temp_file("config.toml");
-        let mut config = Config::default();
-        config.model = "claude-test".into();
-        config.design_packages.push(DesignPackageConfig {
-            name: "brand".into(),
-            path: "/design".into(),
-        });
+        let config = Config {
+            model: "claude-test".into(),
+            design_packages: vec![DesignPackageConfig {
+                name: "brand".into(),
+                path: "/design".into(),
+            }],
+            ..Config::default()
+        };
         config.save_to(&path).unwrap();
         assert_eq!(Config::load_from(&path).unwrap(), config);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
@@ -271,8 +273,10 @@ mod tests {
 
     #[test]
     fn invalid_schema_and_dimensions_are_rejected() {
-        let mut config = Config::default();
-        config.schema_version = 2;
+        let mut config = Config {
+            schema_version: 2,
+            ..Config::default()
+        };
         assert!(config
             .validate()
             .unwrap_err()

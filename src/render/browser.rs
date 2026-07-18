@@ -323,8 +323,10 @@ mod tests {
                 &CaptureOptions::default()
             )
             .is_err());
-        let mut o = CaptureOptions::default();
-        o.scale = f32::NAN;
+        let o = CaptureOptions {
+            scale: f32::NAN,
+            ..CaptureOptions::default()
+        };
         assert!(b
             .capture_args(
                 Path::new("/tmp/x"),

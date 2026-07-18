@@ -202,11 +202,11 @@ async fn worker(
                 next = requests.recv(), if !input_closed => {
                     match next {
                         Some(request) => {
-                            if pending.as_ref().map_or(true, |old| request.generation >= old.generation) {
+                            if pending.as_ref().is_none_or(|old| request.generation >= old.generation) {
                                 pending = Some(request);
                             }
                             while let Ok(request) = requests.try_recv() {
-                                if pending.as_ref().map_or(true, |old| request.generation >= old.generation) {
+                                if pending.as_ref().is_none_or(|old| request.generation >= old.generation) {
                                     pending = Some(request);
                                 }
                             }

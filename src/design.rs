@@ -235,12 +235,14 @@ mod tests {
         let root = temp_dir();
         let explicit = package(&root, "explicit");
         let _scanned = package(&root, "scanned");
-        let mut config = Config::default();
-        config.design_packages = vec![DesignPackageConfig {
-            name: "Configured".into(),
-            path: explicit,
-        }];
-        config.design_scan_dirs = vec![root.clone()];
+        let config = Config {
+            design_packages: vec![DesignPackageConfig {
+                name: "Configured".into(),
+                path: explicit,
+            }],
+            design_scan_dirs: vec![root.clone()],
+            ..Config::default()
+        };
         let found = discover_with_managed(&config, None).unwrap();
         assert_eq!(
             found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
