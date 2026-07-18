@@ -39,7 +39,9 @@ pub enum AgentEvent {
     },
     ToolFinished {
         id: String,
-        result: Result<String, String>,
+        /// Successful output remains in the agent session and is intentionally
+        /// omitted from the user-facing transcript event.
+        result: Result<(), String>,
     },
     RunFinished,
     RunFailed(String),
@@ -73,6 +75,8 @@ pub enum AppEvent {
         error: String,
     },
     RendererUnavailable(String),
+    AgentRenderRequested,
+    AgentSetActiveSlide(usize),
     DeckFileChanged,
     Tick(Instant),
 }

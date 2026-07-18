@@ -53,6 +53,7 @@ pub fn assemble(context: &PromptContext<'_>) -> Result<String> {
     }
 
     if !context.skills.is_empty() {
+        prompt.push_str("\n\nSkills contain task-specific operating instructions. Call `load_skill` before acting whenever a skill description matches the request. For any PowerPoint inspection or edit, load `slide-builder-pptx` before the first deck tool call.");
         prompt.push_str("\n\n<available_skills>");
         for skill in context.skills {
             prompt.push_str(&format!(
@@ -226,6 +227,7 @@ mod tests {
         assert!(!prompt.contains("outside rules"));
         assert!(prompt.contains("Use &lt;blue&gt;"));
         assert!(prompt.contains("Helpful &amp; safe"));
+        assert!(prompt.contains("Call `load_skill` before acting"));
         std::fs::remove_dir_all(root).unwrap();
     }
 

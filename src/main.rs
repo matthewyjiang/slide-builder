@@ -12,6 +12,7 @@ use slide_builder::{
         deck_engine::DeckEngine,
         policy::{PermissionMode, SlidePolicy},
         runtime::{build_rho, AgentHandle},
+        tools::UiToolCommand,
     },
     config::{Config, PermissionMode as ConfigPermissionMode},
     paths::AppPaths,
@@ -72,7 +73,8 @@ async fn main() -> Result<()> {
         DeckEngine::create(&deck, None).await?
     };
     if !io::stdout().is_terminal() {
-        println!("{}", engine.snapshot().await?.outline);
+        engine.snapshot().await?;
+        println!("Deck loaded successfully.");
         return Ok(());
     }
     run_tui(engine).await
@@ -401,6 +403,12 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let paths = AppPaths::discover()?;
     paths.create_app_dirs()?;
+    let skills = slide_builder::skills::discover(
+        &cwd,
+        &paths.skills_dir(),
+        slide_builder::paths::home_dir().as_deref(),
+    )?;
+    let (ui_tool_tx, ui_tool_rx) = mpsc::unbounded_channel();
     let snapshot = engine.snapshot().await?;
     let slide_count = handler_slide_count(&snapshot.html) as usize;
     let deck_parent = engine.path().parent().context("deck has no parent")?;
@@ -410,7 +418,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         repo_cwd: &cwd,
         app_data_dir: &paths.data_dir,
         design: None,
-        skills: &[],
+        skills: &skills,
         slide_index: 1,
         slide_count,
         deck_generation: snapshot.generation,
@@ -435,6 +443,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         &cwd,
         deck_parent,
         None,
+        &skills,
+        ui_tool_tx.clone(),
         engine.clone(),
         policy.clone(),
     ) {
@@ -448,6 +458,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                 &cwd,
                 deck_parent,
                 None,
+                &skills,
+                ui_tool_tx,
                 engine.clone(),
                 policy,
             )?
@@ -457,6 +469,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let agent = AgentHandle::new(rho).await?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    pump_ui_tool_commands(ui_tool_rx, event_tx.clone());
     let _deck_watcher = watch_deck(engine.path(), event_tx.clone())?;
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
     pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
@@ -493,7 +506,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         .push(slide_builder::tui::TranscriptItem::Message(
             slide_builder::tui::Message {
                 role: slide_builder::tui::Role::System,
-                text: format!("Deck opened and validated.\n{}", snapshot.outline),
+                text: "Deck loaded successfully.".into(),
                 complete: true,
             },
         ));
@@ -642,6 +655,23 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         }
     }
     result
+}
+
+fn pump_ui_tool_commands(
+    mut receiver: mpsc::UnboundedReceiver<UiToolCommand>,
+    events: mpsc::UnboundedSender<AppEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(command) = receiver.recv().await {
+            let event = match command {
+                UiToolCommand::Render => AppEvent::AgentRenderRequested,
+                UiToolCommand::SetActiveSlide(index) => AppEvent::AgentSetActiveSlide(index),
+            };
+            if events.send(event).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 fn watch_deck(
