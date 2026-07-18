@@ -24,8 +24,8 @@ const BUILTINS: &[(&str, &str)] = &[
         include_str!("builtin_skills/slide-builder-pptx/SKILL.md"),
     ),
     (
-        "deck-design",
-        include_str!("builtin_skills/deck-design/SKILL.md"),
+        "slide-design",
+        include_str!("builtin_skills/slide-design/SKILL.md"),
     ),
     (
         "deck-assets",
@@ -278,14 +278,14 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         write_skill(
             &project.join(".agents/skills"),
-            "deck-design",
+            "slide-design",
             "project version",
         );
-        write_skill(&home.join(".agents/skills"), "deck-design", "user version");
+        write_skill(&home.join(".agents/skills"), "slide-design", "user version");
         let skills = discover(&project, &root.join("builtins"), Some(&home)).unwrap();
         let selected = skills
             .iter()
-            .find(|skill| skill.name == "deck-design")
+            .find(|skill| skill.name == "slide-design")
             .unwrap();
         assert_eq!(selected.description, "project version");
         assert!(matches!(selected.source, SkillSource::Project(_)));
