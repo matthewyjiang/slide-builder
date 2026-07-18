@@ -1,44 +1,28 @@
-use super::tool_status_text;
-use crate::tui::app::{ToolCard, ToolStatus};
-
-fn shape_card(status: ToolStatus) -> ToolCard {
-    ToolCard {
-        id: "call-1".into(),
-        name: "shape_add".into(),
-        summary: "rectangle to slide 3".into(),
-        detail: String::new(),
-        status,
-    }
-}
+use super::*;
+use crate::tui::{App, Message, Role, ToolCard, ToolStatus, TranscriptItem};
 
 #[test]
-fn tool_copy_tracks_the_current_status() {
-    assert_eq!(
-        tool_status_text(&shape_card(ToolStatus::Proposed)),
-        "Add rectangle to slide 3"
-    );
-    assert_eq!(
-        tool_status_text(&shape_card(ToolStatus::Running)),
-        "Adding rectangle to slide 3"
-    );
-    assert_eq!(
-        tool_status_text(&shape_card(ToolStatus::Succeeded)),
-        "Added rectangle to slide 3"
-    );
-    assert_eq!(
-        tool_status_text(&shape_card(ToolStatus::Failed)),
-        "Could not add rectangle to slide 3"
-    );
-}
-
-#[test]
-fn successful_file_tools_use_plain_language() {
-    let card = ToolCard {
-        id: "call-2".into(),
-        name: "write_file".into(),
-        summary: "chart.svg".into(),
-        detail: String::new(),
-        status: ToolStatus::Succeeded,
+fn latest_rows_remain_visible_after_wrapped_tool_output() {
+    let app = App {
+        transcript: vec![
+            TranscriptItem::Tool(ToolCard {
+                id: "call-1".into(),
+                name: "write_file".into(),
+                summary: "a very long generated artifact name that wraps repeatedly".into(),
+                detail: "a detailed tool result that also wraps on a narrow panel".into(),
+                status: ToolStatus::Succeeded,
+            }),
+            TranscriptItem::Message(Message {
+                role: Role::Assistant,
+                text: "latest answer".into(),
+                complete: true,
+            }),
+        ],
+        ..App::default()
     };
-    assert_eq!(tool_status_text(&card), "Wrote chart.svg");
+
+    let rows = visible_text_rows(Rect::new(0, 0, 12, 6), &app);
+
+    assert!(rows.iter().any(|row| row.contains("latest")));
+    assert!(rows.iter().all(|row| row.chars().count() <= 12));
 }

@@ -62,18 +62,18 @@ fn dragging_visible_conversation_text_copies_it_and_shows_feedback() {
     assert!(app
         .apply(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            chat.x,
+            chat.x + 1,
             text_y,
         ))
         .is_empty());
     app.apply(mouse(
         MouseEventKind::Drag(MouseButton::Left),
-        chat.x + 4,
+        chat.x + 5,
         text_y,
     ));
     let actions = app.apply(mouse(
         MouseEventKind::Up(MouseButton::Left),
-        chat.x + 4,
+        chat.x + 5,
         text_y,
     ));
 
@@ -82,6 +82,38 @@ fn dragging_visible_conversation_text_copies_it_and_shows_feedback() {
         app.mouse.toast.as_ref().map(|toast| toast.message.as_str()),
         Some("Copied 5 chars")
     );
+}
+
+#[test]
+fn dragging_from_a_wide_grapheme_uses_terminal_columns() {
+    let mut app = App {
+        transcript: vec![TranscriptItem::Message(Message {
+            role: Role::System,
+            text: "界x".into(),
+            complete: true,
+        })],
+        ..app_at(140, 40)
+    };
+    let chat = layout::regions(app.mouse.viewport, &app).chat;
+    let text_y = chat.y + 2;
+
+    app.apply(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        chat.x + 2,
+        text_y,
+    ));
+    app.apply(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        chat.x + 3,
+        text_y,
+    ));
+    let actions = app.apply(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        chat.x + 3,
+        text_y,
+    ));
+
+    assert_eq!(actions, vec![AppAction::CopyText("界x".into())]);
 }
 
 #[test]

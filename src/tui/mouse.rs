@@ -8,6 +8,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::{app::App, chat, event::AppAction, layout, outline, theme};
 
@@ -193,7 +195,7 @@ fn render_selection(frame: &mut Frame<'_>, app: &App, selection: TextSelection) 
             continue;
         }
         let row = &rows[(y - body.y) as usize];
-        let row_width = row.chars().count() as u16;
+        let row_width = row.width() as u16;
         let start_x = if y == start.y { start.x } else { body.x };
         let end_x = if y == end.y {
             end.x
@@ -229,16 +231,24 @@ fn selected_text(app: &App, body: Rect, selection: TextSelection) -> String {
         let through = if y == end.y {
             end.x.saturating_sub(body.x) as usize + 1
         } else {
-            row.chars().count()
+            row.width()
         };
-        selected.push(
-            row.chars()
-                .skip(from)
-                .take(through.saturating_sub(from))
-                .collect::<String>(),
-        );
+        selected.push(select_display_columns(row, from, through));
     }
     selected.join("\n")
+}
+
+fn select_display_columns(row: &str, from: usize, through: usize) -> String {
+    let mut selected = String::new();
+    let mut column = 0;
+    for grapheme in row.graphemes(true) {
+        let next = column + grapheme.width().max(1);
+        if from < next && through > column {
+            selected.push_str(grapheme);
+        }
+        column = next;
+    }
+    selected
 }
 
 fn slide_at(app: &App, area: Rect, point: ScreenPoint) -> Option<usize> {
