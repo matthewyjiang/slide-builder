@@ -32,7 +32,7 @@ pub fn render(frame: &mut Frame<'_>) {
         columns[0],
         "Workspace",
         &[
-            ("Ctrl+B", "Open the slide prefix"),
+            ("Alt+S", "Open the slide prefix"),
             ("Ctrl+K / F2", "Open all actions"),
             ("Ctrl+,", "Open settings"),
             ("F1", "Show this help"),
@@ -45,14 +45,14 @@ pub fn render(frame: &mut Frame<'_>) {
     render_section(
         frame,
         columns[1],
-        "Slide prefix (Ctrl+B, then key)",
+        "Slide prefix (Alt+S, then key)",
         &[
             ("h / k", "Previous slide"),
             ("j / l", "Next slide"),
             ("g / G", "First / last slide"),
             ("r", "Refresh preview"),
             ("Enter / f", "Present active slide"),
-            ("Esc", "Cancel prefix"),
+            ("Esc / Alt+S", "Cancel prefix"),
             ("Ctrl+R", "Refresh without prefix"),
         ],
     );

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -10,6 +11,9 @@ use super::modal::{
     SlashCommandAction,
 };
 use crate::config::Config;
+
+/// How long slide-prefix mode stays armed without a follow-up key.
+const PREFIX_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -224,6 +228,8 @@ pub struct App {
     pub modal: ModalState,
     pub fullscreen: bool,
     pub prefix_active: bool,
+    /// When set, prefix mode expires at this instant so a forgotten prefix cannot trap input.
+    pub prefix_deadline: Option<Instant>,
     pub run_active: bool,
     pub should_quit: bool,
     pub deck_name: String,
@@ -244,6 +250,7 @@ impl Default for App {
             modal: ModalState::None,
             fullscreen: false,
             prefix_active: false,
+            prefix_deadline: None,
             run_active: false,
             should_quit: false,
             deck_name: "No deck".into(),
@@ -301,12 +308,17 @@ impl App {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
             }
-            AppEvent::Input(_) | AppEvent::Tick(_) => vec![],
+            AppEvent::Tick(now) => {
+                self.expire_prefix(now);
+                vec![]
+            }
+            AppEvent::Input(_) => vec![],
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
-        if key.kind == KeyEventKind::Release {
+        // Only key-down counts. Releases must not clear or activate prefix mode.
+        if key.kind != KeyEventKind::Press {
             return vec![];
         }
         if !matches!(self.modal, ModalState::None) {
@@ -316,21 +328,7 @@ impl App {
             return self.handle_fullscreen_key(key);
         }
         if self.prefix_active {
-            self.prefix_active = false;
-            return match key.code {
-                KeyCode::Char('h' | 'k') => self.navigate_previous(),
-                KeyCode::Char('j' | 'l') => self.navigate_next(),
-                KeyCode::Home | KeyCode::Char('g') => self.navigate_first(),
-                KeyCode::End | KeyCode::Char('G') => self.navigate_last(),
-                KeyCode::Char('r') => vec![AppAction::RequestRender],
-                KeyCode::Enter | KeyCode::Char('f') => {
-                    if self.preview.slide_count() > 0 {
-                        self.fullscreen = true;
-                    }
-                    vec![]
-                }
-                _ => vec![],
-            };
+            return self.handle_prefix_key(key);
         }
         if matches!(key.code, KeyCode::F(1) | KeyCode::F(2)) {
             self.modal = if key.code == KeyCode::F(1) {
@@ -340,12 +338,14 @@ impl App {
             };
             return vec![];
         }
+        // Alt+S opens the slide prefix. Avoid Ctrl+B: herdr/tmux claim that chord, so the
+        // follow-up key never reaches this app and prefix mode appears stuck.
+        if key.modifiers == KeyModifiers::ALT && matches!(key.code, KeyCode::Char('s' | 'S')) {
+            self.enter_prefix();
+            return vec![];
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return match key.code {
-                KeyCode::Char('b' | 'B') => {
-                    self.prefix_active = true;
-                    vec![]
-                }
                 KeyCode::Char('k' | 'K') => {
                     self.modal = ModalState::CommandPalette(CommandPaletteState::default());
                     vec![]
@@ -382,6 +382,49 @@ impl App {
         match key.code {
             KeyCode::Esc if self.run_active => vec![AppAction::CancelRun],
             _ => self.handle_input_key(key),
+        }
+    }
+
+    fn enter_prefix(&mut self) {
+        self.prefix_active = true;
+        self.prefix_deadline = Some(Instant::now() + PREFIX_TIMEOUT);
+    }
+
+    fn clear_prefix(&mut self) {
+        self.prefix_active = false;
+        self.prefix_deadline = None;
+    }
+
+    fn expire_prefix(&mut self, now: Instant) {
+        if self.prefix_active && self.prefix_deadline.is_some_and(|deadline| now >= deadline) {
+            self.clear_prefix();
+        }
+    }
+
+    fn handle_prefix_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        // Toggle / cancel without running a slide action.
+        if key.code == KeyCode::Esc
+            || (key.modifiers == KeyModifiers::ALT && matches!(key.code, KeyCode::Char('s' | 'S')))
+        {
+            self.clear_prefix();
+            return vec![];
+        }
+
+        self.clear_prefix();
+        match key.code {
+            KeyCode::Char('h' | 'k') | KeyCode::Left => self.navigate_previous(),
+            KeyCode::Char('j' | 'l') | KeyCode::Right => self.navigate_next(),
+            KeyCode::Home | KeyCode::Char('g') => self.navigate_first(),
+            KeyCode::End | KeyCode::Char('G') => self.navigate_last(),
+            KeyCode::Char('r') => vec![AppAction::RequestRender],
+            KeyCode::Enter | KeyCode::Char('f') => {
+                if self.preview.slide_count() > 0 {
+                    self.fullscreen = true;
+                }
+                vec![]
+            }
+            // Unknown keys cancel prefix and are intentionally not typed into the prompt.
+            _ => vec![],
         }
     }
 
@@ -756,7 +799,7 @@ mod tests {
         assert_eq!(app.preview.active, 0);
         assert_eq!(app.input.cursor, 0);
 
-        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT));
         assert!(app.prefix_active);
         assert_eq!(
             app.handle_key(key(KeyCode::Char('l'))),

@@ -78,6 +78,8 @@ pub fn render_actions(frame: &mut Frame<'_>, area: Rect, app: &App) {
             text(" render  "),
             key("Enter/f"),
             text(" present  "),
+            key("Esc"),
+            text(" cancel  "),
         ]
     } else if !app.input.slash_suggestions().is_empty() {
         vec![
@@ -94,7 +96,7 @@ pub fn render_actions(frame: &mut Frame<'_>, area: Rect, app: &App) {
         vec![
             key("Esc"),
             text(" cancel run  "),
-            key("Ctrl+B"),
+            key("Alt+S"),
             text(" slides  "),
             key("F1"),
             text(" help  "),
@@ -105,7 +107,7 @@ pub fn render_actions(frame: &mut Frame<'_>, area: Rect, app: &App) {
             text(" send  "),
             key("⇧Enter"),
             text(" newline  "),
-            key("Ctrl+B"),
+            key("Alt+S"),
             text(" slides  "),
             key("Ctrl+K/F2"),
             text(" actions  "),

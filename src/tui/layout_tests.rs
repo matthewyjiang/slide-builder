@@ -82,7 +82,7 @@ fn compact_workspace_keeps_all_status_surfaces_visible() {
     assert!(content.contains("Conversation"));
     assert!(content.contains("Preview"));
     assert!(content.contains("Slides"));
-    assert!(content.contains("Ctrl+B"));
+    assert!(content.contains("Alt+S"));
 }
 
 #[test]

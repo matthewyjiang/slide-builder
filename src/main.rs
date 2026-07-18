@@ -647,7 +647,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
 
                 preview_event = preview_worker_rx.recv() => {
                     let Some(preview_event) = preview_event else {
-                        continue;
+                        // Keep the branch from spinning if the worker channel closes.
+                        std::future::pending::<()>().await;
+                        unreachable!();
                     };
                     if preview_image.apply_worker_event(preview_event) {
                         needs_draw = true;
@@ -680,6 +682,23 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         }
                         needs_draw = true;
                     }
+                }
+
+                // Prefix mode needs a timer so a forgotten prefix cannot trap navigation.
+                _ = tokio::time::sleep(Duration::from_millis(100)), if app.prefix_active => {
+                    if dispatch_app_event(
+                        AppEvent::Tick(std::time::Instant::now()),
+                        &mut app,
+                        &mut config,
+                        &agent,
+                        &engine,
+                        &render_service,
+                        &event_tx,
+                        &pending_approvals,
+                    )? {
+                        return Ok(());
+                    }
+                    needs_draw = true;
                 }
             }
         }
