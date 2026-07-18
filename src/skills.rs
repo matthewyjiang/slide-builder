@@ -31,6 +31,10 @@ const BUILTINS: &[(&str, &str)] = &[
         "deck-assets",
         include_str!("builtin_skills/deck-assets/SKILL.md"),
     ),
+    (
+        "design-package-import",
+        include_str!("builtin_skills/design-package-import/SKILL.md"),
+    ),
 ];
 
 /// Materializes embedded skills so future relative scripts and references resolve from disk.
@@ -266,7 +270,7 @@ mod tests {
             assert!(root.join(name).join("SKILL.md").is_file());
         }
         let skills = discover(Path::new("/nonexistent"), &root, None).unwrap();
-        assert_eq!(skills.len(), 3);
+        assert_eq!(skills.len(), 4);
         std::fs::remove_dir_all(root).unwrap();
     }
 

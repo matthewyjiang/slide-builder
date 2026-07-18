@@ -155,11 +155,35 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
                 AppEvent::Run(AgentEvent::RunFinished),
             ];
         }
-        RunEvent::Cancelled { .. } => AppEvent::Run(AgentEvent::RunFinished),
+        RunEvent::Cancelled { .. } => AppEvent::Run(AgentEvent::RunCancelled),
         RunEvent::Failed { message, .. } => AppEvent::Run(AgentEvent::RunFailed(message)),
         _ => return vec![],
     };
     vec![event]
+}
+
+pub fn build_import_rho(
+    provider: &str,
+    model: &str,
+    system_prompt: &str,
+    workspace_root: &Path,
+) -> Result<Rho> {
+    let reasoning = rho_sdk::ReasoningLevel::Medium;
+    let options = rho_providers::ProviderBuildOptions::new(provider, model, reasoning)
+        .map_err(anyhow::Error::new)
+        .context("provider configuration failed")?;
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+        std::sync::Arc::new(crate::credentials::SlideCredentialStore),
+    );
+    let provider = rho_providers::build_sdk_provider_with_source(options, &credentials)
+        .map_err(anyhow::Error::new)
+        .context("provider setup failed; log in from slide-builder setup")?;
+    Ok(Rho::builder()
+        .provider_shared(provider)
+        .system_prompt(SystemPrompt::Custom(system_prompt.to_owned()))
+        .workspace(Workspace::new(workspace_root)?)
+        .reasoning_level(reasoning)
+        .build()?)
 }
 
 #[allow(clippy::too_many_arguments)]

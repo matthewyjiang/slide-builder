@@ -44,6 +44,7 @@ pub enum AgentEvent {
         result: Result<(), String>,
     },
     RunFinished,
+    RunCancelled,
     RunFailed(String),
 }
 
@@ -78,6 +79,12 @@ pub enum AppEvent {
     AgentRenderRequested,
     AgentSetActiveSlide(usize),
     DeckFileChanged,
+    ImportDesignPickerOpened {
+        start_directory: PathBuf,
+    },
+    DesignPickerOpened {
+        entries: Vec<(String, PathBuf)>,
+    },
     Tick(Instant),
 }
 
@@ -100,6 +107,9 @@ pub enum AppAction {
     RequestRender,
     OpenDeckPicker,
     OpenDesignPicker,
+    SelectDesign(PathBuf),
+    OpenImportDesignPicker,
+    ImportDesign(PathBuf),
     SaveConfiguration(Box<Config>),
     RespondApproval {
         id: String,

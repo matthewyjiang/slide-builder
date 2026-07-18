@@ -1,5 +1,5 @@
 use crate::config::{Config, DesignPackageConfig};
-use crate::paths::expand_tilde;
+use crate::paths::{expand_tilde, AppPaths};
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,14 @@ impl DesignPackage {
 /// Discovers explicit packages first, then the scan directory itself and its immediate children.
 /// Invalid scanned candidates are ignored; invalid explicit entries are reported to the user.
 pub fn discover(config: &Config) -> Result<Vec<DesignPackage>> {
+    let managed = AppPaths::discover()?.design_packages_dir();
+    discover_with_managed(config, Some(&managed))
+}
+
+pub fn discover_with_managed(
+    config: &Config,
+    managed_root: Option<&Path>,
+) -> Result<Vec<DesignPackage>> {
     let mut packages = Vec::new();
     let mut seen = HashSet::new();
     for entry in &config.design_packages {
@@ -79,8 +87,12 @@ pub fn discover(config: &Config) -> Result<Vec<DesignPackage>> {
             packages.push(package);
         }
     }
-    for root in &config.design_scan_dirs {
-        let root = expand_tilde(root)?;
+    let mut scan_roots = Vec::new();
+    if let Some(managed_root) = managed_root {
+        scan_roots.push(managed_root.to_path_buf());
+    }
+    scan_roots.extend(config.expanded_design_scan_dirs()?);
+    for root in scan_roots {
         let mut candidates = Vec::new();
         if root.join("DESIGN.md").is_file() {
             candidates.push(root.clone());
@@ -90,7 +102,14 @@ pub fn discover(config: &Config) -> Result<Vec<DesignPackage>> {
                 entries
                     .filter_map(Result::ok)
                     .map(|entry| entry.path())
-                    .filter(|path| path.is_dir() && path.join("DESIGN.md").is_file()),
+                    .filter(|path| {
+                        path.is_dir()
+                            && path.join("DESIGN.md").is_file()
+                            && !path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(|name| name.starts_with('.'))
+                    }),
             );
         }
         candidates.sort();
@@ -222,10 +241,33 @@ mod tests {
             path: explicit,
         }];
         config.design_scan_dirs = vec![root.clone()];
-        let found = discover(&config).unwrap();
+        let found = discover_with_managed(&config, None).unwrap();
         assert_eq!(
             found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             vec!["Configured", "scanned"]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovers_managed_packages_before_configured_scan_roots() {
+        let root = temp_dir();
+        let managed = root.join("managed");
+        let scanned = root.join("scanned");
+        let _managed_package = package(&managed, "managed-design");
+        let _hidden_staging = package(&managed, ".import-staging");
+        let _scanned_package = package(&scanned, "scanned-design");
+        let config = Config {
+            design_scan_dirs: vec![scanned],
+            ..Config::default()
+        };
+        let found = discover_with_managed(&config, Some(&managed)).unwrap();
+        assert_eq!(
+            found
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["managed-design", "scanned-design"]
         );
         std::fs::remove_dir_all(root).unwrap();
     }

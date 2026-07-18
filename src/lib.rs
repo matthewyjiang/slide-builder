@@ -2,6 +2,7 @@ pub mod agent;
 pub mod config;
 pub mod credentials;
 pub mod design;
+pub mod design_import;
 pub mod paths;
 pub mod prompt;
 pub mod render;

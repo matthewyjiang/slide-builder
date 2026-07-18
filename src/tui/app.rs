@@ -6,8 +6,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::event::{AgentEvent, AppAction, AppEvent, ApprovalDecision, RenderManifest};
 use super::modal::{
     exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
-    CommandPaletteState, ConfigurationEvent, ConfigurationState, ModalState, SlashCommand,
-    SlashCommandAction,
+    CommandPaletteState, ConfigurationEvent, ConfigurationState, FileSystemPickerEvent,
+    FileSystemPickerState, ModalState, SlashCommand, SlashCommandAction,
 };
 use crate::config::Config;
 
@@ -310,6 +310,24 @@ impl App {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
             }
+            AppEvent::ImportDesignPickerOpened { start_directory } => {
+                self.modal =
+                    ModalState::ImportDesignPicker(FileSystemPickerState::new(start_directory));
+                vec![]
+            }
+            AppEvent::DesignPickerOpened { entries } => {
+                self.modal = ModalState::DesignPicker(super::modal::DesignPickerState {
+                    entries,
+                    ..Default::default()
+                });
+                vec![]
+            }
+            AppEvent::Input(crossterm::event::Event::Paste(text)) => {
+                if let ModalState::ImportDesignPicker(state) = &mut self.modal {
+                    state.paste(&text);
+                }
+                vec![]
+            }
             AppEvent::Tick(now) => {
                 self.mouse.expire_toast(now);
                 vec![]
@@ -501,6 +519,45 @@ impl App {
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        if let ModalState::ImportDesignPicker(state) = &mut self.modal {
+            return match state.handle_key(key) {
+                FileSystemPickerEvent::None => vec![],
+                FileSystemPickerEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                FileSystemPickerEvent::Selected(path) => {
+                    self.modal = ModalState::None;
+                    vec![AppAction::ImportDesign(path)]
+                }
+            };
+        }
+        if let ModalState::DesignPicker(state) = &mut self.modal {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                KeyCode::Up => {
+                    state.selected = state.selected.saturating_sub(1);
+                    vec![]
+                }
+                KeyCode::Down => {
+                    state.selected =
+                        (state.selected + 1).min(state.entries.len().saturating_sub(1));
+                    vec![]
+                }
+                KeyCode::Enter => {
+                    let path = state
+                        .entries
+                        .get(state.selected)
+                        .map(|(_, path)| path.clone());
+                    self.modal = ModalState::None;
+                    path.map(AppAction::SelectDesign).into_iter().collect()
+                }
+                _ => vec![],
+            };
+        }
         if let ModalState::CommandPalette(state) = &mut self.modal {
             let event = state.handle_key(key);
             return match event {
@@ -572,6 +629,7 @@ impl App {
                 self.modal = ModalState::DesignPicker(Default::default());
                 vec![AppAction::OpenDesignPicker]
             }
+            Command::ImportDesign => vec![AppAction::OpenImportDesignPicker],
             Command::RenderPreview => vec![AppAction::RequestRender],
             Command::Configure => {
                 self.modal =
@@ -692,7 +750,7 @@ impl App {
                 Ok(()) => self.update_tool(&id, ToolStatus::Succeeded, Some(String::new())),
                 Err(detail) => self.update_tool(&id, ToolStatus::Failed, Some(detail)),
             },
-            AgentEvent::RunFinished => self.run_active = false,
+            AgentEvent::RunFinished | AgentEvent::RunCancelled => self.run_active = false,
             AgentEvent::RunFailed(error) => {
                 self.run_active = false;
                 self.transcript.push(TranscriptItem::Message(Message {
@@ -903,3 +961,7 @@ mod agent_tools_tests;
 #[cfg(test)]
 #[path = "app_controls_tests.rs"]
 mod controls_tests;
+
+#[cfg(test)]
+#[path = "app_import_design_tests.rs"]
+mod import_design_tests;
