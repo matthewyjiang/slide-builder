@@ -13,6 +13,7 @@ pub struct PromptContext<'a> {
     pub active_deck: &'a Path,
     pub decks_dir: &'a Path,
     pub repo_cwd: &'a Path,
+    pub app_data_dir: &'a Path,
     pub design: Option<&'a DesignPackage>,
     pub skills: &'a [Skill],
     pub slide_index: usize,
@@ -43,7 +44,7 @@ pub fn assemble(context: &PromptContext<'_>) -> Result<String> {
         }
     }
 
-    for (path, contents) in agent_instruction_files(context.repo_cwd)? {
+    for (path, contents) in agent_instruction_files(context.repo_cwd, context.app_data_dir)? {
         prompt.push_str(&format!(
             "\n\n<agents_instructions path=\"{}\">\n{}\n</agents_instructions>",
             xml(&path),
@@ -86,13 +87,33 @@ pub fn transition_message(
     )
 }
 
-fn agent_instruction_files(cwd: &Path) -> Result<Vec<(PathBuf, String)>> {
+fn agent_instruction_files(cwd: &Path, app_data_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
     let cwd = absolute(cwd)?;
-    let mut directories = cwd.ancestors().map(Path::to_path_buf).collect::<Vec<_>>();
+    let app_data_dir = absolute(app_data_dir)?;
+    // A repository boundary prevents unrelated instructions in home or filesystem-root
+    // directories from leaking into the agent. Outside Git repositories, only the launch
+    // directory is treated as project scope.
+    let repo_root = cwd
+        .ancestors()
+        .find(|directory| directory.join(".git").exists())
+        .unwrap_or(&cwd);
+    let mut directories = cwd
+        .ancestors()
+        .take_while(|directory| *directory != repo_root)
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
+    directories.push(repo_root.to_path_buf());
     directories.reverse();
+
+    let mut paths = vec![app_data_dir.join("AGENTS.md")];
+    paths.extend(
+        directories
+            .into_iter()
+            .map(|directory| directory.join("AGENTS.md")),
+    );
+
     let mut output = Vec::new();
-    for directory in directories {
-        let path = directory.join("AGENTS.md");
+    for path in paths {
         match std::fs::read_to_string(&path) {
             Ok(contents) => output.push((path, contents)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -155,7 +176,12 @@ mod tests {
     fn prompt_sections_have_required_order_and_escape_content() {
         let root = temp_dir();
         let repo = root.join("repo/sub");
+        let app_data = root.join("app-data");
         std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(&app_data).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "outside rules").unwrap();
+        std::fs::write(app_data.join("AGENTS.md"), "application rules").unwrap();
         std::fs::write(root.join("repo/AGENTS.md"), "parent rules").unwrap();
         std::fs::write(repo.join("AGENTS.md"), "specific <rules>").unwrap();
         let design = DesignPackage {
@@ -176,6 +202,7 @@ mod tests {
             active_deck: &root.join("deck.pptx"),
             decks_dir: &root,
             repo_cwd: &repo,
+            app_data_dir: &app_data,
             design: Some(&design),
             skills: &[skill],
             slide_index: 2,
@@ -184,16 +211,19 @@ mod tests {
         })
         .unwrap();
         let design_at = prompt.find("<design_guidelines>").unwrap();
+        let application_at = prompt.find("application rules").unwrap();
         let parent_at = prompt.find("parent rules").unwrap();
         let child_at = prompt.find("specific &lt;rules&gt;").unwrap();
         let skills_at = prompt.find("<available_skills>").unwrap();
         let state_at = prompt.find("<deck_state>").unwrap();
         assert!(
-            design_at < parent_at
+            design_at < application_at
+                && application_at < parent_at
                 && parent_at < child_at
                 && child_at < skills_at
                 && skills_at < state_at
         );
+        assert!(!prompt.contains("outside rules"));
         assert!(prompt.contains("Use &lt;blue&gt;"));
         assert!(prompt.contains("Helpful &amp; safe"));
         std::fs::remove_dir_all(root).unwrap();
@@ -219,6 +249,7 @@ mod tests {
             active_deck: &root.join("deck.pptx"),
             decks_dir: &root,
             repo_cwd: &root,
+            app_data_dir: &root.join("app-data"),
             design: None,
             skills: &[],
             slide_index: 8,

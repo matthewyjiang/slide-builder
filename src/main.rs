@@ -407,6 +407,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         active_deck: engine.path(),
         decks_dir: deck_parent,
         repo_cwd: &cwd,
+        app_data_dir: &paths.data_dir,
         design: None,
         skills: &[],
         slide_index: 1,
