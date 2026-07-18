@@ -38,14 +38,16 @@ pub fn render(
                 .get(app.preview.active)
                 .and_then(|slide| slide.image_path.as_deref()),
         ) {
-            if let Err(error) = image.render(frame, content_area, path) {
+            if let Some(error) = image.last_error() {
                 render_message(
                     frame,
                     content_area,
                     "Preview image could not display",
-                    &format!("{error:#}"),
+                    error,
                     theme::DANGER,
                 );
+            } else {
+                image.render(frame, content_area, path);
             }
             return;
         }

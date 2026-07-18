@@ -45,7 +45,8 @@ pub fn render(
             .get(app.preview.active)
             .and_then(|slide| slide.image_path.as_deref()),
     ) {
-        if image.render(frame, content_area, path).is_ok() {
+        if image.last_error().is_none() {
+            image.render(frame, content_area, path);
             return;
         }
     }

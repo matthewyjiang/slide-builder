@@ -4,7 +4,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use notify::{EventKind, Watcher};
 use slide_builder::{
     agent::{
@@ -469,7 +469,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     execute!(out, EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(out);
     let mut terminal = ratatui::Terminal::new(backend)?;
-    let mut preview_image = PreviewImage::detect(&config.preview.protocol);
+    let (preview_worker_tx, mut preview_worker_rx) = mpsc::unbounded_channel();
+    let mut preview_image =
+        PreviewImage::detect(&config.preview.protocol, preview_worker_tx.clone());
     let mut app = App {
         deck_name: engine
             .path()
@@ -509,109 +511,175 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
 
     let result = async {
         let mut input = EventStream::new();
+        // Interaction always wins: wait for work first, draw only when dirty, and keep
+        // heavy image decode/encode off this path.
+        let mut needs_draw = true;
         loop {
-            terminal.draw(|frame| {
-                slide_builder::tui::render_with_preview(frame, &app, Some(&mut preview_image))
-            })?;
-            let event = tokio::select! {
-                input = input.next() => match input {
-                    Some(Ok(event)) => Some(AppEvent::Input(event)),
-                    Some(Err(error)) => return Err(error.into()),
-                    None => return Ok(()),
-                },
-                event = event_rx.recv() => event,
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    Some(AppEvent::Tick(std::time::Instant::now()))
+            if let Some(path) = app.preview.active_image_path() {
+                preview_image.request_path(path, &preview_worker_tx);
+            }
+
+            if needs_draw {
+                terminal.draw(|frame| {
+                    slide_builder::tui::render_with_preview(frame, &app, Some(&mut preview_image))
+                })?;
+                needs_draw = false;
+            }
+
+            tokio::select! {
+                biased;
+
+                input_event = input.next() => {
+                    let Some(input_event) = input_event else {
+                        return Ok(());
+                    };
+                    let event = match input_event {
+                        Ok(event) => AppEvent::Input(event),
+                        Err(error) => return Err(error.into()),
+                    };
+                    if dispatch_app_event(
+                        event,
+                        &mut app,
+                        &mut config,
+                        &agent,
+                        &engine,
+                        &render_service,
+                        &event_tx,
+                        &pending_approvals,
+                    )? {
+                        return Ok(());
+                    }
+                    needs_draw = true;
+
+                    // Drain ready input before redrawing so typing stays ahead of paint.
+                    while let Some(ready) = input.next().now_or_never() {
+                        let Some(ready) = ready else {
+                            return Ok(());
+                        };
+                        let event = match ready {
+                            Ok(event) => AppEvent::Input(event),
+                            Err(error) => return Err(error.into()),
+                        };
+                        if dispatch_app_event(
+                            event,
+                            &mut app,
+                            &mut config,
+                            &agent,
+                            &engine,
+                            &render_service,
+                            &event_tx,
+                            &pending_approvals,
+                        )? {
+                            return Ok(());
+                        }
+                    }
+                    while let Ok(event) = event_rx.try_recv() {
+                        if dispatch_app_event(
+                            event,
+                            &mut app,
+                            &mut config,
+                            &agent,
+                            &engine,
+                            &render_service,
+                            &event_tx,
+                            &pending_approvals,
+                        )? {
+                            return Ok(());
+                        }
+                    }
                 }
-            };
-            let Some(event) = event else { return Ok(()) };
-            for action in app.apply(event) {
-                match action {
-                    AppAction::Quit => return Ok(()),
-                    AppAction::SendMessage {
-                        text,
-                        attach_active_slide,
-                    } => {
-                        let image_path = attach_active_slide
-                            .then(|| app.preview.slides.get(app.preview.active))
-                            .flatten()
-                            .and_then(|slide| slide.image_path.clone());
-                        let handle = agent.clone();
-                        let tx = event_tx.clone();
-                        tokio::spawn(async move {
-                            if let Err(error) = handle.send(text, image_path, tx.clone()).await {
-                                let _ = tx.send(AppEvent::Run(
-                                    slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
-                                ));
-                            }
-                        });
+
+                event = event_rx.recv() => {
+                    let Some(event) = event else {
+                        return Ok(());
+                    };
+                    if dispatch_app_event(
+                        event,
+                        &mut app,
+                        &mut config,
+                        &agent,
+                        &engine,
+                        &render_service,
+                        &event_tx,
+                        &pending_approvals,
+                    )? {
+                        return Ok(());
                     }
-                    AppAction::CancelRun => {
-                        agent.cancel();
-                    }
-                    AppAction::RequestRender => match &render_service {
-                        Some(service) => {
-                            queue_render(service.clone(), engine.clone(), &config, event_tx.clone())
-                        }
-                        None => {
-                            let _ = event_tx.send(AppEvent::RendererUnavailable(
-                                "No supported Chromium renderer was found".into(),
-                            ));
-                        }
-                    },
-                    AppAction::SaveConfiguration(next) => {
-                        let next = *next;
-                        let restart_required = next != config;
-                        match next.save() {
-                            Ok(()) => {
-                                config = next;
-                                app.config = config.clone();
-                                app.transcript.push(slide_builder::tui::TranscriptItem::Message(
-                                    slide_builder::tui::Message {
-                                        role: slide_builder::tui::Role::System,
-                                        text: if restart_required {
-                                            "Configuration saved. Restart slide-builder to apply the changes."
-                                                .into()
-                                        } else {
-                                            "Configuration saved.".into()
-                                        },
-                                        complete: true,
-                                    },
-                                ));
-                            }
-                            Err(error) => app.transcript.push(
-                                slide_builder::tui::TranscriptItem::Message(
-                                    slide_builder::tui::Message {
-                                        role: slide_builder::tui::Role::System,
-                                        text: format!("Could not save configuration: {error:#}"),
-                                        complete: true,
-                                    },
-                                ),
-                            ),
+                    needs_draw = true;
+
+                    // Batch async work, then prefer any pending keystrokes before paint.
+                    while let Ok(event) = event_rx.try_recv() {
+                        if dispatch_app_event(
+                            event,
+                            &mut app,
+                            &mut config,
+                            &agent,
+                            &engine,
+                            &render_service,
+                            &event_tx,
+                            &pending_approvals,
+                        )? {
+                            return Ok(());
                         }
                     }
-                    AppAction::RespondApproval { id, decision } => {
-                        if let Some(mut pending) = pending_approvals
-                            .lock()
-                            .expect("approval map poisoned")
-                            .remove(&id)
-                        {
-                            let decision = match decision {
-                                ApprovalDecision::AllowOnce => rho_sdk::ApprovalDecision::AllowOnce,
-                                ApprovalDecision::AllowForSession => {
-                                    rho_sdk::ApprovalDecision::AllowForSession
-                                }
-                                ApprovalDecision::Deny => rho_sdk::ApprovalDecision::Deny {
-                                    reason: "denied by user".into(),
-                                },
-                            };
-                            let _ = pending.respond(decision);
+                    while let Some(ready) = input.next().now_or_never() {
+                        let Some(ready) = ready else {
+                            return Ok(());
+                        };
+                        let event = match ready {
+                            Ok(event) => AppEvent::Input(event),
+                            Err(error) => return Err(error.into()),
+                        };
+                        if dispatch_app_event(
+                            event,
+                            &mut app,
+                            &mut config,
+                            &agent,
+                            &engine,
+                            &render_service,
+                            &event_tx,
+                            &pending_approvals,
+                        )? {
+                            return Ok(());
                         }
                     }
-                    AppAction::None
-                    | AppAction::OpenDeckPicker
-                    | AppAction::OpenDesignPicker
-                    | AppAction::SetActiveSlide(_) => {}
+                }
+
+                preview_event = preview_worker_rx.recv() => {
+                    let Some(preview_event) = preview_event else {
+                        continue;
+                    };
+                    if preview_image.apply_worker_event(preview_event) {
+                        needs_draw = true;
+                    }
+                    while let Ok(preview_event) = preview_worker_rx.try_recv() {
+                        if preview_image.apply_worker_event(preview_event) {
+                            needs_draw = true;
+                        }
+                    }
+                    // Image work must never starve keyboard input.
+                    while let Some(ready) = input.next().now_or_never() {
+                        let Some(ready) = ready else {
+                            return Ok(());
+                        };
+                        let event = match ready {
+                            Ok(event) => AppEvent::Input(event),
+                            Err(error) => return Err(error.into()),
+                        };
+                        if dispatch_app_event(
+                            event,
+                            &mut app,
+                            &mut config,
+                            &agent,
+                            &engine,
+                            &render_service,
+                            &event_tx,
+                            &pending_approvals,
+                        )? {
+                            return Ok(());
+                        }
+                        needs_draw = true;
+                    }
                 }
             }
         }
@@ -630,6 +698,108 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         }
     }
     result
+}
+
+/// Apply one app event and execute its side effects.
+/// Returns `true` when the event loop should exit.
+fn dispatch_app_event(
+    event: AppEvent,
+    app: &mut App,
+    config: &mut Config,
+    agent: &AgentHandle,
+    engine: &DeckEngine,
+    render_service: &Option<Arc<RenderService>>,
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    pending_approvals: &Arc<Mutex<HashMap<String, rho_sdk::PendingApproval>>>,
+) -> Result<bool> {
+    for action in app.apply(event) {
+        match action {
+            AppAction::Quit => return Ok(true),
+            AppAction::SendMessage {
+                text,
+                attach_active_slide,
+            } => {
+                let image_path = attach_active_slide
+                    .then(|| app.preview.active_image_path().map(Path::to_path_buf))
+                    .flatten();
+                let handle = agent.clone();
+                let tx = event_tx.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = handle.send(text, image_path, tx.clone()).await {
+                        let _ = tx.send(AppEvent::Run(
+                            slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
+                        ));
+                    }
+                });
+            }
+            AppAction::CancelRun => {
+                agent.cancel();
+            }
+            AppAction::RequestRender => match render_service {
+                Some(service) => {
+                    queue_render(service.clone(), engine.clone(), config, event_tx.clone())
+                }
+                None => {
+                    let _ = event_tx.send(AppEvent::RendererUnavailable(
+                        "No supported Chromium renderer was found".into(),
+                    ));
+                }
+            },
+            AppAction::SaveConfiguration(next) => {
+                let next = *next;
+                let restart_required = next != *config;
+                match next.save() {
+                    Ok(()) => {
+                        *config = next;
+                        app.config = config.clone();
+                        app.transcript
+                            .push(slide_builder::tui::TranscriptItem::Message(
+                                slide_builder::tui::Message {
+                                    role: slide_builder::tui::Role::System,
+                                    text: if restart_required {
+                                        "Configuration saved. Restart slide-builder to apply the changes."
+                                            .into()
+                                    } else {
+                                        "Configuration saved.".into()
+                                    },
+                                    complete: true,
+                                },
+                            ));
+                    }
+                    Err(error) => app.transcript.push(slide_builder::tui::TranscriptItem::Message(
+                        slide_builder::tui::Message {
+                            role: slide_builder::tui::Role::System,
+                            text: format!("Could not save configuration: {error:#}"),
+                            complete: true,
+                        },
+                    )),
+                }
+            }
+            AppAction::RespondApproval { id, decision } => {
+                if let Some(mut pending) = pending_approvals
+                    .lock()
+                    .expect("approval map poisoned")
+                    .remove(&id)
+                {
+                    let decision = match decision {
+                        ApprovalDecision::AllowOnce => rho_sdk::ApprovalDecision::AllowOnce,
+                        ApprovalDecision::AllowForSession => {
+                            rho_sdk::ApprovalDecision::AllowForSession
+                        }
+                        ApprovalDecision::Deny => rho_sdk::ApprovalDecision::Deny {
+                            reason: "denied by user".into(),
+                        },
+                    };
+                    let _ = pending.respond(decision);
+                }
+            }
+            AppAction::None
+            | AppAction::OpenDeckPicker
+            | AppAction::OpenDesignPicker
+            | AppAction::SetActiveSlide(_) => {}
+        }
+    }
+    Ok(false)
 }
 
 fn watch_deck(

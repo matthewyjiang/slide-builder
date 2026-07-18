@@ -20,7 +20,7 @@ notify = "8"
 pptx-handler = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 pulldown-cmark = "0.13"
 ratatui = "0.30.0"
-ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm"] }
+ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm", "tokio"] }
 rho-sdk = { git = "https://github.com/matthewyjiang/rho.git", rev = "a2d29d1559051d513d01e3c77ebaa93427ecbff0" }
 rho-providers = { git = "https://github.com/matthewyjiang/rho.git", rev = "a2d29d1559051d513d01e3c77ebaa93427ecbff0" }
 rho-agent-tools = { git = "https://github.com/matthewyjiang/rho.git", rev = "a2d29d1559051d513d01e3c77ebaa93427ecbff0" }

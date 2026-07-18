@@ -2,7 +2,9 @@
 //!
 //! The application runtime owns the event loop. It forwards every asynchronous
 //! source as an [`AppEvent`], calls [`App::apply`], executes returned
-//! [`AppAction`] values, and redraws with [`render`].
+//! [`AppAction`] values, and redraws with [`render`] only when state changes.
+//! Interaction is prioritized over paint, and terminal image decode/encode runs
+//! off the UI thread.
 
 pub mod app;
 pub mod chat;
@@ -24,4 +26,4 @@ pub use event::{
     AgentEvent, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, RenderManifest, SlideRender,
 };
 pub use layout::{render, render_with_preview};
-pub use preview_image::PreviewImage;
+pub use preview_image::{PreviewImage, PreviewWorkerEvent};

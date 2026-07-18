@@ -90,6 +90,11 @@ impl PreviewState {
             PreviewStatus::Empty | PreviewStatus::Unavailable { .. } => 0,
         }
     }
+    pub fn active_image_path(&self) -> Option<&std::path::Path> {
+        self.slides
+            .get(self.active)
+            .and_then(|slide| slide.image_path.as_deref())
+    }
     pub fn select(&mut self, index: usize) -> bool {
         if self.slides.is_empty() {
             self.active = 0;
@@ -794,6 +799,22 @@ mod tests {
         app.apply_manifest(2, RenderManifest::default());
         assert_eq!(app.preview.active, 0);
     }
+    #[test]
+    fn active_image_path_tracks_selected_slide() {
+        let mut app = app_with_slides(2);
+        app.preview.slides[0].image_path = Some(PathBuf::from("/tmp/a.png"));
+        app.preview.slides[1].image_path = Some(PathBuf::from("/tmp/b.png"));
+        assert_eq!(
+            app.preview.active_image_path(),
+            Some(std::path::Path::new("/tmp/a.png"))
+        );
+        app.preview.select(1);
+        assert_eq!(
+            app.preview.active_image_path(),
+            Some(std::path::Path::new("/tmp/b.png"))
+        );
+    }
+
     #[test]
     fn stale_render_results_are_discarded() {
         let mut app = app_with_slides(1);
