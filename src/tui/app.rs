@@ -226,6 +226,7 @@ pub struct App {
     pub mode: String,
     pub model: String,
     pub token_usage: Option<(u64, u64)>,
+    pub conversation_scroll_offset: u16,
     pub mouse: super::mouse::MouseState,
     pub config: Config,
 }
@@ -247,6 +248,7 @@ impl Default for App {
             mode: "supervised".into(),
             model: "-".into(),
             token_usage: None,
+            conversation_scroll_offset: 0,
             mouse: super::mouse::MouseState::default(),
             config: Config::default(),
         }
@@ -439,6 +441,7 @@ impl App {
                 let text = self.input.take();
                 let attach = std::mem::take(&mut self.input.attach_active_slide);
                 self.run_active = true;
+                self.conversation_scroll_offset = 0;
                 self.transcript.push(TranscriptItem::Message(Message {
                     role: Role::User,
                     text: text.clone(),

@@ -12,6 +12,7 @@ use ratatui::{
 use super::{app::App, chat, event::AppAction, layout, outline, theme};
 
 const TOAST_DURATION: Duration = Duration::from_secs(2);
+const WHEEL_SCROLL_LINES: u16 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ScreenPoint {
@@ -119,6 +120,16 @@ pub(crate) fn handle(app: &mut App, event: MouseEvent) -> Vec<AppAction> {
                 location: point,
             });
             vec![AppAction::CopyText(text)]
+        }
+        MouseEventKind::ScrollUp if contains(regions.chat, point) => {
+            app.mouse.selection = None;
+            chat::scroll_up(app, chat_body, WHEEL_SCROLL_LINES);
+            vec![]
+        }
+        MouseEventKind::ScrollDown if contains(regions.chat, point) => {
+            app.mouse.selection = None;
+            chat::scroll_down(app, WHEEL_SCROLL_LINES);
+            vec![]
         }
         MouseEventKind::Moved => {
             app.mouse.hovered_slide = slide_at(app, regions.outline, point);

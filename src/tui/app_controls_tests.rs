@@ -5,6 +5,20 @@ fn shortcut(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
 }
 
 #[test]
+fn sending_a_message_returns_the_conversation_to_latest() {
+    let mut app = App {
+        conversation_scroll_offset: 12,
+        ..App::default()
+    };
+    app.input.text = "new request".into();
+    app.input.cursor = app.input.text.len();
+
+    app.handle_key(shortcut(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_eq!(app.conversation_scroll_offset, 0);
+}
+
+#[test]
 fn action_palette_opens_from_common_terminal_key_variants() {
     for code in [KeyCode::Char('k'), KeyCode::Char('K')] {
         let mut app = App::default();
