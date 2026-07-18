@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-18T09:25:24Z",
+  "title": "Design System: slide-builder",
+  "extensions": {
+    "colorMeta": {
+      "terminal-foreground": {
+        "role": "neutral",
+        "displayName": "Terminal Foreground",
+        "canonical": "terminal:foreground"
+      },
+      "terminal-background": {
+        "role": "neutral",
+        "displayName": "Terminal Background",
+        "canonical": "terminal:background"
+      },
+      "signal": {
+        "role": "primary",
+        "displayName": "Signal",
+        "canonical": "ansi:cyan"
+      },
+      "neutral": {
+        "role": "neutral",
+        "displayName": "ANSI Gray",
+        "canonical": "ansi:gray"
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "Success",
+        "canonical": "ansi:green"
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Warning",
+        "canonical": "ansi:yellow"
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Danger",
+        "canonical": "ansi:red"
+      },
+      "signal-soft": {
+        "role": "primary",
+        "displayName": "Soft Signal",
+        "canonical": "blend(terminal:background, ansi:cyan, 18%)"
+      },
+      "neutral-soft": {
+        "role": "neutral",
+        "displayName": "Neutral Soft",
+        "canonical": "blend(terminal:background, ansi:gray, 10%)"
+      },
+      "success-soft": {
+        "role": "secondary",
+        "displayName": "Success Soft",
+        "canonical": "blend(terminal:background, ansi:green, 16%)"
+      },
+      "warning-soft": {
+        "role": "secondary",
+        "displayName": "Warning Soft",
+        "canonical": "blend(terminal:background, ansi:yellow, 16%)"
+      },
+      "danger-soft": {
+        "role": "secondary",
+        "displayName": "Danger Soft",
+        "canonical": "blend(terminal:background, ansi:red, 16%)"
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Terminal Title",
+        "purpose": "Bold persistent panel and modal titles."
+      },
+      "body": {
+        "displayName": "Terminal Body",
+        "purpose": "Conversation, tool detail, help, and deck content."
+      },
+      "label": {
+        "displayName": "Terminal Label",
+        "purpose": "Status, selection, keycaps, and concise controls."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "88 columns"
+      }
+    ]
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "The Focused Studio",
+    "overview": "Slide-builder is a content-first editorial tool compressed into a professional terminal workspace. The deck and the work required to improve it remain central; interface chrome exists only to orient, expose state, and make the next action obvious. Density is welcome when it shortens the path between intent and a presentation-quality result.\n\nThe system is understated, technical, and focused. It borrows Rho's terminal-native conversation flow, Linear's disciplined hierarchy and restrained state color, and Notion's calm content-first posture. It explicitly rejects noisy cyberpunk styling, generic chatbot bubbles, repeated speaker labels, card-heavy SaaS composition, cute assistant behavior, and undifferentiated walls of terminal text.",
+    "keyCharacteristics": [
+      "Terminal-native density with clear panel ownership.",
+      "Flat geometry organized by separators, spacing, and tonal surfaces.",
+      "One restrained ANSI signal role reserved for focus and selection.",
+      "Semantic state colors paired with glyphs and plain-language status text.",
+      "Responsive layouts that remain useful in narrow terminals."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Rule",
+        "body": "The ANSI cyan signal role marks active intent and selection only. It is not decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Redundancy Rule",
+        "body": "Success, warning, and danger colors must always be reinforced by a glyph, status word, or both.",
+        "section": "colors"
+      },
+      {
+        "name": "The Terminal Type Rule",
+        "body": "Do not simulate visual hierarchy with ASCII art, oversized letterforms, or decorative type. Use concise copy, weight, spacing, and color.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Studio Rule",
+        "body": "Prefer spacing, separators, and tonal contrast over nested borders or decorative containers.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep the deck, conversation, and current task more visually prominent than application chrome.",
+      "Do use the ANSI cyan signal role only for focus, active selection, and primary interaction cues.",
+      "Do pair every semantic color with a glyph, status word, or explicit text explanation.",
+      "Do derive foregrounds, backgrounds, and semantic colors from the terminal palette rather than hardcoding RGB values.",
+      "Do preserve complete keyboard operation and visible focus or selection state.",
+      "Do test layouts in narrow terminals and verify text remains readable in limited-color environments.",
+      "Do use full-width tonal blocks when they clarify conversation or tool ownership."
+    ],
+    "donts": [
+      "Don't introduce noisy cyberpunk or hacker-terminal styling.",
+      "Don't use generic chatbot bubbles or repeated speaker labels.",
+      "Don't turn the workspace into a card-heavy SaaS dashboard.",
+      "Don't give the assistant a cute or overly playful visual personality.",
+      "Don't allow the conversation to become a dense wall of undifferentiated terminal text.",
+      "Don't use color as the only carrier of status or meaning.",
+      "Don't hardcode RGB colors or assume a dark terminal background.",
+      "Don't add shadows, rounded cards, decorative gradients, or accent color without a functional role."
+    ]
+  }
+}
