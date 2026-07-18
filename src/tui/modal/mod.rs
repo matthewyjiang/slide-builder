@@ -1,11 +1,20 @@
 pub mod approval;
+pub mod command_palette;
+pub mod configuration;
 pub mod deck_picker;
 pub mod design_picker;
+pub mod help;
+pub mod menu;
 pub mod questionnaire;
 pub mod setup;
 pub mod template_picker;
 
 pub use approval::render_approval;
+pub use command_palette::{
+    exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
+    CommandPaletteState, SlashCommand, SlashCommandAction,
+};
+pub use configuration::{ConfigurationEvent, ConfigurationState};
 pub use deck_picker::DeckPickerState;
 pub use design_picker::DesignPickerState;
 pub use questionnaire::{Question, QuestionnaireState};
@@ -30,6 +39,9 @@ pub enum ModalState {
     TemplatePicker(TemplatePickerState),
     DesignPicker(DesignPickerState),
     Setup(SetupState),
+    Configuration(Box<ConfigurationState>),
+    CommandPalette(CommandPaletteState),
+    Help,
 }
 
 pub(crate) fn popup(frame: &mut Frame<'_>, width: u16, height: u16) -> Rect {
@@ -99,6 +111,9 @@ pub fn render(frame: &mut Frame<'_>, state: &ModalState) {
                 .unwrap_or_else(|| "Configure decks directory and preview renderer".into());
             render_text(frame, "Setup", vec![diagnostic]);
         }
+        ModalState::Configuration(state) => menu::render_menu(frame, &state.menu),
+        ModalState::CommandPalette(state) => command_palette::render(frame, state),
+        ModalState::Help => help::render(frame),
     }
 }
 

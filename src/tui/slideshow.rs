@@ -1,17 +1,18 @@
-use super::app::App;
+use super::{app::App, theme};
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Style},
+    style::{Modifier, Style},
     text::{Line, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let count = app.preview.slide_count();
     let label = if count == 0 {
         "No slide selected".into()
     } else {
-        format!("Slide {} / {}", app.preview.active + 1, count)
+        format!("Slide {} of {count}", app.preview.active + 1)
     };
     let path = app
         .preview
@@ -23,11 +24,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::from(""),
-            Line::from(path),
+            Line::styled(
+                path,
+                Style::default()
+                    .fg(theme::TEXT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Line::from(""),
             Line::styled(
-                "←/→ navigate · f/esc exit",
-                Style::default().fg(Color::DarkGray),
+                "← / → navigate     Esc exit presentation",
+                Style::default().fg(theme::MUTED),
             ),
         ]))
         .alignment(Alignment::Center)
@@ -35,7 +41,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .block(
             Block::default()
                 .title(format!(" {label} "))
-                .borders(Borders::ALL),
+                .title_style(
+                    Style::default()
+                        .fg(theme::TEXT)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::ACCENT)),
         ),
         area,
     );

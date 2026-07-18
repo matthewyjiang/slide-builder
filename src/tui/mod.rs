@@ -13,6 +13,7 @@ pub mod outline;
 pub mod preview;
 pub mod slideshow;
 pub mod statusline;
+pub mod theme;
 
 pub use app::{
     App, Focus, InputState, Message, PreviewState, PreviewStatus, Role, SlideItem, ToolCard,
