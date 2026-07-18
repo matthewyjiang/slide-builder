@@ -398,13 +398,14 @@ impl App {
                 });
                 vec![]
             }
-            AppEvent::DesignPickerOpened { entries } => {
+            AppEvent::DesignPickerOpened { entries } if !self.run_active => {
                 self.modal = ModalState::DesignPicker(super::modal::DesignPickerState {
                     entries,
                     ..Default::default()
                 });
                 vec![]
             }
+            AppEvent::DesignPickerOpened { .. } => vec![],
             AppEvent::Input(crossterm::event::Event::Paste(text)) => {
                 if let ModalState::ImportDesignPicker(state) = &mut self.modal {
                     state.paste(&text);
@@ -485,7 +486,7 @@ impl App {
                         ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
                     vec![]
                 }
-                KeyCode::Char('p') => {
+                KeyCode::Char('p') if !self.run_active => {
                     self.modal = ModalState::DesignPicker(Default::default());
                     vec![AppAction::OpenDesignPicker]
                 }
@@ -723,10 +724,11 @@ impl App {
                 self.modal = ModalState::DeckPicker(Default::default());
                 vec![AppAction::OpenDeckPicker]
             }
-            Command::ChangeDesign => {
+            Command::ChangeDesign if !self.run_active => {
                 self.modal = ModalState::DesignPicker(Default::default());
                 vec![AppAction::OpenDesignPicker]
             }
+            Command::ChangeDesign => vec![],
             Command::ImportDesign => vec![AppAction::OpenImportDesignPicker],
             Command::RenderPreview => vec![AppAction::RequestRender],
             Command::Configure => {

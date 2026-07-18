@@ -70,7 +70,26 @@ fn selecting_powerpoint_emits_import_action_and_closes_picker() {
 }
 
 #[test]
-fn managed_design_picker_selects_a_package() {
+fn design_changes_are_blocked_during_active_runs() {
+    let mut app = App {
+        run_active: true,
+        ..App::default()
+    };
+    for character in "/design".chars() {
+        app.handle_key(key(KeyCode::Char(character)));
+    }
+
+    assert!(app.handle_key(key(KeyCode::Enter)).is_empty());
+    assert_eq!(app.modal, ModalState::None);
+
+    app.apply(AppEvent::DesignPickerOpened {
+        entries: vec![("Acme".into(), PathBuf::from("/designs/acme"))],
+    });
+    assert_eq!(app.modal, ModalState::None);
+}
+
+#[test]
+fn design_picker_selects_a_package() {
     let path = std::path::PathBuf::from("/data/design-packages/acme");
     let mut app = App::default();
     app.apply(AppEvent::DesignPickerOpened {

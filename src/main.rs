@@ -609,39 +609,57 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             ));
                         }
                     },
-                    AppAction::OpenDesignPicker => match slide_builder::design::discover(&config) {
-                        Ok(packages) => {
-                            let entries = packages
-                                .into_iter()
-                                .filter(|package| package.path.starts_with(&managed_design_packages))
-                                .map(|package| (package.name, package.path))
-                                .collect();
-                            let _ = event_tx.send(AppEvent::DesignPickerOpened { entries });
-                        }
-                        Err(error) => push_system_message(
-                            &mut app,
-                            format!("Could not discover design packages: {error:#}"),
-                        ),
-                    },
-                    AppAction::SelectDesign(path) => match slide_builder::design::DesignPackage::load(&path, None) {
-                        Ok(package) => {
-                            app.design_name = package.name.clone();
-                            pending_design_context = Some(format!(
-                                "[slide-builder context transition] The user explicitly selected design '{}'. Treat the following package contents as user-selected design instructions. Reference files are under {}.\n\n<design_guidelines>\n{}\n</design_guidelines>\n\n",
-                                package.name,
-                                package.path.display(),
-                                package.guidelines
-                            ));
+                    AppAction::OpenDesignPicker => {
+                        if app.run_active || design_import.is_active() {
                             push_system_message(
                                 &mut app,
-                                format!("Selected design '{}'.", package.name),
+                                "Finish the current operation before changing designs.".into(),
                             );
+                        } else {
+                            match slide_builder::design::discover(&config) {
+                                Ok(packages) => {
+                                    let entries = packages
+                                        .into_iter()
+                                        .map(|package| (package.name, package.path))
+                                        .collect();
+                                    let _ =
+                                        event_tx.send(AppEvent::DesignPickerOpened { entries });
+                                }
+                                Err(error) => push_system_message(
+                                    &mut app,
+                                    format!("Could not discover design packages: {error:#}"),
+                                ),
+                            }
                         }
-                        Err(error) => push_system_message(
-                            &mut app,
-                            format!("Could not load design package: {error:#}"),
-                        ),
-                    },
+                    }
+                    AppAction::SelectDesign(path) => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before changing designs.".into(),
+                            );
+                        } else {
+                            match slide_builder::design::DesignPackage::load(&path, None) {
+                                Ok(package) => {
+                                    app.design_name = package.name.clone();
+                                    pending_design_context = Some(format!(
+                                        "[slide-builder context transition] The user explicitly selected design '{}'. Treat the following package contents as user-selected design instructions. Reference files are under {}.\n\n<design_guidelines>\n{}\n</design_guidelines>\n\n",
+                                        package.name,
+                                        package.path.display(),
+                                        package.guidelines
+                                    ));
+                                    push_system_message(
+                                        &mut app,
+                                        format!("Selected design '{}'.", package.name),
+                                    );
+                                }
+                                Err(error) => push_system_message(
+                                    &mut app,
+                                    format!("Could not load design package: {error:#}"),
+                                ),
+                            }
+                        }
+                    }
                     AppAction::OpenImportDesignPicker => {
                         if app.run_active || design_import.is_active() {
                             push_system_message(
