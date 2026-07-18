@@ -366,6 +366,7 @@ impl App {
                 }
                 let text = self.input.take();
                 let attach = std::mem::take(&mut self.input.attach_active_slide);
+                self.run_active = true;
                 self.transcript.push(TranscriptItem::Message(Message {
                     role: Role::User,
                     text: text.clone(),

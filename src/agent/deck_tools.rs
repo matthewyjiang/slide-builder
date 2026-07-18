@@ -124,10 +124,14 @@ impl Tool for DeckTool {
 }
 async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> {
     let n = |k: &str| {
-        a.get(k)
+        let value = a
+            .get(k)
             .and_then(Value::as_u64)
-            .ok_or_else(|| anyhow::anyhow!("invalid field `{k}`: expected positive integer"))
-            .map(|v| v as usize)
+            .ok_or_else(|| anyhow::anyhow!("invalid field `{k}`: expected positive integer"))?;
+        if value == 0 || value > usize::MAX as u64 {
+            anyhow::bail!("invalid field `{k}`: expected positive integer");
+        }
+        Ok(value as usize)
     };
     let f = |k: &str| {
         a.get(k)
@@ -160,14 +164,15 @@ async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> 
         "slide_reorder" => DeckMutation::Move {
             source: format!("/slide[{}]", n("from")?),
             target_parent: Some("/presentation".into()),
-            index: Some(n("to")?.saturating_sub(1)),
+            index: Some(n("to")?),
         },
-        "element_update" => DeckMutation::Set {
-            path: req_str(&a, "id")?.into(),
-            properties: serde_json::from_value(
-                a.get("properties").cloned().unwrap_or(Value::Null),
-            )?,
-        },
+        "element_update" => {
+            let path = e.resolve_element(req_str(&a, "id")?.into()).await?;
+            let mut properties: HashMap<String, String> =
+                serde_json::from_value(a.get("properties").cloned().unwrap_or(Value::Null))?;
+            normalize_update_properties(&mut properties)?;
+            DeckMutation::Set { path, properties }
+        }
         "deck_advanced" => serde_json::from_value(
             a.get("mutation")
                 .cloned()
@@ -178,17 +183,20 @@ async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> 
             let (x, y, w, h) = (f("x")?, f("y")?, f("width")?, f("height")?);
             validate_geometry(x, y, w, h)?;
             let mut p = HashMap::from([
-                ("x".into(), x.to_string()),
-                ("y".into(), y.to_string()),
-                ("width".into(), w.to_string()),
-                ("height".into(), h.to_string()),
+                ("x".into(), format!("{x}in")),
+                ("y".into(), format!("{y}in")),
+                ("width".into(), format!("{w}in")),
+                ("height".into(), format!("{h}in")),
             ]);
             let typ = if name == "text_add" {
                 p.insert("text".into(), req_str(&a, "text")?.into());
                 if let Some(v) = a.get("font_size") {
-                    p.insert("font_size".into(), v.to_string());
+                    p.insert(
+                        "fontSize".into(),
+                        finite_number(v, "font_size")?.to_string(),
+                    );
                 }
-                "textbox"
+                "rectangle"
             } else if name == "image_add" {
                 let path = req_str(&a, "path")?;
                 let meta = std::fs::metadata(path)?;
@@ -214,6 +222,35 @@ async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> 
     };
     Ok(serde_json::to_value(e.mutate(mutation).await?)?)
 }
+fn finite_number(value: &Value, field: &str) -> anyhow::Result<f64> {
+    let number = value
+        .as_f64()
+        .ok_or_else(|| anyhow::anyhow!("invalid field `{field}`: expected number"))?;
+    if !number.is_finite() {
+        anyhow::bail!("invalid field `{field}`: expected finite number");
+    }
+    Ok(number)
+}
+
+fn normalize_update_properties(properties: &mut HashMap<String, String>) -> anyhow::Result<()> {
+    for key in ["x", "left", "y", "top", "width", "w", "height", "h"] {
+        if let Some(value) = properties.get_mut(key) {
+            // Semantic-tool geometry is always inches. Preserve explicit units for
+            // advanced callers, while preventing numeric strings from becoming EMU.
+            if let Ok(number) = value.parse::<f64>() {
+                if !number.is_finite() {
+                    anyhow::bail!("geometry must be finite");
+                }
+                *value = format!("{number}in");
+            }
+        }
+    }
+    if let Some(value) = properties.remove("font_size") {
+        properties.insert("fontSize".into(), value);
+    }
+    Ok(())
+}
+
 fn req_str<'a>(v: &'a Value, k: &str) -> anyhow::Result<&'a str> {
     v.get(k)
         .and_then(Value::as_str)
@@ -231,6 +268,135 @@ fn validate_geometry(x: f64, y: f64, w: f64, h: f64) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn text_add_roundtrips_inches_font_geometry_and_stable_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("text.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+
+        let result = execute(
+            "text_add",
+            &engine,
+            json!({
+                "slide": 1,
+                "text": "roundtrip text",
+                "x": 1.0,
+                "y": 0.5,
+                "width": 4.0,
+                "height": 1.25,
+                "font_size": 24.0
+            }),
+        )
+        .await
+        .unwrap();
+        let stable_id = result["affected"][0]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing stable affected ID: {result}"))
+            .to_owned();
+        assert!(stable_id.starts_with("slide:"));
+        assert!(stable_id.contains("/shape:"));
+
+        // Read from a newly opened handler through DeckEngine::raw, proving the
+        // transaction's saved package retained semantic inch and point values.
+        let xml = engine.raw("ppt/slides/slide1.xml".into()).await.unwrap();
+        assert!(xml.contains(r#"<a:off x="914400" y="457200"/>"#), "{xml}");
+        assert!(
+            xml.contains(r#"<a:ext cx="3657600" cy="1143000"/>"#),
+            "{xml}"
+        );
+        assert!(xml.contains(r#"sz="2400""#), "{xml}");
+
+        execute(
+            "element_update",
+            &engine,
+            json!({"id": stable_id, "properties": {"text": "updated", "x": "2"}}),
+        )
+        .await
+        .unwrap();
+        let xml = engine.raw("ppt/slides/slide1.xml".into()).await.unwrap();
+        assert!(xml.contains("updated"), "{xml}");
+        assert!(xml.contains(r#"<a:off x="1828800" y="457200"/>"#), "{xml}");
+    }
+
+    #[tokio::test]
+    async fn slide_operations_keep_ids_stable_and_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("slides.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+        for _ in 0..2 {
+            execute("slide_create", &engine, json!({})).await.unwrap();
+        }
+        let shape = execute(
+            "text_add",
+            &engine,
+            json!({"slide":1,"text":"before move","x":1,"y":1,"width":3,"height":1}),
+        )
+        .await
+        .unwrap();
+        let shape_id = shape["affected"][0].as_str().unwrap().to_owned();
+        let before = engine.inspect(None).await.unwrap();
+        let ids = before["slides"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|slide| slide["slide_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+
+        execute("slide_reorder", &engine, json!({"from": 1, "to": 3}))
+            .await
+            .unwrap();
+        let reordered = engine.inspect(None).await.unwrap();
+        let reordered_ids = reordered["slides"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|slide| slide["slide_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reordered_ids,
+            vec![ids[1].clone(), ids[2].clone(), ids[0].clone()]
+        );
+        execute(
+            "element_update",
+            &engine,
+            json!({"id": shape_id, "properties":{"text":"after move"}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            engine
+                .inspect(Some("/slide[3]/shape[1]".into()))
+                .await
+                .unwrap()["text"],
+            "after move"
+        );
+
+        let duplicate = execute("slide_duplicate", &engine, json!({"index": 2}))
+            .await
+            .unwrap();
+        assert!(duplicate["affected"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("slide:"));
+        execute("slide_delete", &engine, json!({"index": 2}))
+            .await
+            .unwrap();
+
+        // Reopen-derived inspection must see three valid slides, with the deleted
+        // stable ID absent and the moved slide IDs otherwise unchanged.
+        let after = DeckEngine::new(&path).unwrap().inspect(None).await.unwrap();
+        let after_ids = after["slides"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|slide| slide["slide_id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(after_ids.len(), 3);
+        assert!(!after_ids.contains(&ids[2].as_str()));
+        assert!(after_ids.contains(&ids[0].as_str()));
+        assert!(after_ids.contains(&ids[1].as_str()));
+    }
+
     #[test]
     fn geometry() {
         assert!(validate_geometry(0., 0., 1., 1.).is_ok());

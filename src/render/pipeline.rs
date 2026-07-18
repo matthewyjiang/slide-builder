@@ -11,7 +11,17 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 pub const RENDERER_VERSION: &str = "html-capture-v1";
+pub const HANDLER_REVISION: &str = "officecli-acabe4959a37235dd587bbcc788565f19a824bb7";
 const CAPTURE_NONCE: &str = "slide-builder-capture-v1";
+
+/// Count the top-level slide containers emitted by the pinned pptx-handler.
+/// Keeping this selector contract beside capture injection makes dependency
+/// drift fail clearly in tests instead of producing blank previews.
+pub fn handler_slide_count(source: &str) -> u32 {
+    source
+        .match_indices("class=\"slide-container\" data-slide=\"")
+        .count() as u32
+}
 
 #[derive(Clone)]
 pub struct BrowserPipeline {
@@ -100,9 +110,7 @@ impl BrowserPipeline {
         source_html: &str,
         slide_count: u32,
     ) -> Result<Vec<SlideImage>> {
-        // Sanitize once before starting any browser processes. Per-slide HTML
-        // differs only in the app-owned selector script.
-        validate_offline_html(source_html)?;
+        // Per-slide HTML is sanitized and validated by build_capture_html.
         let semaphore = Arc::new(Semaphore::new(self.max_concurrency));
         let mut jobs = JoinSet::new();
         for index in 1..=slide_count {
@@ -182,8 +190,8 @@ pub fn build_capture_html(source: &str, slide_index: u32) -> Result<String> {
     if slide_index == 0 {
         bail!("slide index is one-based");
     }
-    validate_offline_html(source)?;
     let (mut html, dynamic_removed) = strip_active_content(source);
+    validate_offline_html(&html)?;
     // A base element can redirect otherwise relative URLs. CSP is the primary
     // enforcement layer, while removing it keeps local resolution predictable.
     html = strip_void_tag(&html, "base");
@@ -197,15 +205,18 @@ pub fn build_capture_html(source: &str, slide_index: u32) -> Result<String> {
         r#"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; media-src 'none'; font-src 'self' data:; style-src 'unsafe-inline'; script-src 'nonce-{CAPTURE_NONCE}'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <style>
 html,body{{margin:0!important;padding:0!important;overflow:hidden!important;background:transparent!important}}
-body>*:not(.slide-container){{display:none!important}}
-.slide-container{{display:none!important;margin:0!important}}
-.slide-container[data-slide="{slide_index}"]{{display:block!important}}
+body>*:not(.main){{display:none!important}}
+.main{{display:block!important;margin:0!important;padding:0!important;overflow:hidden!important}}
+.main>.slide-container{{display:none!important;margin:0!important;padding:0!important}}
+.main>.slide-container[data-slide="{slide_index}"]{{display:block!important}}
+.main>.slide-container[data-slide="{slide_index}"] .slide-wrapper{{display:block!important}}
+.main>.slide-container[data-slide="{slide_index}"] .slide{{margin:0!important;box-shadow:none!important;border-radius:0!important}}
 .slide-builder-unsupported{{position:fixed;inset:auto 1rem 1rem 1rem;z-index:2147483647;padding:.5rem;background:#fff3cd;color:#5f4700;font:14px sans-serif}}
 </style>{placeholder}"#
     );
     let script = format!(
         r#"<script nonce="{CAPTURE_NONCE}">
-(()=>{{const s=document.querySelector('.slide-container[data-slide="{slide_index}"]');if(!s){{document.body.textContent='Slide {slide_index} is unavailable';}}Promise.resolve(document.fonts&&document.fonts.ready).catch(()=>{{}}).finally(()=>{{requestAnimationFrame(()=>requestAnimationFrame(()=>document.documentElement.dataset.slideBuilderReady='true'));}});}})();
+(()=>{{const s=document.querySelector('.main > .slide-container[data-slide="{slide_index}"]');if(!s){{document.body.textContent='Slide {slide_index} is unavailable';return;}}const slide=s.querySelector('.slide');if(slide){{const scale=Math.min(innerWidth/slide.offsetWidth,innerHeight/slide.offsetHeight);slide.style.transform=`scale(${{scale}})`;slide.style.transformOrigin='top left';}}Promise.resolve(document.fonts&&document.fonts.ready).catch(()=>{{}}).finally(()=>{{requestAnimationFrame(()=>requestAnimationFrame(()=>document.documentElement.dataset.slideBuilderReady='true'));}});}})();
 </script>"#
     );
     if let Some(position) = find_ascii_case_insensitive(&html, "</head>") {
@@ -312,6 +323,62 @@ mod tests {
         assert!(html.contains("data-slide=\"1\""));
         assert!(html.contains("Unsupported dynamic content"));
     }
+    #[tokio::test]
+    async fn pinned_handler_html_matches_capture_selectors() {
+        let directory = tempfile::tempdir().unwrap();
+        let deck = directory.path().join("fixture.pptx");
+        std::fs::write(&deck, crate::agent::deck_engine::BLANK_DECK).unwrap();
+        let snapshot = crate::agent::deck_engine::DeckEngine::new(&deck)
+            .unwrap()
+            .snapshot()
+            .await
+            .unwrap();
+        let count = handler_slide_count(&snapshot.html);
+        assert!(
+            count > 0,
+            "pinned handler emitted no recognized slide containers"
+        );
+        let capture = build_capture_html(&snapshot.html, 1).unwrap();
+        assert!(capture.contains(".main>.slide-container[data-slide=\"1\"]"));
+        assert!(capture.contains(".main > .slide-container[data-slide=\"1\"]"));
+    }
+
+    #[tokio::test]
+    async fn chromium_captures_pinned_handler_slide_when_available() {
+        let Ok(browser) = Browser::probe(None) else {
+            return;
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let deck = directory.path().join("fixture.pptx");
+        std::fs::write(&deck, crate::agent::deck_engine::BLANK_DECK).unwrap();
+        let snapshot = crate::agent::deck_engine::DeckEngine::new(&deck)
+            .unwrap()
+            .snapshot()
+            .await
+            .unwrap();
+        let html = build_capture_html(&snapshot.html, 1).unwrap();
+        let html_path = directory.path().join("capture.html");
+        let png_path = directory.path().join("capture.png");
+        let profile = directory.path().join("profile");
+        std::fs::write(&html_path, html).unwrap();
+        browser
+            .capture(
+                &html_path,
+                &png_path,
+                &profile,
+                &CaptureOptions {
+                    width: 960,
+                    height: 720,
+                    scale: 1.0,
+                    timeout: std::time::Duration::from_secs(20),
+                },
+            )
+            .await
+            .unwrap();
+        let image = image::open(png_path).unwrap();
+        assert_eq!((image.width(), image.height()), (960, 720));
+    }
+
     #[test]
     fn rejects_zero_slide() {
         assert!(build_capture_html("<html></html>", 0).is_err());

@@ -1,29 +1,48 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use crossterm::{
     event::EventStream,
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::StreamExt;
+use notify::Watcher;
 use slide_builder::{
-    agent::deck_engine::DeckEngine,
-    tui::{App, AppAction, AppEvent},
+    agent::{
+        deck_engine::DeckEngine,
+        policy::{PermissionMode, SlidePolicy},
+        runtime::{build_rho, AgentHandle},
+    },
+    config::{Config, PermissionMode as ConfigPermissionMode},
+    paths::AppPaths,
+    prompt::{self, PromptContext},
+    render::{
+        browser::{Browser, CaptureOptions},
+        cache::{CacheKey, RenderCache},
+        pipeline::{handler_slide_count, BrowserPipeline, HANDLER_REVISION, RENDERER_VERSION},
+        RenderEvent, RenderRequest, RenderService,
+    },
+    tui::{
+        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, RenderManifest, SlideRender,
+    },
 };
 use std::{
+    collections::HashMap,
     io::{self, IsTerminal},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next().map(PathBuf::from);
-    if first.as_deref() == Some(std::path::Path::new("--help")) {
+    if first.as_deref() == Some(Path::new("--help")) {
         print_help();
         return Ok(());
     }
-    if first.as_deref() == Some(std::path::Path::new("new")) {
+    if first.as_deref() == Some(Path::new("new")) {
         let p = args
             .next()
             .map(PathBuf::from)
@@ -32,7 +51,7 @@ async fn main() -> Result<()> {
         println!("created {}", p.display());
         return Ok(());
     }
-    if first.as_deref() == Some(std::path::Path::new("inspect")) {
+    if first.as_deref() == Some(Path::new("inspect")) {
         let p = args
             .next()
             .map(PathBuf::from)
@@ -56,25 +75,77 @@ async fn main() -> Result<()> {
     }
     run_tui(engine).await
 }
+
 fn print_help() {
     println!("slide-builder\n\nUSAGE:\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty and Chromium for previews.")
 }
+
 async fn run_tui(engine: DeckEngine) -> Result<()> {
+    let config = Config::load()?;
+    let cwd = std::env::current_dir()?;
+    let paths = AppPaths::discover()?;
+    paths.create_app_dirs()?;
+    let snapshot = engine.snapshot().await?;
+    let slide_count = handler_slide_count(&snapshot.html) as usize;
+    let deck_parent = engine.path().parent().context("deck has no parent")?;
+    let prompt = prompt::assemble(&PromptContext {
+        active_deck: engine.path(),
+        decks_dir: deck_parent,
+        repo_cwd: &cwd,
+        design: None,
+        skills: &[],
+        slide_index: 1,
+        slide_count,
+        deck_generation: snapshot.generation,
+    })?;
+    let policy_mode = match config.permission_mode {
+        ConfigPermissionMode::Auto => PermissionMode::Auto,
+        ConfigPermissionMode::Plan => PermissionMode::Plan,
+        ConfigPermissionMode::Supervised => PermissionMode::Supervised,
+    };
+    let cache_dir = paths.render_cache_dir(&cwd)?;
+    let policy = SlidePolicy::new(policy_mode, deck_parent, &cache_dir);
+    let (rho, approvals) = build_rho(
+        &config.provider,
+        &config.model,
+        prompt,
+        &cwd,
+        deck_parent,
+        None,
+        engine.clone(),
+        policy,
+    )?;
+    let agent = AgentHandle::new(rho).await?;
+
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let _deck_watcher = watch_deck(engine.path(), event_tx.clone())?;
+    let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
+    pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
+
+    let render_service = make_render_service(&config, &cwd, &paths)?;
+    if let Some(service) = &render_service {
+        pump_render_events(service, event_tx.clone());
+    }
+
     enable_raw_mode()?;
     let mut out = io::stdout();
     execute!(out, EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(out);
     let mut terminal = ratatui::Terminal::new(backend)?;
-    let mut app = App::default();
-    app.deck_name = engine
-        .path()
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into();
-    let snapshot = engine.snapshot().await?;
-    app.preview.status = slide_builder::tui::PreviewStatus::Unavailable {
-        reason: "Press Ctrl+R after configuring a Chromium renderer".into(),
+    let mut app = App {
+        deck_name: engine
+            .path()
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into(),
+        model: if config.model.is_empty() {
+            config.provider.clone()
+        } else {
+            format!("{}/{}", config.provider, config.model)
+        },
+        mode: format!("{:?}", config.permission_mode).to_lowercase(),
+        ..App::default()
     };
     app.transcript
         .push(slide_builder::tui::TranscriptItem::Message(
@@ -84,9 +155,267 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                 complete: true,
             },
         ));
-    let result=async {let mut input=EventStream::new();loop{terminal.draw(|f|slide_builder::tui::render(f,&app))?;tokio::select!{event=input.next()=>if let Some(Ok(event))=event{for action in app.apply(AppEvent::Input(event)){match action{AppAction::Quit=>return Ok(()),AppAction::RequestRender=>app.preview.status=slide_builder::tui::PreviewStatus::Unavailable{reason:"Renderer is not configured".into()},_=>{}}}},_=tokio::time::sleep(Duration::from_millis(100))=>{}}}}.await;
+    if render_service.is_some() {
+        queue_render(
+            render_service.clone().unwrap(),
+            engine.clone(),
+            &config,
+            event_tx.clone(),
+        );
+    } else {
+        app.apply(AppEvent::RendererUnavailable(
+            "No supported Chromium renderer was found".into(),
+        ));
+    }
+
+    let result = async {
+        let mut input = EventStream::new();
+        loop {
+            terminal.draw(|frame| slide_builder::tui::render(frame, &app))?;
+            let event = tokio::select! {
+                input = input.next() => match input {
+                    Some(Ok(event)) => Some(AppEvent::Input(event)),
+                    Some(Err(error)) => return Err(error.into()),
+                    None => return Ok(()),
+                },
+                event = event_rx.recv() => event,
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    Some(AppEvent::Tick(std::time::Instant::now()))
+                }
+            };
+            let Some(event) = event else { return Ok(()) };
+            for action in app.apply(event) {
+                match action {
+                    AppAction::Quit => return Ok(()),
+                    AppAction::SendMessage {
+                        text,
+                        attach_active_slide,
+                    } => {
+                        let image_path = attach_active_slide
+                            .then(|| app.preview.slides.get(app.preview.active))
+                            .flatten()
+                            .and_then(|slide| slide.image_path.clone());
+                        let handle = agent.clone();
+                        let tx = event_tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) = handle.send(text, image_path, tx.clone()).await {
+                                let _ = tx.send(AppEvent::Run(
+                                    slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
+                                ));
+                            }
+                        });
+                    }
+                    AppAction::CancelRun => {
+                        agent.cancel();
+                    }
+                    AppAction::RequestRender => match &render_service {
+                        Some(service) => {
+                            queue_render(service.clone(), engine.clone(), &config, event_tx.clone())
+                        }
+                        None => {
+                            let _ = event_tx.send(AppEvent::RendererUnavailable(
+                                "No supported Chromium renderer was found".into(),
+                            ));
+                        }
+                    },
+                    AppAction::RespondApproval { id, decision } => {
+                        if let Some(mut pending) = pending_approvals
+                            .lock()
+                            .expect("approval map poisoned")
+                            .remove(&id)
+                        {
+                            let decision = match decision {
+                                ApprovalDecision::AllowOnce => rho_sdk::ApprovalDecision::AllowOnce,
+                                ApprovalDecision::AllowForSession => {
+                                    rho_sdk::ApprovalDecision::AllowForSession
+                                }
+                                ApprovalDecision::Deny => rho_sdk::ApprovalDecision::Deny {
+                                    reason: "denied by user".into(),
+                                },
+                            };
+                            let _ = pending.respond(decision);
+                        }
+                    }
+                    AppAction::None
+                    | AppAction::OpenDeckPicker
+                    | AppAction::OpenDesignPicker
+                    | AppAction::SetActiveSlide(_) => {}
+                }
+            }
+        }
+    }
+    .await;
+    agent.cancel();
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     result
+}
+
+fn watch_deck(
+    deck: &Path,
+    events: mpsc::UnboundedSender<AppEvent>,
+) -> Result<notify::RecommendedWatcher> {
+    let deck = deck.to_path_buf();
+    let directory = deck.parent().context("deck has no parent")?.to_path_buf();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if let Ok(event) = event {
+            if event.paths.iter().any(|path| path == &deck) {
+                let _ = events.send(AppEvent::DeckFileChanged);
+            }
+        }
+    })?;
+    // The transactional deck engine replaces the file with rename(2), so watch
+    // its parent rather than an inode that disappears after the first edit.
+    watcher.watch(&directory, notify::RecursiveMode::NonRecursive)?;
+    Ok(watcher)
+}
+
+fn make_render_service(
+    config: &Config,
+    cwd: &Path,
+    paths: &AppPaths,
+) -> Result<Option<Arc<RenderService>>> {
+    if !config.preview.enabled {
+        return Ok(None);
+    }
+    let browser_path = if config.render.browser_path == Path::new("auto") {
+        None
+    } else {
+        Some(config.render.browser_path.as_path())
+    };
+    let Ok(browser) = Browser::probe(browser_path) else {
+        return Ok(None);
+    };
+    let width = config.preview.width;
+    let height = width.saturating_mul(9) / 16;
+    let options = CaptureOptions {
+        width,
+        height,
+        scale: config.preview.scale as f32,
+        timeout: Duration::from_millis(config.render.timeout_ms),
+    };
+    let cache = RenderCache::new(paths.render_cache_dir(cwd)?, config.render.keep_generations)?;
+    cache.cleanup()?;
+    let pipeline = BrowserPipeline::new(browser, cache, options, 4)?;
+    Ok(Some(Arc::new(RenderService::new(
+        Arc::new(pipeline),
+        Duration::from_millis(config.render.debounce_ms),
+    ))))
+}
+
+fn queue_render(
+    service: Arc<RenderService>,
+    engine: DeckEngine,
+    config: &Config,
+    events: mpsc::UnboundedSender<AppEvent>,
+) {
+    let width = config.preview.width;
+    let height = width.saturating_mul(9) / 16;
+    let scale = config.preview.scale as f32;
+    tokio::spawn(async move {
+        let result = async {
+            let snapshot = engine.snapshot().await?;
+            let deck_bytes = tokio::fs::read(engine.path()).await?;
+            let slide_count = handler_slide_count(&snapshot.html);
+            if slide_count == 0 {
+                bail!("pptx-handler HTML contains no recognized slides");
+            }
+            let request = RenderRequest {
+                generation: snapshot.generation,
+                deck_identity: engine.path().as_os_str().as_encoded_bytes().to_vec(),
+                cache_key: CacheKey::new(
+                    &deck_bytes,
+                    HANDLER_REVISION,
+                    RENDERER_VERSION,
+                    width,
+                    height,
+                    scale,
+                )?,
+                html: snapshot.html.into(),
+                slide_count,
+            };
+            service.request(request)?;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        if let Err(error) = result {
+            let generation = engine.generation();
+            let _ = events.send(AppEvent::RenderFailed {
+                generation,
+                error: format!("{error:#}"),
+            });
+        }
+    });
+}
+
+fn pump_render_events(service: &Arc<RenderService>, events: mpsc::UnboundedSender<AppEvent>) {
+    let Some(mut receiver) = service.take_events() else {
+        return;
+    };
+    tokio::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            let event = match event {
+                RenderEvent::Started { generation } => AppEvent::RenderStarted { generation },
+                RenderEvent::Failed { generation, error } => {
+                    AppEvent::RenderFailed { generation, error }
+                }
+                RenderEvent::Done {
+                    generation,
+                    product,
+                } => AppEvent::RenderDone {
+                    generation,
+                    manifest: RenderManifest {
+                        slides: product
+                            .manifest
+                            .slides
+                            .into_iter()
+                            .map(|slide| SlideRender {
+                                index: slide.index.saturating_sub(1) as usize,
+                                image_path: product.directory.join(slide.file),
+                            })
+                            .collect(),
+                    },
+                },
+            };
+            let _ = events.send(event);
+        }
+    });
+}
+
+fn pump_approvals(
+    mut receiver: rho_sdk::ApprovalRequestReceiver,
+    events: mpsc::UnboundedSender<AppEvent>,
+    pending: Arc<Mutex<HashMap<String, rho_sdk::PendingApproval>>>,
+) {
+    tokio::spawn(async move {
+        while let Some(approval) = receiver.recv().await {
+            let id = uuid::Uuid::new_v4().to_string();
+            let request = approval.request();
+            let event = AppEvent::Approval(ApprovalRequest {
+                id: id.clone(),
+                title: format!("Approve {:?}", request.capability().kind()),
+                detail: format!(
+                    "{}\n{:?}",
+                    request.reason(),
+                    request.capability().operation()
+                ),
+                allow_for_session: true,
+            });
+            pending
+                .lock()
+                .expect("approval map poisoned")
+                .insert(id.clone(), approval);
+            let _ = events.send(event);
+            // The TUI presents one modal at a time. Do not consume another SDK
+            // request until this response has been removed by the event loop.
+            while pending
+                .lock()
+                .expect("approval map poisoned")
+                .contains_key(&id)
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+    });
 }
