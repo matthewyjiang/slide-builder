@@ -1,6 +1,7 @@
 use super::*;
-use crate::tui::App;
+use crate::tui::{App, PreviewImage, PreviewStatus, SlideItem};
 use ratatui::{backend::TestBackend, Terminal};
+use std::path::PathBuf;
 
 fn render_at(width: u16, height: u16, app: &App) -> String {
     let backend = TestBackend::new(width, height);
@@ -83,6 +84,48 @@ fn compact_workspace_keeps_all_status_surfaces_visible() {
     assert!(content.contains("Preview"));
     assert!(content.contains("Slides"));
     assert!(content.contains("Ctrl+B"));
+}
+
+#[test]
+fn image_encoding_has_loading_ui_in_preview_and_presentation() {
+    let mut app = App::default();
+    app.preview.status = PreviewStatus::Ready { generation: 1 };
+    app.preview.slides = vec![SlideItem {
+        title: "Loading example".into(),
+        image_path: Some(PathBuf::from("not-yet-encoded.png")),
+    }];
+    let mut preview_image = PreviewImage::detect("halfblocks");
+    preview_image.preload_deck(vec![PathBuf::from("not-yet-encoded.png")]);
+
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| render_with_preview(frame, &app, Some(&mut preview_image)))
+        .unwrap();
+    let preview_content = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(preview_content.contains("Preparing slide"));
+
+    app.fullscreen = true;
+    let mut preview_image = PreviewImage::detect("halfblocks");
+    preview_image.preload_deck(vec![PathBuf::from("not-yet-encoded.png")]);
+    terminal
+        .draw(|frame| render_with_preview(frame, &app, Some(&mut preview_image)))
+        .unwrap();
+    let presentation_content = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(presentation_content.contains("Preparing slide"));
+    assert!(presentation_content.contains("appear automatically"));
 }
 
 #[test]

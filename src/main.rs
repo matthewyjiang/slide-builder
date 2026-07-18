@@ -525,7 +525,24 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                 }
             };
             let Some(event) = event else { return Ok(()) };
-            for action in app.apply(event) {
+            let preload_paths = match &event {
+                AppEvent::RenderDone {
+                    generation,
+                    manifest,
+                } if *generation >= app.preview.generation() => Some(
+                    manifest
+                        .slides
+                        .iter()
+                        .map(|slide| slide.image_path.clone())
+                        .collect(),
+                ),
+                _ => None,
+            };
+            let actions = app.apply(event);
+            if let Some(paths) = preload_paths {
+                preview_image.preload_deck(paths);
+            }
+            for action in actions {
                 match action {
                     AppAction::Quit => return Ok(()),
                     AppAction::SendMessage {
