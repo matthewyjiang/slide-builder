@@ -1,16 +1,19 @@
-use super::{
-    app::{App, Focus},
-    theme,
-};
+use super::{app::App, theme};
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{List, ListItem, ListState, Paragraph},
     Frame,
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let regions = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    frame.render_widget(
+        Paragraph::new(Line::styled(" Slides ", theme::panel_title())),
+        regions[0],
+    );
+
     let items = app.preview.slides.iter().enumerate().map(|(index, slide)| {
         let active = index == app.preview.active;
         ListItem::new(Line::from(vec![
@@ -39,23 +42,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Style::default()
         })
     });
-    let focused = app.focus == Focus::Outline;
-    frame.render_widget(
-        List::new(items)
-            .block(
-                Block::default()
-                    .title(Span::styled(" 3  Slides ", theme::panel_title(focused)))
-                    .title_bottom(
-                        Line::styled(
-                            " ←→ select  Enter present ",
-                            Style::default().fg(theme::MUTED),
-                        )
-                        .right_aligned(),
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(theme::panel_border(focused)),
-            )
-            .highlight_symbol("›"),
-        area,
+    let mut state = ListState::default();
+    if !app.preview.slides.is_empty() {
+        state.select(Some(app.preview.active));
+    }
+    frame.render_stateful_widget(
+        List::new(items).highlight_symbol("›"),
+        regions[1],
+        &mut state,
     );
 }

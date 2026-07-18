@@ -66,6 +66,48 @@ fn escape_dismisses_slash_suggestions_until_the_input_changes() {
 }
 
 #[test]
+fn ctrl_c_clears_the_composer_before_quitting() {
+    let mut app = App::default();
+    app.input.text = "unfinished prompt".into();
+    app.input.cursor = app.input.text.len();
+
+    assert!(app
+        .handle_key(shortcut(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .is_empty());
+    assert!(app.input.text.is_empty());
+    assert_eq!(app.input.cursor, 0);
+    assert!(!app.should_quit);
+
+    assert_eq!(
+        app.handle_key(shortcut(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        vec![AppAction::Quit]
+    );
+    assert!(app.should_quit);
+}
+
+#[test]
+fn slide_prefix_refreshes_and_presents_without_leaving_prompt_input() {
+    let mut app = App::default();
+    app.preview.slides.push(SlideItem {
+        title: "Opening".into(),
+        image_path: None,
+    });
+
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    assert_eq!(
+        app.handle_key(shortcut(KeyCode::Char('r'), KeyModifiers::NONE)),
+        vec![AppAction::RequestRender]
+    );
+
+    app.handle_key(shortcut(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    assert!(app
+        .handle_key(shortcut(KeyCode::Char('f'), KeyModifiers::NONE))
+        .is_empty());
+    assert!(app.fullscreen);
+    assert!(app.input.text.is_empty());
+}
+
+#[test]
 fn action_palette_has_a_prompt_command_fallback() {
     let mut app = App::default();
     app.input.text = "/actions".into();

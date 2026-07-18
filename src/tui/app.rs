@@ -11,35 +11,6 @@ use super::modal::{
 };
 use crate::config::Config;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Focus {
-    Chat,
-    Outline,
-    Preview,
-    #[default]
-    Input,
-}
-
-impl Focus {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Chat => Self::Preview,
-            Self::Preview => Self::Outline,
-            Self::Outline => Self::Input,
-            Self::Input => Self::Chat,
-        }
-    }
-
-    pub fn previous(self) -> Self {
-        match self {
-            Self::Chat => Self::Input,
-            Self::Preview => Self::Chat,
-            Self::Outline => Self::Preview,
-            Self::Input => Self::Outline,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     User,
@@ -177,6 +148,12 @@ impl InputState {
         self.reset_slash_menu();
     }
 
+    fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+        self.reset_slash_menu();
+    }
+
     pub fn insert(&mut self, c: char) {
         self.text.insert(self.cursor, c);
         self.cursor += c.len_utf8();
@@ -237,14 +214,13 @@ impl InputState {
 pub struct App {
     pub transcript: Vec<TranscriptItem>,
     pub tool_cards: HashMap<String, usize>,
-    pub focus: Focus,
     pub preview: PreviewState,
     pub input: InputState,
     pub modal: ModalState,
     pub fullscreen: bool,
+    pub prefix_active: bool,
     pub run_active: bool,
     pub should_quit: bool,
-    pub chat_scroll: u16,
     pub deck_name: String,
     pub design_name: String,
     pub mode: String,
@@ -258,14 +234,13 @@ impl Default for App {
         Self {
             transcript: vec![],
             tool_cards: HashMap::new(),
-            focus: Focus::Input,
             preview: PreviewState::default(),
             input: InputState::default(),
             modal: ModalState::None,
             fullscreen: false,
+            prefix_active: false,
             run_active: false,
             should_quit: false,
-            chat_scroll: 0,
             deck_name: "No deck".into(),
             design_name: "Default".into(),
             mode: "supervised".into(),
@@ -335,6 +310,23 @@ impl App {
         if self.fullscreen {
             return self.handle_fullscreen_key(key);
         }
+        if self.prefix_active {
+            self.prefix_active = false;
+            return match key.code {
+                KeyCode::Char('h' | 'k') => self.navigate_previous(),
+                KeyCode::Char('j' | 'l') => self.navigate_next(),
+                KeyCode::Home | KeyCode::Char('g') => self.navigate_first(),
+                KeyCode::End | KeyCode::Char('G') => self.navigate_last(),
+                KeyCode::Char('r') => vec![AppAction::RequestRender],
+                KeyCode::Enter | KeyCode::Char('f') => {
+                    if self.preview.slide_count() > 0 {
+                        self.fullscreen = true;
+                    }
+                    vec![]
+                }
+                _ => vec![],
+            };
+        }
         if matches!(key.code, KeyCode::F(1) | KeyCode::F(2)) {
             self.modal = if key.code == KeyCode::F(1) {
                 ModalState::Help
@@ -345,6 +337,10 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return match key.code {
+                KeyCode::Char('b' | 'B') => {
+                    self.prefix_active = true;
+                    vec![]
+                }
                 KeyCode::Char('k' | 'K') => {
                     self.modal = ModalState::CommandPalette(CommandPaletteState::default());
                     vec![]
@@ -352,22 +348,6 @@ impl App {
                 KeyCode::Char(',') => {
                     self.modal =
                         ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
-                    vec![]
-                }
-                KeyCode::Char('1') => {
-                    self.focus = Focus::Chat;
-                    vec![]
-                }
-                KeyCode::Char('2') => {
-                    self.focus = Focus::Preview;
-                    vec![]
-                }
-                KeyCode::Char('3') => {
-                    self.focus = Focus::Outline;
-                    vec![]
-                }
-                KeyCode::Char('4') => {
-                    self.focus = Focus::Input;
                     vec![]
                 }
                 KeyCode::Char('p') => {
@@ -383,72 +363,20 @@ impl App {
                     self.input.attach_active_slide = !self.input.attach_active_slide;
                     vec![]
                 }
-                KeyCode::Char('c') if self.run_active => vec![AppAction::CancelRun],
-                KeyCode::Char('c') => {
+                KeyCode::Char('c' | 'C') if !self.input.text.is_empty() => {
+                    self.input.clear();
+                    vec![]
+                }
+                KeyCode::Char('c' | 'C') => {
                     self.should_quit = true;
                     vec![AppAction::Quit]
                 }
                 _ => vec![],
             };
         }
-        if self.focus == Focus::Input
-            && key.code == KeyCode::Tab
-            && !self.input.slash_suggestions().is_empty()
-        {
-            return self.handle_input_key(key);
-        }
         match key.code {
-            KeyCode::Tab => {
-                self.focus = if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.focus.previous()
-                } else {
-                    self.focus.next()
-                };
-                vec![]
-            }
-            KeyCode::BackTab => {
-                self.focus = self.focus.previous();
-                vec![]
-            }
             KeyCode::Esc if self.run_active => vec![AppAction::CancelRun],
-            KeyCode::Enter if self.focus == Focus::Preview || self.focus == Focus::Outline => {
-                if self.preview.slide_count() > 0 {
-                    self.fullscreen = true;
-                }
-                vec![]
-            }
-            KeyCode::Up if self.focus == Focus::Chat => {
-                self.chat_scroll = self.chat_scroll.saturating_sub(1);
-                vec![]
-            }
-            KeyCode::Down if self.focus == Focus::Chat => {
-                self.chat_scroll = self.chat_scroll.saturating_add(1);
-                vec![]
-            }
-            KeyCode::PageUp if self.focus == Focus::Chat => {
-                self.chat_scroll = self.chat_scroll.saturating_sub(8);
-                vec![]
-            }
-            KeyCode::PageDown if self.focus == Focus::Chat => {
-                self.chat_scroll = self.chat_scroll.saturating_add(8);
-                vec![]
-            }
-            KeyCode::Char('f') if self.focus != Focus::Input => {
-                self.fullscreen = true;
-                vec![]
-            }
-            KeyCode::Left if self.focus != Focus::Input => self.navigate_previous(),
-            KeyCode::Right if self.focus != Focus::Input => self.navigate_next(),
-            KeyCode::Char('k') if self.focus == Focus::Outline || self.focus == Focus::Preview => {
-                self.navigate_previous()
-            }
-            KeyCode::Char('j') if self.focus == Focus::Outline || self.focus == Focus::Preview => {
-                self.navigate_next()
-            }
-            KeyCode::Char('g') if self.focus != Focus::Input => self.navigate_first(),
-            KeyCode::Char('G') if self.focus != Focus::Input => self.navigate_last(),
-            _ if self.focus == Focus::Input => self.handle_input_key(key),
-            _ => vec![],
+            _ => self.handle_input_key(key),
         }
     }
 
@@ -778,7 +706,7 @@ mod tests {
                 image_path: None,
             })
             .collect();
-        app.focus = Focus::Preview;
+        app.fullscreen = true;
         app
     }
     fn key(code: KeyCode) -> KeyEvent {
@@ -808,13 +736,28 @@ mod tests {
         assert_eq!(app.preview.active, 0);
     }
     #[test]
-    fn focus_cycles_in_both_directions() {
+    fn tab_is_reserved_for_prompt_completion() {
         let mut app = App::default();
-        assert_eq!(app.focus, Focus::Input);
         app.handle_key(key(KeyCode::Tab));
-        assert_eq!(app.focus, Focus::Chat);
-        app.handle_key(key(KeyCode::BackTab));
-        assert_eq!(app.focus, Focus::Input);
+        app.handle_key(key(KeyCode::Char('x')));
+        assert_eq!(app.input.text, "x");
+    }
+    #[test]
+    fn slide_navigation_requires_the_prefix_outside_presentation() {
+        let mut app = app_with_slides(2);
+        app.fullscreen = false;
+
+        app.handle_key(key(KeyCode::Right));
+        assert_eq!(app.preview.active, 0);
+        assert_eq!(app.input.cursor, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert!(app.prefix_active);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('l'))),
+            vec![AppAction::SetActiveSlide(1)]
+        );
+        assert!(!app.prefix_active);
     }
     #[test]
     fn unicode_input_cursor_stays_valid() {

@@ -1,16 +1,22 @@
 use super::{
-    app::{App, Focus, Role, ToolStatus, TranscriptItem},
+    app::{App, Role, ToolStatus, TranscriptItem},
     theme,
 };
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let regions = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    frame.render_widget(
+        Paragraph::new(Line::styled(" Conversation ", theme::panel_title())),
+        regions[0],
+    );
+
     let mut lines = Vec::new();
     for item in &app.transcript {
         match item {
@@ -82,24 +88,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ),
         ]);
     }
-    let focused = app.focus == Focus::Chat;
+    let width = regions[1].width.max(1) as usize;
+    let rendered_lines = lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(width))
+        .sum::<usize>();
+    let scroll = rendered_lines.saturating_sub(regions[1].height as usize) as u16;
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .scroll((app.chat_scroll, 0))
-            .block(
-                Block::default()
-                    .title(Span::styled(
-                        " 1  Conversation ",
-                        theme::panel_title(focused),
-                    ))
-                    .title_bottom(
-                        Line::styled(" ↑↓ scroll ", Style::default().fg(theme::MUTED))
-                            .right_aligned(),
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(theme::panel_border(focused)),
-            ),
-        area,
+            .scroll((scroll, 0)),
+        regions[1],
     );
 }

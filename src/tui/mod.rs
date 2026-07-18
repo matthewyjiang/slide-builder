@@ -16,8 +16,8 @@ pub mod statusline;
 pub mod theme;
 
 pub use app::{
-    App, Focus, InputState, Message, PreviewState, PreviewStatus, Role, SlideItem, ToolCard,
-    ToolStatus, TranscriptItem,
+    App, InputState, Message, PreviewState, PreviewStatus, Role, SlideItem, ToolCard, ToolStatus,
+    TranscriptItem,
 };
 pub use event::{
     AgentEvent, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, RenderManifest, SlideRender,
