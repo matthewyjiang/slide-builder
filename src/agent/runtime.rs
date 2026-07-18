@@ -155,7 +155,7 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
                 AppEvent::Run(AgentEvent::RunFinished),
             ];
         }
-        RunEvent::Cancelled { .. } => AppEvent::Run(AgentEvent::RunFinished),
+        RunEvent::Cancelled { .. } => AppEvent::Run(AgentEvent::RunCancelled),
         RunEvent::Failed { message, .. } => AppEvent::Run(AgentEvent::RunFailed(message)),
         _ => return vec![],
     };

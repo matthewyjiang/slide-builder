@@ -13,6 +13,7 @@ use crate::tui::theme;
 pub enum Command {
     OpenDeck,
     ChangeDesign,
+    ImportDesign,
     RenderPreview,
     Configure,
     ToggleAttachment,
@@ -43,7 +44,7 @@ pub struct SlashCommand {
     pub detail: &'static str,
 }
 
-const COMMANDS: [CommandItem; 8] = [
+const COMMANDS: [CommandItem; 9] = [
     CommandItem {
         command: Command::OpenDeck,
         slash_name: "/open",
@@ -57,6 +58,13 @@ const COMMANDS: [CommandItem; 8] = [
         label: "Change design",
         detail: "Choose the deck's visual system",
         shortcut: "Ctrl+P",
+    },
+    CommandItem {
+        command: Command::ImportDesign,
+        slash_name: "/import-design",
+        label: "Import design",
+        detail: "Create a design package from a PowerPoint file",
+        shortcut: "",
     },
     CommandItem {
         command: Command::RenderPreview,
@@ -246,6 +254,14 @@ mod tests {
         assert_eq!(
             state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             CommandPaletteEvent::Run(Command::ChangeDesign)
+        );
+    }
+
+    #[test]
+    fn import_design_is_available_as_an_exact_slash_command() {
+        assert_eq!(
+            exact_slash_command("/import-design"),
+            Some(SlashCommandAction::Run(Command::ImportDesign))
         );
     }
 }

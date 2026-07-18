@@ -3,6 +3,7 @@ pub mod command_palette;
 pub mod configuration;
 pub mod deck_picker;
 pub mod design_picker;
+pub mod filesystem_picker;
 pub mod help;
 pub mod menu;
 pub mod questionnaire;
@@ -17,6 +18,7 @@ pub use command_palette::{
 pub use configuration::{ConfigurationEvent, ConfigurationState};
 pub use deck_picker::DeckPickerState;
 pub use design_picker::DesignPickerState;
+pub use filesystem_picker::{FileSystemPickerEvent, FileSystemPickerState};
 pub use questionnaire::{Question, QuestionnaireState};
 pub use setup::SetupState;
 pub use template_picker::TemplatePickerState;
@@ -38,6 +40,7 @@ pub enum ModalState {
     DeckPicker(DeckPickerState),
     TemplatePicker(TemplatePickerState),
     DesignPicker(DesignPickerState),
+    ImportDesignPicker(FileSystemPickerState),
     Setup(SetupState),
     Configuration(Box<ConfigurationState>),
     CommandPalette(CommandPaletteState),
@@ -92,6 +95,7 @@ pub fn render(frame: &mut Frame<'_>, state: &ModalState) {
             state.entries.iter().map(|(name, _)| name.clone()).collect(),
             state.selected,
         ),
+        ModalState::ImportDesignPicker(state) => filesystem_picker::render(frame, state),
         ModalState::Questionnaire(state) => {
             let question = state
                 .questions

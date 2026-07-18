@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::event::{AgentEvent, AppAction, AppEvent, ApprovalDecision, RenderManifest};
+use super::event::{
+    AgentEvent, AppAction, AppEvent, ApprovalDecision, ImportDesignStage, RenderManifest,
+};
 use super::modal::{
     exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
-    CommandPaletteState, ConfigurationEvent, ConfigurationState, ModalState, SlashCommand,
-    SlashCommandAction,
+    CommandPaletteState, ConfigurationEvent, ConfigurationState, FileSystemPickerEvent,
+    FileSystemPickerState, ModalState, SlashCommand, SlashCommandAction,
 };
 use crate::config::Config;
 
@@ -210,6 +213,34 @@ impl InputState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportProgress {
+    pub source_name: String,
+    pub stage: ImportDesignStage,
+    /// Completion percentage when the current stage reports measurable work.
+    pub percent: Option<u8>,
+    pub animation_frame: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImportDesignStatus {
+    Running(ImportProgress),
+    Completed {
+        design_name: String,
+        expires_at: Instant,
+    },
+    Failed {
+        error: String,
+    },
+    Cancelled {
+        expires_at: Instant,
+    },
+}
+
+const IMPORT_SUCCESS_DURATION: Duration = Duration::from_secs(4);
+const IMPORT_CANCELLED_DURATION: Duration = Duration::from_secs(2);
+const IMPORT_INDICATOR_FRAMES: usize = 6;
+
 #[derive(Clone, Debug)]
 pub struct App {
     pub transcript: Vec<TranscriptItem>,
@@ -226,6 +257,7 @@ pub struct App {
     pub mode: String,
     pub model: String,
     pub token_usage: Option<(u64, u64)>,
+    pub import_design_status: Option<ImportDesignStatus>,
     pub conversation_scroll_offset: u16,
     pub mouse: super::mouse::MouseState,
     pub config: Config,
@@ -248,6 +280,7 @@ impl Default for App {
             mode: "supervised".into(),
             model: "-".into(),
             token_usage: None,
+            import_design_status: None,
             conversation_scroll_offset: 0,
             mouse: super::mouse::MouseState::default(),
             config: Config::default(),
@@ -307,8 +340,92 @@ impl App {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
             }
+            AppEvent::ImportDesignPickerOpened { start_directory } => {
+                self.modal =
+                    ModalState::ImportDesignPicker(FileSystemPickerState::new(start_directory));
+                vec![]
+            }
+            AppEvent::ImportDesignStarted { source } => {
+                self.run_active = true;
+                let source_name = source
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("design")
+                    .to_owned();
+                self.import_design_status = Some(ImportDesignStatus::Running(ImportProgress {
+                    source_name,
+                    stage: ImportDesignStage::Reading,
+                    percent: None,
+                    animation_frame: 0,
+                }));
+                vec![]
+            }
+            AppEvent::ImportDesignProgress { stage, percent } => {
+                let Some(ImportDesignStatus::Running(progress)) = &self.import_design_status else {
+                    return vec![];
+                };
+                let source_name = progress.source_name.clone();
+                let animation_frame = progress.animation_frame;
+                self.import_design_status = Some(ImportDesignStatus::Running(ImportProgress {
+                    source_name,
+                    stage,
+                    percent: percent.map(|value| value.min(100)),
+                    animation_frame,
+                }));
+                vec![]
+            }
+            AppEvent::ImportDesignCompleted { design_name } => {
+                self.run_active = false;
+                self.import_design_status = Some(ImportDesignStatus::Completed {
+                    design_name,
+                    expires_at: Instant::now() + IMPORT_SUCCESS_DURATION,
+                });
+                vec![]
+            }
+            AppEvent::ImportDesignFailed { error } => {
+                self.run_active = false;
+                self.import_design_status = Some(ImportDesignStatus::Failed { error });
+                vec![]
+            }
+            AppEvent::ImportDesignCancelled => {
+                self.run_active = false;
+                self.import_design_status = Some(ImportDesignStatus::Cancelled {
+                    expires_at: Instant::now() + IMPORT_CANCELLED_DURATION,
+                });
+                vec![]
+            }
+            AppEvent::DesignPickerOpened { entries } if !self.run_active => {
+                self.modal = ModalState::DesignPicker(super::modal::DesignPickerState {
+                    entries,
+                    ..Default::default()
+                });
+                vec![]
+            }
+            AppEvent::DesignPickerOpened { .. } => vec![],
+            AppEvent::Input(crossterm::event::Event::Paste(text)) => {
+                if let ModalState::ImportDesignPicker(state) = &mut self.modal {
+                    state.paste(&text);
+                }
+                vec![]
+            }
             AppEvent::Tick(now) => {
                 self.mouse.expire_toast(now);
+                let should_clear = match &mut self.import_design_status {
+                    Some(ImportDesignStatus::Running(progress)) => {
+                        if progress.percent.is_none() {
+                            progress.animation_frame =
+                                (progress.animation_frame + 1) % IMPORT_INDICATOR_FRAMES;
+                        }
+                        false
+                    }
+                    Some(ImportDesignStatus::Completed { expires_at, .. })
+                    | Some(ImportDesignStatus::Cancelled { expires_at }) => now >= *expires_at,
+                    Some(ImportDesignStatus::Failed { .. }) | None => false,
+                };
+                if should_clear {
+                    self.import_design_status = None;
+                }
                 vec![]
             }
             AppEvent::Input(_) => vec![],
@@ -366,7 +483,7 @@ impl App {
                         ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
                     vec![]
                 }
-                KeyCode::Char('p') => {
+                KeyCode::Char('p') if !self.run_active => {
                     self.modal = ModalState::DesignPicker(Default::default());
                     vec![AppAction::OpenDesignPicker]
                 }
@@ -499,6 +616,45 @@ impl App {
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        if let ModalState::ImportDesignPicker(state) = &mut self.modal {
+            return match state.handle_key(key) {
+                FileSystemPickerEvent::None => vec![],
+                FileSystemPickerEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                FileSystemPickerEvent::Selected(path) => {
+                    self.modal = ModalState::None;
+                    vec![AppAction::ImportDesign(path)]
+                }
+            };
+        }
+        if let ModalState::DesignPicker(state) = &mut self.modal {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                KeyCode::Up => {
+                    state.selected = state.selected.saturating_sub(1);
+                    vec![]
+                }
+                KeyCode::Down => {
+                    state.selected =
+                        (state.selected + 1).min(state.entries.len().saturating_sub(1));
+                    vec![]
+                }
+                KeyCode::Enter => {
+                    let path = state
+                        .entries
+                        .get(state.selected)
+                        .map(|(_, path)| path.clone());
+                    self.modal = ModalState::None;
+                    path.map(AppAction::SelectDesign).into_iter().collect()
+                }
+                _ => vec![],
+            };
+        }
         if let ModalState::CommandPalette(state) = &mut self.modal {
             let event = state.handle_key(key);
             return match event {
@@ -566,10 +722,12 @@ impl App {
                 self.modal = ModalState::DeckPicker(Default::default());
                 vec![AppAction::OpenDeckPicker]
             }
-            Command::ChangeDesign => {
+            Command::ChangeDesign if !self.run_active => {
                 self.modal = ModalState::DesignPicker(Default::default());
                 vec![AppAction::OpenDesignPicker]
             }
+            Command::ChangeDesign => vec![],
+            Command::ImportDesign => vec![AppAction::OpenImportDesignPicker],
             Command::RenderPreview => vec![AppAction::RequestRender],
             Command::Configure => {
                 self.modal =
@@ -690,7 +848,7 @@ impl App {
                 Ok(()) => self.update_tool(&id, ToolStatus::Succeeded, Some(String::new())),
                 Err(detail) => self.update_tool(&id, ToolStatus::Failed, Some(detail)),
             },
-            AgentEvent::RunFinished => self.run_active = false,
+            AgentEvent::RunFinished | AgentEvent::RunCancelled => self.run_active = false,
             AgentEvent::RunFailed(error) => {
                 self.run_active = false;
                 self.transcript.push(TranscriptItem::Message(Message {
@@ -897,3 +1055,7 @@ mod tests {
 #[cfg(test)]
 #[path = "app_controls_tests.rs"]
 mod controls_tests;
+
+#[cfg(test)]
+#[path = "app_import_design_tests.rs"]
+mod import_design_tests;

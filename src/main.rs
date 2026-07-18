@@ -15,6 +15,10 @@ use slide_builder::{
         tools::UiToolCommand,
     },
     config::{Config, PermissionMode as ConfigPermissionMode},
+    design_import_workflow::{
+        DesignImportRequest, DesignImportWorkflow, DesignImportWorkflowEvent,
+        DesignImportWorkflowStage,
+    },
     paths::AppPaths,
     prompt::{self, PromptContext},
     render::{
@@ -24,8 +28,8 @@ use slide_builder::{
         RenderEvent, RenderRequest, RenderService,
     },
     tui::{
-        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, PreviewImage, RenderManifest,
-        SlideRender,
+        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, ImportDesignStage,
+        PreviewImage, RenderManifest, SlideRender,
     },
 };
 use std::{
@@ -413,6 +417,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let paths = AppPaths::discover()?;
     paths.create_app_dirs()?;
+    let managed_design_packages = paths.design_packages_dir();
+    std::fs::create_dir_all(&managed_design_packages)?;
     let skills = slide_builder::skills::discover(
         &cwd,
         &paths.skills_dir(),
@@ -452,7 +458,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         prompt.clone(),
         &cwd,
         deck_parent,
-        None,
+        Some(&managed_design_packages),
         &skills,
         ui_tool_tx.clone(),
         engine.clone(),
@@ -467,7 +473,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                 prompt,
                 &cwd,
                 deck_parent,
-                None,
+                Some(&managed_design_packages),
                 &skills,
                 ui_tool_tx,
                 engine.clone(),
@@ -479,6 +485,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let agent = AgentHandle::new(rho).await?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let design_import = DesignImportWorkflow::default();
+    let (import_tx, mut import_rx) = mpsc::unbounded_channel::<DesignImportWorkflowEvent>();
     let _deck_watcher = watch_deck(engine.clone(), event_tx.clone())?;
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
     pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
@@ -532,6 +540,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         ));
     }
 
+    let mut pending_design_context: Option<String> = None;
+    let mut import_picker_directory = cwd.clone();
     let result = async {
         let mut input = EventStream::new();
         let mut ui_tool_rx = ui_tool_rx;
@@ -547,6 +557,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                     None => return Ok(()),
                 },
                 event = event_rx.recv() => event.map(TuiLoopEvent::App),
+                imported = import_rx.recv() => imported
+                    .map(import_workflow_app_event)
+                    .map(TuiLoopEvent::App),
                 command = ui_tool_rx.recv() => command.map(TuiLoopEvent::Tool),
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
                     Some(TuiLoopEvent::App(AppEvent::Tick(std::time::Instant::now())))
@@ -613,6 +626,10 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         text,
                         attach_active_slide,
                     } => {
+                        let text = match pending_design_context.take() {
+                            Some(context) => format!("{context}{text}"),
+                            None => text,
+                        };
                         let image_path = attach_active_slide
                             .then(|| app.preview.slides.get(app.preview.active))
                             .flatten()
@@ -628,7 +645,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         });
                     }
                     AppAction::CancelRun => {
-                        agent.cancel();
+                        if !design_import.cancel() {
+                            agent.cancel();
+                        }
                     }
                     AppAction::RequestRender => match &render_service {
                         Some(service) => {
@@ -640,6 +659,102 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             ));
                         }
                     },
+                    AppAction::OpenDesignPicker => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before changing designs.".into(),
+                            );
+                        } else {
+                            match slide_builder::design::discover(&config) {
+                                Ok(packages) => {
+                                    let entries = packages
+                                        .into_iter()
+                                        .map(|package| (package.name, package.path))
+                                        .collect();
+                                    let _ =
+                                        event_tx.send(AppEvent::DesignPickerOpened { entries });
+                                }
+                                Err(error) => push_system_message(
+                                    &mut app,
+                                    format!("Could not discover design packages: {error:#}"),
+                                ),
+                            }
+                        }
+                    }
+                    AppAction::SelectDesign(path) => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before changing designs.".into(),
+                            );
+                        } else {
+                            match slide_builder::design::DesignPackage::load(&path, None) {
+                                Ok(package) => {
+                                    app.design_name = package.name.clone();
+                                    pending_design_context = Some(format!(
+                                        "[slide-builder context transition] The user explicitly selected design '{}'. Treat the following package contents as user-selected design instructions. Reference files are under {}.\n\n<design_guidelines>\n{}\n</design_guidelines>\n\n",
+                                        package.name,
+                                        package.path.display(),
+                                        package.guidelines
+                                    ));
+                                    push_system_message(
+                                        &mut app,
+                                        format!("Selected design '{}'.", package.name),
+                                    );
+                                }
+                                Err(error) => push_system_message(
+                                    &mut app,
+                                    format!("Could not load design package: {error:#}"),
+                                ),
+                            }
+                        }
+                    }
+                    AppAction::OpenImportDesignPicker => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before importing a design.".into(),
+                            );
+                        } else {
+                            let _ = event_tx.send(AppEvent::ImportDesignPickerOpened {
+                                start_directory: import_picker_directory.clone(),
+                            });
+                        }
+                    }
+                    AppAction::ImportDesign(source) => {
+                        if let Some(parent) = source.parent() {
+                            import_picker_directory = parent.to_path_buf();
+                        }
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before importing a design.".into(),
+                            );
+                        } else {
+                            app.run_active = true;
+                            app.apply(AppEvent::ImportDesignStarted {
+                                source: source.clone(),
+                            });
+                            let request = DesignImportRequest {
+                                source,
+                                cache_dir: render_cache_dir.clone(),
+                                packages_dir: paths.design_packages_dir(),
+                                configured_browser: (config.render.browser_path
+                                    != Path::new("auto"))
+                                .then(|| config.render.browser_path.clone()),
+                                render_timeout: Duration::from_millis(config.render.timeout_ms),
+                                provider: config.provider.clone(),
+                                model: config.model.clone(),
+                            };
+                            if let Err(error) = design_import.start(request, import_tx.clone()) {
+                                app.run_active = false;
+                                app.apply(AppEvent::ImportDesignFailed {
+                                    error: format!("{error:#}"),
+                                });
+                            }
+                        }
+                    }
                     AppAction::SaveConfiguration(next) => {
                         let next = *next;
                         let restart_required = next != config;
@@ -696,13 +811,13 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                     }
                     AppAction::None
                     | AppAction::OpenDeckPicker
-                    | AppAction::OpenDesignPicker
                     | AppAction::SetActiveSlide(_) => {}
                 }
             }
         }
     }
     .await;
+    design_import.shutdown().await;
     agent.cancel();
     if let Some(service) = &render_service {
         service.shutdown().await;
@@ -720,6 +835,42 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         }
     }
     result
+}
+
+fn import_workflow_app_event(event: DesignImportWorkflowEvent) -> AppEvent {
+    match event {
+        DesignImportWorkflowEvent::Stage(stage) => AppEvent::ImportDesignProgress {
+            stage: match stage {
+                DesignImportWorkflowStage::Validating | DesignImportWorkflowStage::Copying => {
+                    ImportDesignStage::Reading
+                }
+                DesignImportWorkflowStage::Extracting
+                | DesignImportWorkflowStage::RenderingPreviews
+                | DesignImportWorkflowStage::Analyzing => ImportDesignStage::Analyzing,
+                DesignImportWorkflowStage::ValidatingPackage => ImportDesignStage::Building,
+                DesignImportWorkflowStage::Publishing => ImportDesignStage::Installing,
+            },
+            percent: None,
+        },
+        DesignImportWorkflowEvent::Completed { package_name, .. } => {
+            AppEvent::ImportDesignCompleted {
+                design_name: package_name,
+            }
+        }
+        DesignImportWorkflowEvent::Failed(error) => AppEvent::ImportDesignFailed { error },
+        DesignImportWorkflowEvent::Cancelled => AppEvent::ImportDesignCancelled,
+    }
+}
+
+fn push_system_message(app: &mut App, text: String) {
+    app.transcript
+        .push(slide_builder::tui::TranscriptItem::Message(
+            slide_builder::tui::Message {
+                role: slide_builder::tui::Role::System,
+                text,
+                complete: true,
+            },
+        ));
 }
 
 fn complete_render_tools(event: &AppEvent, pending: &mut Vec<PendingRenderTool>) {

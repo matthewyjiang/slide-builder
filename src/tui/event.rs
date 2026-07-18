@@ -44,6 +44,7 @@ pub enum AgentEvent {
         result: Result<(), String>,
     },
     RunFinished,
+    RunCancelled,
     RunFailed(String),
 }
 
@@ -53,6 +54,14 @@ pub struct ApprovalRequest {
     pub title: String,
     pub detail: String,
     pub allow_for_session: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportDesignStage {
+    Reading,
+    Analyzing,
+    Building,
+    Installing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +85,26 @@ pub enum AppEvent {
     },
     RendererUnavailable(String),
     DeckFileChanged,
+    ImportDesignPickerOpened {
+        start_directory: PathBuf,
+    },
+    ImportDesignStarted {
+        source: PathBuf,
+    },
+    ImportDesignProgress {
+        stage: ImportDesignStage,
+        percent: Option<u8>,
+    },
+    ImportDesignCompleted {
+        design_name: String,
+    },
+    ImportDesignFailed {
+        error: String,
+    },
+    ImportDesignCancelled,
+    DesignPickerOpened {
+        entries: Vec<(String, PathBuf)>,
+    },
     Tick(Instant),
 }
 
@@ -98,6 +127,9 @@ pub enum AppAction {
     RequestRender,
     OpenDeckPicker,
     OpenDesignPicker,
+    SelectDesign(PathBuf),
+    OpenImportDesignPicker,
+    ImportDesign(PathBuf),
     SaveConfiguration(Box<Config>),
     RespondApproval {
         id: String,

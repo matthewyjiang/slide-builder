@@ -39,6 +39,28 @@ fn deck_watcher_accepts_content_changes_only_for_active_deck() {
     ));
 }
 
+#[test]
+fn design_import_workflow_events_stay_out_of_agent_chat_events() {
+    assert_eq!(
+        import_workflow_app_event(DesignImportWorkflowEvent::Stage(
+            DesignImportWorkflowStage::Analyzing,
+        )),
+        AppEvent::ImportDesignProgress {
+            stage: ImportDesignStage::Analyzing,
+            percent: None,
+        }
+    );
+    assert_eq!(
+        import_workflow_app_event(DesignImportWorkflowEvent::Completed {
+            package_name: "Acme".into(),
+            package_path: PathBuf::from("/designs/acme"),
+        }),
+        AppEvent::ImportDesignCompleted {
+            design_name: "Acme".into(),
+        }
+    );
+}
+
 #[tokio::test]
 async fn completed_render_resolves_waiting_tool_with_ordered_paths() {
     let (response, receiver) = oneshot::channel();

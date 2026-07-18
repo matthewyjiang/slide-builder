@@ -44,6 +44,9 @@ impl AppPaths {
     pub fn skills_dir(&self) -> PathBuf {
         self.data_dir.join("skills")
     }
+    pub fn design_packages_dir(&self) -> PathBuf {
+        self.data_dir.join("design-packages")
+    }
     pub fn project_dir(&self, cwd: &Path) -> Result<PathBuf> {
         Ok(self.projects_dir().join(project_key(cwd)?))
     }
@@ -149,6 +152,10 @@ mod tests {
         let paths = AppPaths::from_roots("/cfg", "/data", "/cache");
         assert_eq!(paths.config_file(), Path::new("/cfg/config.toml"));
         assert_eq!(paths.skills_dir(), Path::new("/data/skills"));
+        assert_eq!(
+            paths.design_packages_dir(),
+            Path::new("/data/design-packages")
+        );
         assert!(paths
             .project_dir(Path::new("/repo"))
             .unwrap()

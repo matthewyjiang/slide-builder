@@ -63,6 +63,30 @@ skills are advertised to the agent and loaded on demand through the built-in
 `load_skill` tool. Project skills take precedence over user and embedded skills
 with the same name.
 
+## Design packages
+
+Slide-builder stores imported packages in its managed package directory. On Linux,
+managed packages live at:
+
+```text
+$XDG_DATA_HOME/slide-builder/design-packages/
+```
+
+This normally resolves to `~/.local/share/slide-builder/design-packages/`.
+Each package contains a required `DESIGN.md` and one or more PowerPoint templates.
+
+Run `/import-design` to create a managed package from an existing `.pptx` file.
+The file picker accepts keyboard navigation or a typed or pasted path.
+Slide-builder copies the source into a private staging directory, extracts its
+presentation structure, and renders a contact sheet when Chromium is available.
+The configured model uses that evidence and the built-in import skill in a fresh,
+tool-free importer session to write `DESIGN.md`. Import stages appear beside the
+prompt; generated model output is not added to the chat transcript. Slide-builder
+validates the result and publishes it atomically with the original presentation
+saved as `template.pptx`. Existing packages are never overwritten; repeated names
+receive a numeric suffix. Run `/design` to select an imported package before the
+next deck prompt.
+
 ## Run
 
 ```sh

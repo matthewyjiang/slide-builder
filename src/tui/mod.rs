@@ -18,11 +18,12 @@ pub mod statusline;
 pub mod theme;
 
 pub use app::{
-    App, InputState, Message, PreviewState, PreviewStatus, Role, SlideItem, ToolCard, ToolStatus,
-    TranscriptItem,
+    App, ImportDesignStatus, ImportProgress, InputState, Message, PreviewState, PreviewStatus,
+    Role, SlideItem, ToolCard, ToolStatus, TranscriptItem,
 };
 pub use event::{
-    AgentEvent, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, RenderManifest, SlideRender,
+    AgentEvent, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, ImportDesignStage,
+    RenderManifest, SlideRender,
 };
 pub use layout::{render, render_with_preview};
 pub use preview_image::PreviewImage;
