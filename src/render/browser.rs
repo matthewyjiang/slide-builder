@@ -198,7 +198,14 @@ impl Browser {
             bail!("browser exited with {status}: {}", stderr.trim());
         }
         if !output.is_file() {
-            bail!("browser succeeded without producing a screenshot");
+            let stdout = stdout.trim();
+            let stderr = stderr.trim();
+            bail!(
+                "browser succeeded without producing screenshot {} (stdout: {}; stderr: {})",
+                output.display(),
+                if stdout.is_empty() { "<empty>" } else { stdout },
+                if stderr.is_empty() { "<empty>" } else { stderr },
+            );
         }
         Ok(CaptureDiagnostics { stderr, stdout })
     }

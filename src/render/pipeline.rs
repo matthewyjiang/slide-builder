@@ -151,7 +151,7 @@ async fn render_one(
     index: u32,
 ) -> Result<SlideImage> {
     let capture = directory.join(format!("capture-{index:04}.html"));
-    let temporary_png = directory.join(format!(".slide-{index:04}.png.tmp"));
+    let temporary_png = directory.join(format!(".slide-{index:04}.tmp.png"));
     let final_name = format!("slide-{index:04}.png");
     let final_png = directory.join(&final_name);
     let profile = directory.join(format!("profile-{index:04}"));
@@ -358,7 +358,9 @@ mod tests {
             .unwrap();
         let html = build_capture_html(&snapshot.html, 1).unwrap();
         let html_path = directory.path().join("capture.html");
-        let png_path = directory.path().join("capture.png");
+        // Keep the final extension after the temporary marker. Some Chromium
+        // builds only produce output when the screenshot path ends in `.png`.
+        let png_path = directory.path().join(".capture.tmp.png");
         let profile = directory.path().join("profile");
         std::fs::write(&html_path, html).unwrap();
         browser

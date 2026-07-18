@@ -1,4 +1,4 @@
-use super::{app::App, theme};
+use super::{app::App, preview_image::PreviewImage, theme};
 use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
@@ -7,48 +7,61 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
+pub fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: &App,
+    preview_image: Option<&mut PreviewImage>,
+) {
     let count = app.preview.slide_count();
     let label = if count == 0 {
         "No slide selected".into()
     } else {
         format!("Slide {} of {count}", app.preview.active + 1)
     };
-    let path = app
-        .preview
-        .slides
-        .get(app.preview.active)
-        .and_then(|s| s.image_path.as_ref())
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "Preview unavailable".into());
+    let block = Block::default()
+        .title(format!(" {label} "))
+        .title_style(
+            Style::default()
+                .fg(theme::TEXT)
+                .add_modifier(Modifier::BOLD),
+        )
+        .title_bottom(
+            Line::styled(
+                " ← / → navigate     Esc exit presentation ",
+                Style::default().fg(theme::MUTED),
+            )
+            .right_aligned(),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::ACCENT));
+    let content_area = block.inner(area);
+    frame.render_widget(block, area);
+
+    if let (Some(image), Some(path)) = (
+        preview_image,
+        app.preview
+            .slides
+            .get(app.preview.active)
+            .and_then(|slide| slide.image_path.as_deref()),
+    ) {
+        if image.render(frame, content_area, path).is_ok() {
+            return;
+        }
+    }
+
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::from(""),
             Line::styled(
-                path,
+                "Preview image unavailable",
                 Style::default()
                     .fg(theme::TEXT)
                     .add_modifier(Modifier::BOLD),
             ),
-            Line::from(""),
-            Line::styled(
-                "← / → navigate     Esc exit presentation",
-                Style::default().fg(theme::MUTED),
-            ),
         ]))
         .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true })
-        .block(
-            Block::default()
-                .title(format!(" {label} "))
-                .title_style(
-                    Style::default()
-                        .fg(theme::TEXT)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme::ACCENT)),
-        ),
-        area,
+        .wrap(Wrap { trim: true }),
+        content_area,
     );
 }

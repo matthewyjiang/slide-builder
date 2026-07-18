@@ -11,6 +11,7 @@ pub mod layout;
 pub mod modal;
 pub mod outline;
 pub mod preview;
+pub mod preview_image;
 pub mod slideshow;
 pub mod statusline;
 pub mod theme;
@@ -22,4 +23,5 @@ pub use app::{
 pub use event::{
     AgentEvent, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, RenderManifest, SlideRender,
 };
-pub use layout::render;
+pub use layout::{render, render_with_preview};
+pub use preview_image::PreviewImage;
