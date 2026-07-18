@@ -34,9 +34,7 @@ pub(crate) fn render_tool(card: &ToolCard, width: usize) -> Vec<Line<'static>> {
         ToolStatus::Succeeded => ("✓", theme::tool_succeeded()),
         ToolStatus::Failed => ("✗", theme::tool_failed()),
     };
-    let block_style = heading_style
-        .fg(theme::TEXT)
-        .remove_modifier(Modifier::BOLD);
+    let block_style = heading_style.remove_modifier(Modifier::BOLD);
     let mut rows = wrapped_rows(
         &format!("{glyph} {}", tool_status_text(card)),
         inner_width,
@@ -46,7 +44,7 @@ pub(crate) fn render_tool(card: &ToolCard, width: usize) -> Vec<Line<'static>> {
         rows.extend(wrapped_rows(
             &format!("  {}", card.detail),
             inner_width,
-            block_style.fg(theme::MUTED),
+            block_style.add_modifier(Modifier::DIM),
         ));
     }
     render_block(rows, width, block_style)

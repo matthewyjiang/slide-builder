@@ -207,7 +207,7 @@ fn render_selection(frame: &mut Frame<'_>, app: &App, selection: TextSelection) 
         if start_x <= end_x && row_width > 0 {
             frame.buffer_mut().set_style(
                 Rect::new(start_x, y, end_x - start_x + 1, 1),
-                Style::default().fg(theme::TEXT).bg(theme::ACCENT_SOFT),
+                theme::accent_block(),
             );
         }
     }

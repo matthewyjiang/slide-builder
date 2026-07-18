@@ -25,11 +25,10 @@ fn user_messages_are_full_width_background_blocks_without_labels() {
 
     assert_eq!(lines.len(), 3);
     assert!(lines.iter().all(|line| line.width() == 12));
-    assert!(lines.iter().all(|line| {
-        line.spans
-            .iter()
-            .all(|span| span.style.bg == Some(theme::SURFACE_RAISED))
-    }));
+    let background = theme::user_message().bg;
+    assert!(lines
+        .iter()
+        .all(|line| { line.spans.iter().all(|span| span.style.bg == background) }));
     let content = line_content(&lines);
     assert!(content.contains("hello"));
     assert!(!content.contains("You"));
@@ -43,11 +42,10 @@ fn assistant_and_system_messages_use_distinct_surfaces() {
     assert!(assistant
         .iter()
         .all(|line| { line.spans.iter().all(|span| span.style.bg.is_none()) }));
-    assert!(system.iter().all(|line| {
-        line.spans
-            .iter()
-            .all(|span| span.style.bg == Some(theme::WARNING_SOFT))
-    }));
+    let background = theme::system_message().bg;
+    assert!(system
+        .iter()
+        .all(|line| { line.spans.iter().all(|span| span.style.bg == background) }));
     let content = format!("{}{}", line_content(&assistant), line_content(&system));
     assert!(!content.contains("Slide-builder"));
     assert!(!content.contains("Notice"));
@@ -77,11 +75,10 @@ fn tool_outputs_use_full_width_status_backgrounds() {
     let lines = render_tool(&card, 18);
 
     assert!(lines.iter().all(|line| line.width() == 18));
-    assert!(lines.iter().all(|line| {
-        line.spans
-            .iter()
-            .all(|span| span.style.bg == Some(theme::SUCCESS_SOFT))
-    }));
+    let background = theme::tool_succeeded().bg;
+    assert!(lines
+        .iter()
+        .all(|line| { line.spans.iter().all(|span| span.style.bg == background) }));
     let compact = line_content(&lines)
         .chars()
         .filter(|character| !character.is_whitespace())

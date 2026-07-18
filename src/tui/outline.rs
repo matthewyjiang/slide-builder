@@ -21,7 +21,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Span::styled(
                 format!(" {:>2} ", index + 1),
                 if active {
-                    Style::default().fg(theme::TEXT).bg(theme::ACCENT_SOFT)
+                    theme::accent_block()
                 } else {
                     Style::default().fg(theme::MUTED)
                 },
@@ -38,9 +38,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ),
         ]))
         .style(if active {
-            Style::default().bg(theme::ACCENT_SOFT)
+            theme::accent_block()
         } else if hovered {
-            Style::default().fg(theme::TEXT).bg(theme::SUBTLE)
+            theme::hover_block()
         } else {
             Style::default()
         })

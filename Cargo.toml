@@ -16,6 +16,7 @@ futures = "0.3"
 handler-common = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 keyring = "4.1.5"
+libc = "0.2"
 notify = "8"
 pptx-handler = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 pulldown-cmark = "0.13"

@@ -244,7 +244,7 @@ fn render_slash_commands(frame: &mut Frame<'_>, input_area: Rect, app: &App) {
                 Span::styled(suggestion.detail, Style::default().fg(theme::MUTED)),
             ]))
             .style(if is_selected {
-                Style::default().bg(theme::ACCENT_SOFT)
+                theme::accent_block()
             } else {
                 Style::default()
             })

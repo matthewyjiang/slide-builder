@@ -3352,6 +3352,7 @@ dependencies = [
  "handler-common",
  "image",
  "keyring",
+ "libc",
  "notify",
  "pptx-handler",
  "pulldown-cmark",

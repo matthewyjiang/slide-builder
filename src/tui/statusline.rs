@@ -17,10 +17,7 @@ pub fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 " SLIDE BUILDER ",
-                Style::default()
-                    .fg(theme::TEXT)
-                    .bg(theme::ACCENT_SOFT)
-                    .add_modifier(Modifier::BOLD),
+                theme::accent_block().add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("  {}", app.deck_name),
