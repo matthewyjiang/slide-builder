@@ -22,6 +22,16 @@ fn deck_mutations_keep_only_actionable_context() {
         target("slide_reorder", &json!({"from": 4, "to": 2})),
         "slide 4 to position 2"
     );
+    assert_eq!(
+        target(
+            "shape_add",
+            &json!({"edits": [
+                {"slide": 1, "kind": "rectangle"},
+                {"slide": 2, "kind": "ellipse"}
+            ]})
+        ),
+        "2 deck edits"
+    );
 }
 
 #[test]

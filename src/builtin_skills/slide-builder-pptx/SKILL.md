@@ -38,6 +38,17 @@ Use these exact argument shapes. Slide indexes are one-based. Geometry values ar
 - `shape_add`: `{"slide":2,"kind":"hexagon","x":1.0,"y":1.0,"width":4.0,"height":1.0,"fill":"#336699"}`. Supported kinds are `rectangle`, `ellipse`, `hexagon`, `line`, and `connector`.
 - Colors accept either `#RRGGBB` or `RRGGBB`; tools normalize them before writing OOXML.
 - In text values, either an actual newline or `\\n` creates a line break.
+Batch independent edits of the same kind with `edits`. The whole batch is atomic and advances the deck generation once:
+
+```json
+{"edits":[
+  {"slide":1,"text":"Title","x":0.8,"y":0.5,"width":5.5,"height":0.7},
+  {"slide":2,"text":"Summary","x":0.8,"y":0.5,"width":5.5,"height":0.7}
+]}
+```
+
+Single-edit payloads remain valid. A batch may contain up to 100 edits. If any edit fails, none are committed.
+
 - `element_update`: `{"id":"<stable ID>","properties":{"text":"Replacement text","font_size":"24"}}`. Put every changed value inside `properties`. Do not send `path` to this tool.
 - `deck_validate`: `{}`.
 

@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 
 pub const MAX_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_TEXT_BYTES: usize = 1_000_000;
+pub const MAX_MUTATIONS_PER_BATCH: usize = 100;
 pub const BLANK_DECK: &[u8] = include_bytes!("../../assets/blank.pptx");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,12 +149,28 @@ impl DeckEngine {
 
     /// Copy-mutate-validate-save-reopen-rename transaction. The original is unchanged on error.
     pub async fn mutate(&self, op: DeckMutation) -> Result<MutationResult> {
-        validate_payload(&op)?;
+        self.mutate_many(vec![op]).await
+    }
+
+    /// Apply multiple mutations in one transaction and advance generation once.
+    pub async fn mutate_many(&self, ops: Vec<DeckMutation>) -> Result<MutationResult> {
+        if ops.is_empty() {
+            bail!("mutation batch must not be empty");
+        }
+        if ops.len() > MAX_MUTATIONS_PER_BATCH {
+            bail!("mutation batch exceeds {MAX_MUTATIONS_PER_BATCH} operation limit");
+        }
+        if serde_json::to_vec(&ops)?.len() > MAX_TEXT_BYTES {
+            bail!("mutation batch exceeds {MAX_TEXT_BYTES} byte limit");
+        }
+        for op in &ops {
+            validate_payload(op)?;
+        }
         let _guard = self.lock.lock().await;
         let path = self.path.clone();
         let next = self.generation() + 1;
         let transaction =
-            tokio::task::spawn_blocking(move || transact(path.as_ref(), op)).await??;
+            tokio::task::spawn_blocking(move || transact(path.as_ref(), ops)).await??;
         self.generation.store(next, Ordering::Release);
         Ok(MutationResult {
             generation: next,
@@ -231,7 +248,7 @@ struct TransactionResult {
     post_state: serde_json::Value,
 }
 
-fn transact(path: &Path, mut op: DeckMutation) -> Result<TransactionResult> {
+fn transact(path: &Path, ops: Vec<DeckMutation>) -> Result<TransactionResult> {
     if !path.exists() {
         bail!("deck does not exist: {}", path.display());
     }
@@ -244,24 +261,75 @@ fn transact(path: &Path, mut op: DeckMutation) -> Result<TransactionResult> {
     std::fs::copy(path, &temp)?;
     let result = (|| -> Result<TransactionResult> {
         let handler = open(&temp, true)?;
-        let mut before = handler.view_as_outline_json()?;
-        let before_html = handler.view_as_html(ViewOptions::default())?;
-        inspection_geometry::enrich(&mut before, &before_html);
-        resolve_mutation_selectors(&before, &mut op)?;
-        let result_op = op.clone();
-        let use_pre_mutation_ids = matches!(
-            op,
-            DeckMutation::Set { .. }
-                | DeckMutation::Remove { .. }
-                | DeckMutation::Move { .. }
-                | DeckMutation::Swap { .. }
-        );
-        let stable_before = stable_ids_for_mutation(&before, &op);
-        let handler_affected = apply(&handler, op)?;
-        let errors = handler.validate()?;
-        if !errors.is_empty() {
-            bail!("mutation validation failed; original unchanged: {errors:?}");
+        let mut current_state = handler.view_as_outline_json()?;
+        let initial_html = handler.view_as_html(ViewOptions::default())?;
+        inspection_geometry::enrich(&mut current_state, &initial_html);
+        let mut affected = Vec::new();
+
+        for (index, mut op) in ops.into_iter().enumerate() {
+            resolve_mutation_selectors(&current_state, &mut op)?;
+            let result_op = op.clone();
+            let use_pre_mutation_ids = matches!(
+                op,
+                DeckMutation::Set { .. }
+                    | DeckMutation::Remove { .. }
+                    | DeckMutation::Move { .. }
+                    | DeckMutation::Swap { .. }
+            );
+            let stable_before = stable_ids_for_mutation(&current_state, &op);
+            let handler_affected = apply(&handler, op)?;
+            let errors = handler.validate()?;
+            if !errors.is_empty() {
+                bail!(
+                    "mutation {} validation failed; original unchanged: {errors:?}",
+                    index + 1
+                );
+            }
+            let html = handler
+                .view_as_html(ViewOptions::default())
+                .with_context(|| {
+                    format!(
+                        "mutation {} produced invalid slide XML; original unchanged",
+                        index + 1
+                    )
+                })?;
+            let mut post_state = handler.view_as_outline_json()?;
+            inspection_geometry::enrich(&mut post_state, &html);
+            let mut stable_after = handler_affected
+                .iter()
+                .filter_map(|path| stable_id_for_path(&post_state, path))
+                .collect::<Vec<_>>();
+            if stable_after.is_empty() {
+                if let DeckMutation::Add {
+                    parent,
+                    element_type,
+                    ..
+                } = &result_op
+                {
+                    if let Some(added) = stable_id_for_added_element(
+                        &current_state,
+                        &post_state,
+                        parent,
+                        element_type,
+                    ) {
+                        stable_after.push(added);
+                    }
+                }
+            }
+            if matches!(result_op, DeckMutation::Add { .. }) && stable_after.is_empty() {
+                bail!(
+                    "mutation {} created no inspectable element; original unchanged",
+                    index + 1
+                );
+            }
+            affected.extend(if use_pre_mutation_ids || stable_after.is_empty() {
+                stable_before
+            } else {
+                stable_after
+            });
+            current_state = post_state;
         }
+
         handler.save()?;
         drop(handler);
         let verified = open(&temp, false)?;
@@ -277,35 +345,10 @@ fn transact(path: &Path, mut op: DeckMutation) -> Result<TransactionResult> {
             .context("saved package failed slide XML validation; original unchanged")?;
         let mut post_state = verified.view_as_outline_json()?;
         inspection_geometry::enrich(&mut post_state, &html);
-        let mut stable_after = handler_affected
-            .iter()
-            .filter_map(|path| stable_id_for_path(&post_state, path))
-            .collect::<Vec<_>>();
-        if stable_after.is_empty() {
-            if let DeckMutation::Add {
-                parent,
-                element_type,
-                ..
-            } = &result_op
-            {
-                if let Some(added) =
-                    stable_id_for_added_element(&before, &post_state, parent, element_type)
-                {
-                    stable_after.push(added);
-                }
-            }
-        }
-        if matches!(result_op, DeckMutation::Add { .. }) && stable_after.is_empty() {
-            bail!("add mutation created no inspectable element; original unchanged");
-        }
         drop(verified);
         std::fs::rename(&temp, path)?;
         Ok(TransactionResult {
-            affected: if use_pre_mutation_ids || stable_after.is_empty() {
-                stable_before
-            } else {
-                stable_after
-            },
+            affected,
             post_state,
         })
     })();

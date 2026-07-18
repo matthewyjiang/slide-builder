@@ -1,4 +1,6 @@
-use crate::agent::deck_engine::{DeckEngine, DeckMutation, MAX_MEDIA_BYTES};
+use crate::agent::deck_engine::{
+    DeckEngine, DeckMutation, MAX_MEDIA_BYTES, MAX_MUTATIONS_PER_BATCH,
+};
 use rho_sdk::{
     model::ToolSpec,
     tool::{
@@ -47,6 +49,35 @@ pub fn semantic_tools(engine: DeckEngine) -> Vec<Arc<dyn Tool>> {
     .collect()
 }
 fn schema(name: &str) -> Value {
+    let item = single_schema(name);
+    if !is_mutation_tool(name) {
+        return item;
+    }
+    json!({
+        "oneOf": [
+            item.clone(),
+            {
+                "type": "object",
+                "required": ["edits"],
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": crate::agent::deck_engine::MAX_MUTATIONS_PER_BATCH,
+                        "items": item
+                    }
+                },
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
+fn is_mutation_tool(name: &str) -> bool {
+    !matches!(name, "deck_inspect" | "deck_validate")
+}
+
+fn single_schema(name: &str) -> Value {
     match name {
         "slide_create" => json!({"type":"object","properties":{},"additionalProperties":false}),
         "slide_duplicate" | "slide_delete" => {
@@ -152,17 +183,17 @@ fn schema(name: &str) -> Value {
 }
 fn description(name: &str) -> &'static str {
     match name {
-        "slide_create" => "Add one blank slide to the end of the active deck.",
-        "slide_duplicate" => "Duplicate a one-based slide index.",
-        "slide_delete" => "Delete a one-based slide index.",
-        "slide_reorder" => "Move a slide from one one-based position to another.",
-        "text_add" => "Add a text box to a slide using inch-based geometry.",
-        "image_add" => "Add a local image to a slide using inch-based geometry.",
-        "shape_add" => "Add a rectangle, ellipse, hexagon, line, or connector using inch-based geometry.",
-        "element_update" => "Update an existing element by the stable ID returned by deck_inspect or an add operation. Put all changed values inside properties.",
+        "slide_create" => "Add blank slides to the end of the active deck. Pass one edit directly or multiple edits in an `edits` array.",
+        "slide_duplicate" => "Duplicate slides by one-based index. Pass one edit directly or multiple edits in an `edits` array.",
+        "slide_delete" => "Delete slides by one-based index. Pass one edit directly or multiple edits in an `edits` array.",
+        "slide_reorder" => "Move slides between one-based positions. Pass one edit directly or multiple edits in an `edits` array.",
+        "text_add" => "Add text boxes using inch-based geometry. Pass one edit directly or multiple edits in an `edits` array.",
+        "image_add" => "Add local images using inch-based geometry. Pass one edit directly or multiple edits in an `edits` array.",
+        "shape_add" => "Add rectangles, ellipses, hexagons, lines, or connectors using inch-based geometry. Pass one edit directly or multiple edits in an `edits` array.",
+        "element_update" => "Update elements by stable ID. Put changed values inside properties. Pass one edit directly or multiple edits in an `edits` array.",
         "deck_inspect" => "Inspect the active deck or one optional handler path before editing. Returns slide geometry, elements, and stable IDs.",
         "deck_validate" => "Validate the active deck after meaningful edits.",
-        "deck_advanced" => "Apply one advanced add, set, remove, move, copy, swap, or raw_set mutation. Use semantic tools for normal edits and follow the exact nested mutation schema.",
+        "deck_advanced" => "Apply advanced add, set, remove, move, copy, swap, or raw_set mutations. Use semantic tools for normal edits. Pass one edit directly or multiple edits in an `edits` array.",
         _ => "Operate on the active PowerPoint deck.",
     }
 }
@@ -219,32 +250,71 @@ impl Tool for DeckTool {
         })
     }
 }
-async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> {
-    let n = |k: &str| {
-        let value = a
-            .get(k)
-            .and_then(Value::as_u64)
-            .ok_or_else(|| anyhow::anyhow!("invalid field `{k}`: expected positive integer"))?;
-        if value == 0 || value > usize::MAX as u64 {
-            anyhow::bail!("invalid field `{k}`: expected positive integer");
-        }
-        Ok(value as usize)
-    };
-    let f = |k: &str| {
-        a.get(k)
-            .and_then(Value::as_f64)
-            .ok_or_else(|| anyhow::anyhow!("invalid field `{k}`: expected number"))
-    };
-    let mut mutation = match name {
+async fn execute(name: &str, e: &DeckEngine, arguments: Value) -> anyhow::Result<Value> {
+    match name {
         "deck_inspect" => {
             return e
-                .inspect(a.get("path").and_then(Value::as_str).map(str::to_owned))
+                .inspect(
+                    arguments
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                )
                 .await
         }
         "deck_validate" => {
-            let s = e.snapshot().await?;
-            return Ok(json!({"valid":true,"generation":s.generation,"outline":s.outline}));
+            let snapshot = e.snapshot().await?;
+            return Ok(json!({
+                "valid": true,
+                "generation": snapshot.generation,
+                "outline": snapshot.outline
+            }));
         }
+        _ => {}
+    }
+
+    let edits = match arguments.get("edits") {
+        Some(value) => value
+            .as_array()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("invalid field `edits`: expected array"))?,
+        None => vec![arguments],
+    };
+    if edits.is_empty() {
+        anyhow::bail!("field `edits` must contain at least one edit");
+    }
+    if edits.len() > MAX_MUTATIONS_PER_BATCH {
+        anyhow::bail!("field `edits` exceeds {MAX_MUTATIONS_PER_BATCH} edit limit");
+    }
+    let mutations = edits
+        .iter()
+        .enumerate()
+        .map(|(index, arguments)| {
+            mutation_from_arguments(name, arguments)
+                .map_err(|error| anyhow::anyhow!("edit {}: {error}", index + 1))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(serde_json::to_value(e.mutate_many(mutations).await?)?)
+}
+
+fn mutation_from_arguments(name: &str, arguments: &Value) -> anyhow::Result<DeckMutation> {
+    let n = |key: &str| {
+        let value = arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow::anyhow!("invalid field `{key}`: expected positive integer"))?;
+        if value == 0 || value > usize::MAX as u64 {
+            anyhow::bail!("invalid field `{key}`: expected positive integer");
+        }
+        Ok(value as usize)
+    };
+    let f = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow::anyhow!("invalid field `{key}`: expected number"))
+    };
+    let mut mutation = match name {
         "slide_create" => DeckMutation::Add {
             parent: "/presentation".into(),
             element_type: "slide".into(),
@@ -264,66 +334,68 @@ async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> 
             index: Some(n("to")?),
         },
         "element_update" => {
-            let path = e.resolve_element(req_str(&a, "id")?.into()).await?;
-            let mut properties: HashMap<String, String> =
-                serde_json::from_value(a.get("properties").cloned().unwrap_or(Value::Null))?;
+            let path = req_str(arguments, "id")?.to_owned();
+            let mut properties: HashMap<String, String> = serde_json::from_value(
+                arguments.get("properties").cloned().unwrap_or(Value::Null),
+            )?;
             normalize_update_properties(&mut properties)?;
             DeckMutation::Set { path, properties }
         }
         "deck_advanced" => serde_json::from_value(
-            a.get("mutation")
+            arguments
+                .get("mutation")
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("missing mutation"))?,
         )?,
         "text_add" | "image_add" | "shape_add" => {
             let slide = n("slide")?;
-            let (x, y, w, h) = (f("x")?, f("y")?, f("width")?, f("height")?);
-            validate_geometry(x, y, w, h)?;
-            let mut p = HashMap::from([
+            let (x, y, width, height) = (f("x")?, f("y")?, f("width")?, f("height")?);
+            validate_geometry(x, y, width, height)?;
+            let mut properties = HashMap::from([
                 ("x".into(), format!("{x}in")),
                 ("y".into(), format!("{y}in")),
-                ("width".into(), format!("{w}in")),
-                ("height".into(), format!("{h}in")),
+                ("width".into(), format!("{width}in")),
+                ("height".into(), format!("{height}in")),
             ]);
-            let typ = if name == "text_add" {
-                p.insert("text".into(), req_str(&a, "text")?.into());
-                if let Some(v) = a.get("font_size") {
-                    p.insert(
+            let element_type = if name == "text_add" {
+                properties.insert("text".into(), req_str(arguments, "text")?.into());
+                if let Some(value) = arguments.get("font_size") {
+                    properties.insert(
                         "fontSize".into(),
-                        finite_number(v, "font_size")?.to_string(),
+                        finite_number(value, "font_size")?.to_string(),
                     );
                 }
                 "rectangle"
             } else if name == "image_add" {
-                let path = req_str(&a, "path")?;
-                let meta = std::fs::metadata(path)?;
-                if meta.len() > MAX_MEDIA_BYTES {
-                    anyhow::bail!("image exceeds {MAX_MEDIA_BYTES} byte limit")
-                };
-                p.insert("path".into(), path.into());
+                let path = req_str(arguments, "path")?;
+                let metadata = std::fs::metadata(path)?;
+                if metadata.len() > MAX_MEDIA_BYTES {
+                    anyhow::bail!("image exceeds {MAX_MEDIA_BYTES} byte limit");
+                }
+                properties.insert("path".into(), path.into());
                 "image"
             } else {
-                let k = req_str(&a, "kind")?;
-                if let Some(v) = a.get("fill").and_then(Value::as_str) {
-                    p.insert("fill".into(), v.into());
+                let kind = req_str(arguments, "kind")?;
+                if let Some(value) = arguments.get("fill").and_then(Value::as_str) {
+                    properties.insert("fill".into(), value.into());
                 }
-                if k == "hexagon" {
-                    p.insert("preset".into(), k.into());
+                if kind == "hexagon" {
+                    properties.insert("preset".into(), kind.into());
                     "rectangle"
                 } else {
-                    k
+                    kind
                 }
             };
             DeckMutation::Add {
                 parent: format!("/slide[{slide}]"),
-                element_type: typ.into(),
-                properties: p,
+                element_type: element_type.into(),
+                properties,
             }
         }
         _ => anyhow::bail!("unknown deck tool"),
     };
     normalize_mutation_properties(&mut mutation)?;
-    Ok(serde_json::to_value(e.mutate(mutation).await?)?)
+    Ok(mutation)
 }
 fn normalize_mutation_properties(mutation: &mut DeckMutation) -> anyhow::Result<()> {
     let properties = match mutation {
@@ -552,6 +624,88 @@ mod tests {
         assert!(!after_ids.contains(&ids[2].as_str()));
         assert!(after_ids.contains(&ids[0].as_str()));
         assert!(after_ids.contains(&ids[1].as_str()));
+    }
+
+    #[tokio::test]
+    async fn slide_create_batch_accepts_empty_edit_objects() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("slides-batch.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+
+        let result = execute("slide_create", &engine, json!({"edits": [{}, {}]}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["generation"], 1);
+        assert_eq!(result["affected"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            engine.inspect(None).await.unwrap()["slides"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn text_add_batch_commits_once_and_returns_all_affected_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("batch.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+
+        let result = execute(
+            "text_add",
+            &engine,
+            json!({"edits": [
+                {"slide":1,"text":"first","x":1,"y":1,"width":3,"height":1},
+                {"slide":1,"text":"second","x":1,"y":2,"width":3,"height":1}
+            ]}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["generation"], 1);
+        assert_eq!(result["affected"].as_array().unwrap().len(), 2);
+        assert_eq!(engine.generation(), 1);
+        let inspected = engine.inspect(None).await.unwrap();
+        let previews = inspected["slides"][0]["shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|shape| shape["text_preview"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(previews, vec!["first", "second"]);
+    }
+
+    #[tokio::test]
+    async fn failed_batch_rolls_back_prior_edits_and_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rollback.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let result = execute(
+            "deck_advanced",
+            &engine,
+            json!({"edits": [
+                {"mutation": {
+                    "operation":"add",
+                    "parent":"/slide[1]",
+                    "element_type":"rectangle",
+                    "properties":{"x":"1in","y":"1in","width":"2in","height":"1in"}
+                }},
+                {"mutation": {"operation":"remove","path":"/slide[999]"}}
+            ]}),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(engine.generation(), 0);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            engine.inspect(None).await.unwrap()["slides"][0]["shape_count"],
+            0
+        );
     }
 
     #[tokio::test]

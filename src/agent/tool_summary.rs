@@ -4,6 +4,26 @@ use std::path::Path;
 /// Reduces tool arguments to the small amount of context useful in the transcript.
 /// Tool inputs still flow to the SDK unchanged.
 pub fn target(name: &str, arguments: &Value) -> String {
+    if matches!(
+        name,
+        "slide_create"
+            | "slide_duplicate"
+            | "slide_delete"
+            | "slide_reorder"
+            | "text_add"
+            | "image_add"
+            | "shape_add"
+            | "element_update"
+            | "deck_advanced"
+    ) {
+        if let Some(count) = arguments
+            .get("edits")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+        {
+            return format!("{count} deck edits");
+        }
+    }
     match name {
         "slide_create" => "slide".into(),
         "slide_duplicate" | "slide_delete" => numbered("slide", arguments, "index"),
