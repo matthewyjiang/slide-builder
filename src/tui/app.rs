@@ -258,6 +258,7 @@ pub struct App {
     pub model: String,
     pub token_usage: Option<(u64, u64)>,
     pub import_design_status: Option<ImportDesignStatus>,
+    pub conversation_scroll_offset: u16,
     pub mouse: super::mouse::MouseState,
     pub config: Config,
 }
@@ -280,6 +281,7 @@ impl Default for App {
             model: "-".into(),
             token_usage: None,
             import_design_status: None,
+            conversation_scroll_offset: 0,
             mouse: super::mouse::MouseState::default(),
             config: Config::default(),
         }
@@ -332,11 +334,6 @@ impl App {
             }
             AppEvent::RendererUnavailable(reason) => {
                 self.preview.status = PreviewStatus::Unavailable { reason };
-                vec![]
-            }
-            AppEvent::AgentRenderRequested => vec![AppAction::RequestRender],
-            AppEvent::AgentSetActiveSlide(index) => {
-                self.preview.select(index.saturating_sub(1));
                 vec![]
             }
             AppEvent::DeckFileChanged => {
@@ -561,6 +558,7 @@ impl App {
                 let text = self.input.take();
                 let attach = std::mem::take(&mut self.input.attach_active_slide);
                 self.run_active = true;
+                self.conversation_scroll_offset = 0;
                 self.transcript.push(TranscriptItem::Message(Message {
                     role: Role::User,
                     text: text.clone(),
@@ -1053,10 +1051,6 @@ mod tests {
         assert_eq!(app.modal, ModalState::None);
     }
 }
-
-#[cfg(test)]
-#[path = "app_agent_tools_tests.rs"]
-mod agent_tools_tests;
 
 #[cfg(test)]
 #[path = "app_controls_tests.rs"]

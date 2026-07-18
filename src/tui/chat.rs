@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 
     let lines = conversation_lines(app);
-    let scroll = scroll_for(&lines, regions[1]);
+    let scroll = scroll_for(&lines, regions[1], app.conversation_scroll_offset);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
@@ -97,13 +97,32 @@ fn conversation_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
-fn scroll_for(lines: &[Line<'_>], area: Rect) -> u16 {
+fn max_scroll(lines: &[Line<'_>], area: Rect) -> u16 {
     let width = area.width.max(1) as usize;
     let rendered_lines = lines
         .iter()
         .map(|line| line.width().max(1).div_ceil(width))
         .sum::<usize>();
-    rendered_lines.saturating_sub(area.height as usize) as u16
+    rendered_lines
+        .saturating_sub(area.height as usize)
+        .try_into()
+        .unwrap_or(u16::MAX)
+}
+
+fn scroll_for(lines: &[Line<'_>], area: Rect, offset_from_bottom: u16) -> u16 {
+    max_scroll(lines, area).saturating_sub(offset_from_bottom)
+}
+
+pub(crate) fn scroll_up(app: &mut App, area: Rect, lines: u16) {
+    let maximum = max_scroll(&conversation_lines(app), area);
+    app.conversation_scroll_offset = app
+        .conversation_scroll_offset
+        .saturating_add(lines)
+        .min(maximum);
+}
+
+pub(crate) fn scroll_down(app: &mut App, lines: u16) {
+    app.conversation_scroll_offset = app.conversation_scroll_offset.saturating_sub(lines);
 }
 
 pub(crate) fn visible_text_rows(area: Rect, app: &App) -> Vec<String> {
@@ -112,7 +131,7 @@ pub(crate) fn visible_text_rows(area: Rect, app: &App) -> Vec<String> {
     }
     let body = Rect::new(0, 0, area.width, area.height - 1);
     let lines = conversation_lines(app);
-    let scroll = scroll_for(&lines, body);
+    let scroll = scroll_for(&lines, body, app.conversation_scroll_offset);
     let mut buffer = Buffer::empty(body);
     Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: false })
@@ -161,7 +180,7 @@ fn tool_verbs(name: &str) -> ToolVerbs {
         "element_update" | "deck_advanced" => ("Update", "Updating", "Updated"),
         "deck_inspect" => ("Inspect", "Inspecting", "Inspected"),
         "deck_validate" => ("Validate", "Validating", "Validated"),
-        "render_deck" => ("Request", "Requesting", "Requested"),
+        "render_deck" => ("Render", "Rendering", "Rendered"),
         "set_active_slide" => ("Select", "Selecting", "Selected"),
         "list_dir" => ("List", "Listing", "Listed"),
         "read_file" | "get_search_content" => ("Read", "Reading", "Read"),

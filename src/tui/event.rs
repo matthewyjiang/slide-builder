@@ -84,8 +84,6 @@ pub enum AppEvent {
         error: String,
     },
     RendererUnavailable(String),
-    AgentRenderRequested,
-    AgentSetActiveSlide(usize),
     DeckFileChanged,
     ImportDesignPickerOpened {
         start_directory: PathBuf,

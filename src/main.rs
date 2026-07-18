@@ -39,7 +39,17 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+
+enum TuiLoopEvent {
+    App(AppEvent),
+    Tool(UiToolCommand),
+}
+
+struct PendingRenderTool {
+    generation: u64,
+    response: oneshot::Sender<Result<Vec<PathBuf>, String>>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -477,8 +487,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let design_import = DesignImportWorkflow::default();
     let (import_tx, mut import_rx) = mpsc::unbounded_channel::<DesignImportWorkflowEvent>();
-    pump_ui_tool_commands(ui_tool_rx, event_tx.clone());
-    let _deck_watcher = watch_deck(engine.path(), event_tx.clone())?;
+    let _deck_watcher = watch_deck(engine.clone(), event_tx.clone())?;
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
     pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
 
@@ -535,23 +544,64 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let mut import_picker_directory = cwd.clone();
     let result = async {
         let mut input = EventStream::new();
+        let mut ui_tool_rx = ui_tool_rx;
+        let mut pending_render_tools = Vec::new();
         loop {
             terminal.draw(|frame| {
                 slide_builder::tui::render_with_preview(frame, &app, Some(&mut preview_image))
             })?;
             let event = tokio::select! {
                 input = input.next() => match input {
-                    Some(Ok(event)) => Some(AppEvent::Input(event)),
+                    Some(Ok(event)) => Some(TuiLoopEvent::App(AppEvent::Input(event))),
                     Some(Err(error)) => return Err(error.into()),
                     None => return Ok(()),
                 },
-                event = event_rx.recv() => event,
-                imported = import_rx.recv() => imported.map(import_workflow_app_event),
+                event = event_rx.recv() => event.map(TuiLoopEvent::App),
+                imported = import_rx.recv() => imported
+                    .map(import_workflow_app_event)
+                    .map(TuiLoopEvent::App),
+                command = ui_tool_rx.recv() => command.map(TuiLoopEvent::Tool),
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    Some(AppEvent::Tick(std::time::Instant::now()))
+                    Some(TuiLoopEvent::App(AppEvent::Tick(std::time::Instant::now())))
                 }
             };
             let Some(event) = event else { return Ok(()) };
+            let event = match event {
+                TuiLoopEvent::Tool(UiToolCommand::Render { response }) => {
+                    if let Some(service) = &render_service {
+                        pending_render_tools.push(PendingRenderTool {
+                            generation: engine.generation(),
+                            response,
+                        });
+                        queue_render(
+                            service.clone(),
+                            engine.clone(),
+                            &config,
+                            event_tx.clone(),
+                        );
+                    } else {
+                        let _ = response.send(Err(
+                            "No supported Chromium renderer was found".into(),
+                        ));
+                    }
+                    continue;
+                }
+                TuiLoopEvent::Tool(UiToolCommand::SetActiveSlide { index, response }) => {
+                    let result = if app.preview.slides.get(index.saturating_sub(1)).is_some() {
+                        app.preview.select(index - 1);
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "slide {index} is outside the available range 1-{}",
+                            app.preview.slide_count()
+                        ))
+                    };
+                    let _ = response.send(result);
+                    continue;
+                }
+                TuiLoopEvent::App(event) => event,
+            };
+            complete_render_tools(&event, &mut pending_render_tools);
             let preload_paths = match &event {
                 AppEvent::RenderDone {
                     generation,
@@ -823,32 +873,48 @@ fn push_system_message(app: &mut App, text: String) {
         ));
 }
 
-fn pump_ui_tool_commands(
-    mut receiver: mpsc::UnboundedReceiver<UiToolCommand>,
-    events: mpsc::UnboundedSender<AppEvent>,
-) {
-    tokio::spawn(async move {
-        while let Some(command) = receiver.recv().await {
-            let event = match command {
-                UiToolCommand::Render => AppEvent::AgentRenderRequested,
-                UiToolCommand::SetActiveSlide(index) => AppEvent::AgentSetActiveSlide(index),
-            };
-            if events.send(event).is_err() {
-                break;
-            }
+fn complete_render_tools(event: &AppEvent, pending: &mut Vec<PendingRenderTool>) {
+    let (generation, result) = match event {
+        AppEvent::RenderDone {
+            generation,
+            manifest,
+        } => {
+            let mut slides = manifest.slides.iter().collect::<Vec<_>>();
+            slides.sort_by_key(|slide| slide.index);
+            (
+                *generation,
+                Ok(slides
+                    .into_iter()
+                    .map(|slide| slide.image_path.clone())
+                    .collect::<Vec<_>>()),
+            )
         }
-    });
+        AppEvent::RenderFailed { generation, error } => (*generation, Err(error.clone())),
+        AppEvent::RendererUnavailable(error) => (u64::MAX, Err(error.clone())),
+        _ => return,
+    };
+
+    let mut remaining = Vec::new();
+    for request in pending.drain(..) {
+        if request.generation <= generation {
+            let _ = request.response.send(result.clone());
+        } else {
+            remaining.push(request);
+        }
+    }
+    *pending = remaining;
 }
 
 fn watch_deck(
-    deck: &Path,
+    engine: DeckEngine,
     events: mpsc::UnboundedSender<AppEvent>,
 ) -> Result<notify::RecommendedWatcher> {
-    let deck = deck.to_path_buf();
+    let deck = engine.path().to_path_buf();
     let directory = deck.parent().context("deck has no parent")?.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if let Ok(event) = event {
             if deck_content_changed(&event, &deck) {
+                engine.record_file_change();
                 let _ = events.send(AppEvent::DeckFileChanged);
             }
         }

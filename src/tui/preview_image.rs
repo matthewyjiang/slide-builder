@@ -5,7 +5,7 @@ use ratatui::{
 };
 use ratatui_image::{
     picker::{Picker, ProtocolType},
-    protocol::StatefulProtocol,
+    protocol::{StatefulProtocol, StatefulProtocolType},
     Resize, ResizeEncodeRender, StatefulImage,
 };
 use std::{
@@ -40,7 +40,10 @@ struct EncodeJob {
 
 struct EncodedProtocol {
     protocol: StatefulProtocol,
+    standby: Option<StatefulProtocol>,
+    protocol_bytes: usize,
     decoded_bytes: usize,
+    rendered: bool,
 }
 
 struct EncodeResult {
@@ -69,6 +72,7 @@ pub struct PreviewImage {
     errors: HashMap<CacheKey, String>,
     pending: HashSet<CacheKey>,
     attempted: HashSet<CacheKey>,
+    active_key: Option<CacheKey>,
     recency: VecDeque<CacheKey>,
     decoded_bytes: usize,
     decoded_cache_budget: usize,
@@ -119,6 +123,7 @@ impl PreviewImage {
             errors: HashMap::new(),
             pending: HashSet::new(),
             attempted: HashSet::new(),
+            active_key: None,
             recency: VecDeque::new(),
             decoded_bytes: 0,
             decoded_cache_budget,
@@ -137,6 +142,7 @@ impl PreviewImage {
         self.errors.clear();
         self.pending.clear();
         self.attempted.clear();
+        self.active_key = None;
         self.recency.clear();
         self.decoded_bytes = 0;
         self.collect_completed();
@@ -152,22 +158,34 @@ impl PreviewImage {
             path: path.to_path_buf(),
             cells: area.as_size(),
         };
+        self.activate(&key);
+        let mut refresh = false;
         if self.protocols.contains_key(&key) {
             self.mark_recent(&key);
-            let protocol = &mut self
+            let encoded = self
                 .protocols
                 .get_mut(&key)
-                .expect("a ready terminal protocol was just found")
-                .protocol;
+                .expect("a ready terminal protocol was just found");
             let resize = Resize::Scale(None);
-            let render_area =
-                centered_image_area(area, protocol.size_for(resize.clone(), area.as_size()));
+            let render_area = centered_image_area(
+                area,
+                encoded.protocol.size_for(resize.clone(), area.as_size()),
+            );
             if render_area.width > 0 && render_area.height > 0 {
                 frame.render_stateful_widget(
                     StatefulImage::new().resize(resize),
                     render_area,
-                    protocol,
+                    &mut encoded.protocol,
                 );
+                encoded.rendered = true;
+                refresh = encoded.standby.is_none()
+                    && matches!(
+                        encoded.protocol.protocol_type(),
+                        StatefulProtocolType::Kitty(_)
+                    );
+            }
+            if refresh {
+                self.schedule_refresh(key);
             }
             return ImageRenderStatus::Ready;
         }
@@ -228,6 +246,61 @@ impl PreviewImage {
         }
     }
 
+    fn activate(&mut self, key: &CacheKey) {
+        if self.active_key.as_ref() == Some(key) {
+            return;
+        }
+        self.active_key = Some(key.clone());
+
+        // Kitty transmits image data only on a protocol's first render. Some Kitty-compatible
+        // hosts discard that data after its unicode placement leaves the terminal. Swap in a
+        // pre-encoded standby protocol on reactivation, then replenish it in the background.
+        let needs_retransmit = self.protocols.get(key).is_some_and(|encoded| {
+            encoded.rendered
+                && matches!(
+                    encoded.protocol.protocol_type(),
+                    StatefulProtocolType::Kitty(_)
+                )
+        });
+        if needs_retransmit {
+            let standby = self
+                .protocols
+                .get_mut(key)
+                .and_then(|encoded| encoded.standby.take());
+            if let Some(standby) = standby {
+                let encoded = self
+                    .protocols
+                    .get_mut(key)
+                    .expect("the protocol containing the standby still exists");
+                encoded.protocol = standby;
+                encoded.rendered = false;
+                encoded.decoded_bytes = encoded.protocol_bytes;
+                self.decoded_bytes = self.decoded_bytes.saturating_sub(encoded.protocol_bytes);
+                self.schedule_refresh(key.clone());
+            } else {
+                // A replacement is already being prepared or the queue is briefly full. Keep
+                // the cached protocol visible instead of dropping to a loading state.
+                self.schedule_refresh(key.clone());
+            }
+        }
+    }
+
+    fn schedule_refresh(&mut self, key: CacheKey) {
+        if self.pending.contains(&key) {
+            return;
+        }
+        match self.jobs.try_send(EncodeJob {
+            generation: self.generation,
+            key: key.clone(),
+        }) {
+            Ok(()) => {
+                self.pending.insert(key);
+            }
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => self.worker_available = false,
+        }
+    }
+
     fn schedule_key(&mut self, key: CacheKey, allow_evicted: bool) -> bool {
         if self.protocols.contains_key(&key)
             || self.errors.contains_key(&key)
@@ -278,6 +351,7 @@ impl PreviewImage {
     }
 
     fn insert(&mut self, key: CacheKey, encoded: EncodedProtocol) {
+        self.remove_protocol(&key);
         while !self.protocols.is_empty()
             && self.decoded_bytes.saturating_add(encoded.decoded_bytes) > self.decoded_cache_budget
         {
@@ -289,10 +363,17 @@ impl PreviewImage {
     }
 
     fn evict_oldest(&mut self) {
-        let Some(key) = self.recency.pop_front() else {
+        let Some(key) = self.recency.front().cloned() else {
             return;
         };
-        if let Some(encoded) = self.protocols.remove(&key) {
+        self.remove_protocol(&key);
+    }
+
+    fn remove_protocol(&mut self, key: &CacheKey) {
+        if let Some(position) = self.recency.iter().position(|cached| cached == key) {
+            self.recency.remove(position);
+        }
+        if let Some(encoded) = self.protocols.remove(key) {
             self.decoded_bytes = self.decoded_bytes.saturating_sub(encoded.decoded_bytes);
         }
     }
@@ -351,6 +432,29 @@ fn decode_and_encode(picker: &Picker, key: &CacheKey) -> Result<EncodedProtocol,
         .decode()
         .map_err(|error| format!("could not decode image: {error}"))?;
     let decoded_bytes = image.as_bytes().len();
+    let standby_image = (picker.protocol_type() == ProtocolType::Kitty).then(|| image.clone());
+    let protocol = encode_image(picker, image, key)?;
+    let standby = standby_image
+        .map(|image| encode_image(picker, image, key))
+        .transpose()?;
+    Ok(EncodedProtocol {
+        protocol,
+        standby,
+        protocol_bytes: decoded_bytes,
+        decoded_bytes: if picker.protocol_type() == ProtocolType::Kitty {
+            decoded_bytes.saturating_mul(2)
+        } else {
+            decoded_bytes
+        },
+        rendered: false,
+    })
+}
+
+fn encode_image(
+    picker: &Picker,
+    image: image::DynamicImage,
+    key: &CacheKey,
+) -> Result<StatefulProtocol, String> {
     let mut protocol = picker.new_resize_protocol(image);
     let resize = Resize::Scale(None);
     let fitted = protocol.size_for(resize.clone(), key.cells);
@@ -358,10 +462,7 @@ fn decode_and_encode(picker: &Picker, key: &CacheKey) -> Result<EncodedProtocol,
     if let Some(result) = protocol.last_encoding_result() {
         result.map_err(|error| format!("could not encode terminal image: {error}"))?;
     }
-    Ok(EncodedProtocol {
-        protocol,
-        decoded_bytes,
-    })
+    Ok(protocol)
 }
 
 /// Place the fitted image rect in the center of `area`.

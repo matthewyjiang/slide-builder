@@ -85,6 +85,48 @@ fn dragging_visible_conversation_text_copies_it_and_shows_feedback() {
 }
 
 #[test]
+fn scrolling_over_the_conversation_moves_through_history() {
+    let mut app = App {
+        transcript: vec![TranscriptItem::Message(Message {
+            role: Role::Assistant,
+            text: (0..40)
+                .map(|line| format!("conversation line {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            complete: true,
+        })],
+        ..app_at(80, 24)
+    };
+    let chat = layout::regions(app.mouse.viewport, &app).chat;
+    let x = chat.x + chat.width / 2;
+    let y = chat.y + chat.height / 2;
+
+    let latest_rows = chat::visible_text_rows(chat, &app);
+
+    app.apply(mouse(MouseEventKind::ScrollUp, x, y));
+    assert_eq!(app.conversation_scroll_offset, 3);
+    assert_ne!(chat::visible_text_rows(chat, &app), latest_rows);
+
+    app.apply(mouse(MouseEventKind::ScrollDown, x, y));
+    assert_eq!(app.conversation_scroll_offset, 0);
+    assert_eq!(chat::visible_text_rows(chat, &app), latest_rows);
+}
+
+#[test]
+fn scrolling_outside_the_conversation_does_not_move_it() {
+    let mut app = app_at(140, 40);
+    let outline = layout::regions(app.mouse.viewport, &app).outline;
+
+    app.apply(mouse(
+        MouseEventKind::ScrollUp,
+        outline.x + 1,
+        outline.y + 1,
+    ));
+
+    assert_eq!(app.conversation_scroll_offset, 0);
+}
+
+#[test]
 fn copy_feedback_expires_on_tick() {
     let mut app = app_at(80, 24);
     let now = Instant::now();

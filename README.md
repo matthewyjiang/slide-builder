@@ -27,7 +27,8 @@ pinned `rho-providers` registry is supported:
 
 The workspace keeps the active deck, preview state, and contextual controls visible.
 Keyboard input stays in the prompt editor. Click a slide in the slide list to make it
-active. Drag across visible conversation text and release to copy it; a brief popup
+active. Use the mouse wheel over the conversation to scroll through its history. Drag
+across visible conversation text and release to copy it; a brief popup
 confirms how many characters were copied. Use the tmux-style `Ctrl+B` slide prefix,
 followed by
 `h`/`k` to move to the previous slide or `j`/`l` to move to the next, `g`/`G`
