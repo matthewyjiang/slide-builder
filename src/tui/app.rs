@@ -301,11 +301,6 @@ impl App {
                 self.preview.status = PreviewStatus::Unavailable { reason };
                 vec![]
             }
-            AppEvent::AgentRenderRequested => vec![AppAction::RequestRender],
-            AppEvent::AgentSetActiveSlide(index) => {
-                self.preview.select(index.saturating_sub(1));
-                vec![]
-            }
             AppEvent::DeckFileChanged => {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
@@ -895,10 +890,6 @@ mod tests {
         assert_eq!(app.modal, ModalState::None);
     }
 }
-
-#[cfg(test)]
-#[path = "app_agent_tools_tests.rs"]
-mod agent_tools_tests;
 
 #[cfg(test)]
 #[path = "app_controls_tests.rs"]

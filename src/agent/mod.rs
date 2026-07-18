@@ -1,5 +1,6 @@
 pub mod deck_engine;
 pub mod deck_tools;
+mod inspection_geometry;
 pub mod policy;
 pub mod runtime;
 pub mod session_store;

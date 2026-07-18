@@ -14,7 +14,7 @@ Use the semantic native deck tools first. They operate on the active deck, enfor
 4. Use `text_add`, `image_add`, and `shape_add` for content. Keep returned stable IDs.
 5. Use `element_update` with a stable ID instead of positional or ambiguous selectors.
 6. Run `deck_validate` after meaningful edits.
-7. Run `render_deck` to request a fresh preview, then use `set_active_slide` to synchronize the UI while reviewing slides.
+7. Run `render_deck` and wait for its completed image-path result, then use `set_active_slide` to synchronize the UI while reviewing slides. Rendered images appear in the TUI but are not attached to the model, so do not claim visual inspection unless the user attaches a slide with Ctrl+V.
 8. Ask the user to attach the active slide with Ctrl+V when you need visual feedback. Fix clipping, overlap, contrast, alignment, and hierarchy, then render again.
 
 ## Coordinates and layout
@@ -29,7 +29,7 @@ Mutations are committed only after validation and package reopen checks. A faile
 
 Use these exact argument shapes. Slide indexes are one-based. Geometry values are inches.
 
-- `deck_inspect`: `{}` for the whole deck, or `{"path":"/slide[2]"}` for a specific handler path.
+- `deck_inspect`: `{}` for the whole deck, or `{"path":"/slide[2]"}` for a specific handler path. Results include slide size and shape geometry in inches.
 - `slide_create`: `{}`.
 - `slide_duplicate` and `slide_delete`: `{"index":2}`.
 - `slide_reorder`: `{"from":4,"to":2}`.

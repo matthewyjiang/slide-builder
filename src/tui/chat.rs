@@ -161,7 +161,7 @@ fn tool_verbs(name: &str) -> ToolVerbs {
         "element_update" | "deck_advanced" => ("Update", "Updating", "Updated"),
         "deck_inspect" => ("Inspect", "Inspecting", "Inspected"),
         "deck_validate" => ("Validate", "Validating", "Validated"),
-        "render_deck" => ("Request", "Requesting", "Requested"),
+        "render_deck" => ("Render", "Rendering", "Rendered"),
         "set_active_slide" => ("Select", "Selecting", "Selected"),
         "list_dir" => ("List", "Listing", "Listed"),
         "read_file" | "get_search_content" => ("Read", "Reading", "Read"),
