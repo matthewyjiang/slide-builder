@@ -2,11 +2,12 @@ use super::{
     app::{App, Role, ToolStatus, TranscriptItem},
     theme,
 };
+use ratatui::buffer::Buffer;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Wrap},
+    widgets::{Paragraph, Widget, Wrap},
     Frame,
 };
 
@@ -17,6 +18,17 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         regions[0],
     );
 
+    let lines = conversation_lines(app);
+    let scroll = scroll_for(&lines, regions[1]);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        regions[1],
+    );
+}
+
+fn conversation_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for item in &app.transcript {
         match item {
@@ -88,16 +100,37 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ),
         ]);
     }
-    let width = regions[1].width.max(1) as usize;
+    lines
+}
+
+fn scroll_for(lines: &[Line<'_>], area: Rect) -> u16 {
+    let width = area.width.max(1) as usize;
     let rendered_lines = lines
         .iter()
         .map(|line| line.width().max(1).div_ceil(width))
         .sum::<usize>();
-    let scroll = rendered_lines.saturating_sub(regions[1].height as usize) as u16;
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0)),
-        regions[1],
-    );
+    rendered_lines.saturating_sub(area.height as usize) as u16
+}
+
+pub(crate) fn visible_text_rows(area: Rect, app: &App) -> Vec<String> {
+    if area.width == 0 || area.height <= 1 {
+        return vec![];
+    }
+    let body = Rect::new(0, 0, area.width, area.height - 1);
+    let lines = conversation_lines(app);
+    let scroll = scroll_for(&lines, body);
+    let mut buffer = Buffer::empty(body);
+    Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0))
+        .render(body, &mut buffer);
+    (0..body.height)
+        .map(|y| {
+            let mut row = String::new();
+            for x in 0..body.width {
+                row.push_str(buffer[(x, y)].symbol());
+            }
+            row.trim_end().to_owned()
+        })
+        .collect()
 }

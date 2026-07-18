@@ -14,7 +14,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 pub fn render_with_preview(
     frame: &mut Frame<'_>,
     app: &App,
-    mut preview_image: Option<&mut super::preview_image::PreviewImage>,
+    preview_image: Option<&mut super::preview_image::PreviewImage>,
 ) {
     let area = frame.area();
     if app.fullscreen {
@@ -22,6 +22,39 @@ pub fn render_with_preview(
         return;
     }
 
+    let regions = regions(area, app);
+    statusline::render_header(frame, regions.header, app);
+    chat::render(frame, regions.chat, app);
+    preview::render(frame, regions.preview, app, preview_image);
+    outline::render(frame, regions.outline, app);
+    if regions.compact {
+        render_horizontal_separator(frame, regions.chat_separator);
+        render_horizontal_separator(frame, regions.preview_separator);
+    } else {
+        render_vertical_separator(frame, regions.chat_separator);
+        render_horizontal_separator(frame, regions.preview_separator);
+    }
+    render_input(frame, regions.input, app);
+    render_slash_commands(frame, regions.input, app);
+    statusline::render_actions(frame, regions.actions, app);
+    super::mouse::render_feedback(frame, app);
+    modal::render(frame, &app.modal);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UiRegions {
+    pub header: Rect,
+    pub chat: Rect,
+    pub chat_separator: Rect,
+    pub preview: Rect,
+    pub preview_separator: Rect,
+    pub outline: Rect,
+    pub input: Rect,
+    pub actions: Rect,
+    pub compact: bool,
+}
+
+pub(crate) fn regions(area: Rect, app: &App) -> UiRegions {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -31,21 +64,8 @@ pub fn render_with_preview(
             Constraint::Length(1),
         ])
         .split(area);
-    statusline::render_header(frame, rows[0], app);
-    render_workspace(frame, rows[1], app, preview_image.as_deref_mut());
-    render_input(frame, rows[2], app);
-    render_slash_commands(frame, rows[2], app);
-    statusline::render_actions(frame, rows[3], app);
-    modal::render(frame, &app.modal);
-}
-
-fn render_workspace(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    app: &App,
-    preview_image: Option<&mut super::preview_image::PreviewImage>,
-) {
-    if area.width < 88 {
+    let workspace = rows[1];
+    if workspace.width < 88 {
         let panels = Layout::vertical([
             Constraint::Percentage(50),
             Constraint::Length(1),
@@ -53,13 +73,18 @@ fn render_workspace(
             Constraint::Length(1),
             Constraint::Percentage(20),
         ])
-        .split(area);
-        chat::render(frame, panels[0], app);
-        render_horizontal_separator(frame, panels[1]);
-        preview::render(frame, panels[2], app, preview_image);
-        render_horizontal_separator(frame, panels[3]);
-        outline::render(frame, panels[4], app);
-        return;
+        .split(workspace);
+        return UiRegions {
+            header: rows[0],
+            chat: panels[0],
+            chat_separator: panels[1],
+            preview: panels[2],
+            preview_separator: panels[3],
+            outline: panels[4],
+            input: rows[2],
+            actions: rows[3],
+            compact: true,
+        };
     }
 
     let body = Layout::horizontal([
@@ -67,18 +92,24 @@ fn render_workspace(
         Constraint::Length(1),
         Constraint::Percentage(44),
     ])
-    .split(area);
+    .split(workspace);
     let right = Layout::vertical([
         Constraint::Percentage(68),
         Constraint::Length(1),
         Constraint::Percentage(32),
     ])
     .split(body[2]);
-    chat::render(frame, body[0], app);
-    render_vertical_separator(frame, body[1]);
-    preview::render(frame, right[0], app, preview_image);
-    render_horizontal_separator(frame, right[1]);
-    outline::render(frame, right[2], app);
+    UiRegions {
+        header: rows[0],
+        chat: body[0],
+        chat_separator: body[1],
+        preview: right[0],
+        preview_separator: right[1],
+        outline: right[2],
+        input: rows[2],
+        actions: rows[3],
+        compact: false,
+    }
 }
 
 fn render_vertical_separator(frame: &mut Frame<'_>, area: Rect) {

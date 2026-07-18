@@ -102,6 +102,7 @@ pub enum AppAction {
         decision: ApprovalDecision,
     },
     SetActiveSlide(usize),
+    CopyText(String),
 }
 
 #[cfg(test)]

@@ -26,8 +26,10 @@ pinned `rho-providers` registry is supported:
 - `xai-oauth`
 
 The workspace keeps the active deck, preview state, and contextual controls visible.
-The conversation, preview, and slide list are read-only status surfaces; keyboard input
-stays in the prompt editor. Use the tmux-style `Ctrl+B` slide prefix, followed by
+Keyboard input stays in the prompt editor. Click a slide in the slide list to make it
+active. Drag across visible conversation text and release to copy it; a brief popup
+confirms how many characters were copied. Use the tmux-style `Ctrl+B` slide prefix,
+followed by
 `h`/`k` to move to the previous slide or `j`/`l` to move to the next, `g`/`G`
 to jump to the first/last slide, `r` to refresh the preview, or Enter/`f` to
 present. `Ctrl+K` opens the complete action menu, with `F2` as a fallback for

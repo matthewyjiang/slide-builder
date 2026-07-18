@@ -16,6 +16,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     let items = app.preview.slides.iter().enumerate().map(|(index, slide)| {
         let active = index == app.preview.active;
+        let hovered = app.mouse.hovered_slide == Some(index);
         ListItem::new(Line::from(vec![
             Span::styled(
                 format!(" {:>2} ", index + 1),
@@ -38,11 +39,14 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ]))
         .style(if active {
             Style::default().bg(theme::ACCENT_SOFT)
+        } else if hovered {
+            Style::default().fg(theme::TEXT).bg(theme::SUBTLE)
         } else {
             Style::default()
         })
     });
-    let mut state = ListState::default();
+    let body_height = regions[1].height as usize;
+    let mut state = ListState::default().with_offset(visible_start(app, body_height));
     if !app.preview.slides.is_empty() {
         state.select(Some(app.preview.active));
     }
@@ -51,4 +55,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         regions[1],
         &mut state,
     );
+}
+
+pub(crate) fn visible_start(app: &App, height: usize) -> usize {
+    if height == 0 || app.preview.active < height {
+        0
+    } else {
+        app.preview.active + 1 - height
+    }
 }
