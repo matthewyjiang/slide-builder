@@ -226,6 +226,7 @@ pub struct App {
     pub mode: String,
     pub model: String,
     pub token_usage: Option<(u64, u64)>,
+    pub mouse: super::mouse::MouseState,
     pub config: Config,
 }
 
@@ -246,6 +247,7 @@ impl Default for App {
             mode: "supervised".into(),
             model: "-".into(),
             token_usage: None,
+            mouse: super::mouse::MouseState::default(),
             config: Config::default(),
         }
     }
@@ -255,6 +257,13 @@ impl App {
     pub fn apply(&mut self, event: AppEvent) -> Vec<AppAction> {
         match event {
             AppEvent::Input(crossterm::event::Event::Key(key)) => self.handle_key(key),
+            AppEvent::Input(crossterm::event::Event::Mouse(mouse)) => {
+                super::mouse::handle(self, mouse)
+            }
+            AppEvent::Input(crossterm::event::Event::Resize(width, height)) => {
+                self.mouse.viewport = ratatui::layout::Rect::new(0, 0, width, height);
+                vec![]
+            }
             AppEvent::Run(event) => {
                 self.apply_agent_event(event);
                 vec![]
@@ -296,11 +305,16 @@ impl App {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
             }
-            AppEvent::Input(_) | AppEvent::Tick(_) => vec![],
+            AppEvent::Tick(now) => {
+                self.mouse.expire_toast(now);
+                vec![]
+            }
+            AppEvent::Input(_) => vec![],
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        self.mouse.selection = None;
         if key.kind == KeyEventKind::Release {
             return vec![];
         }

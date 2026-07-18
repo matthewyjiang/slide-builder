@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
+use base64::Engine as _;
 use crossterm::{
-    event::EventStream,
+    event::{DisableMouseCapture, EnableMouseCapture, EventStream},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -28,7 +29,7 @@ use slide_builder::{
 };
 use std::{
     collections::HashMap,
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -467,7 +468,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
 
     enable_raw_mode()?;
     let mut out = io::stdout();
-    execute!(out, EnterAlternateScreen)?;
+    execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = ratatui::backend::CrosstermBackend::new(out);
     let mut terminal = ratatui::Terminal::new(backend)?;
     let mut preview_image = PreviewImage::detect(&config.preview.protocol);
@@ -487,6 +488,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         config: config.clone(),
         ..App::default()
     };
+    app.mouse.viewport = terminal.size()?.into();
     app.transcript
         .push(slide_builder::tui::TranscriptItem::Message(
             slide_builder::tui::Message {
@@ -609,6 +611,11 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             let _ = pending.respond(decision);
                         }
                     }
+                    AppAction::CopyText(text) => {
+                        let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+                        write!(terminal.backend_mut(), "\x1b]52;c;{encoded}\x07")?;
+                        terminal.backend_mut().flush()?;
+                    }
                     AppAction::None
                     | AppAction::OpenDeckPicker
                     | AppAction::OpenDesignPicker
@@ -623,7 +630,11 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         service.shutdown().await;
     }
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
     if let Err(error) = std::fs::remove_dir_all(&render_cache_dir) {
         if error.kind() != io::ErrorKind::NotFound {

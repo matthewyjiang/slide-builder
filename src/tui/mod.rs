@@ -9,6 +9,7 @@ pub mod chat;
 pub mod event;
 pub mod layout;
 pub mod modal;
+pub mod mouse;
 pub mod outline;
 pub mod preview;
 pub mod preview_image;
