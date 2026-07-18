@@ -40,12 +40,15 @@ fn add_missing_pictures(inspected: &mut Value, html: &str) {
             .iter()
             .filter(|path| path.starts_with(&prefix))
             .filter_map(|path| {
-                let id = path.strip_prefix(&prefix)?.strip_suffix(']')?;
+                // The pinned handler writes p:cNvPr/@id inside picture brackets,
+                // not the picture's position in the slide. Preserve that OOXML ID
+                // so stable IDs survive insertions before the picture.
+                let non_visual_id = path.strip_prefix(&prefix)?.strip_suffix(']')?;
                 Some(json!({
                     "path": path,
                     "type": "image",
                     "name": "Picture",
-                    "id": id,
+                    "id": non_visual_id,
                     "paragraph_count": 0,
                     "text_preview": ""
                 }))
