@@ -216,7 +216,9 @@ impl DeckEngine {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
             let handler = open(&path, false)?;
-            let outline = handler.view_as_outline_json()?;
+            let mut outline = handler.view_as_outline_json()?;
+            let html = handler.view_as_html(ViewOptions::default())?;
+            inspection_geometry::enrich(&mut outline, &html);
             path_for_stable_id(&outline, &id_or_path)
                 .ok_or_else(|| anyhow!("stable element ID `{id_or_path}` was not found"))
         })
@@ -242,8 +244,11 @@ fn transact(path: &Path, mut op: DeckMutation) -> Result<TransactionResult> {
     std::fs::copy(path, &temp)?;
     let result = (|| -> Result<TransactionResult> {
         let handler = open(&temp, true)?;
-        let before = handler.view_as_outline_json()?;
+        let mut before = handler.view_as_outline_json()?;
+        let before_html = handler.view_as_html(ViewOptions::default())?;
+        inspection_geometry::enrich(&mut before, &before_html);
         resolve_mutation_selectors(&before, &mut op)?;
+        let result_op = op.clone();
         let use_pre_mutation_ids = matches!(
             op,
             DeckMutation::Set { .. }
@@ -264,11 +269,35 @@ fn transact(path: &Path, mut op: DeckMutation) -> Result<TransactionResult> {
         if !errors.is_empty() {
             bail!("saved package failed reopen validation; original unchanged: {errors:?}");
         }
-        let post_state = verified.view_as_outline_json()?;
-        let stable_after = handler_affected
+        // The pinned handler's structural validator does not parse every slide.
+        // Rendering does, so require it to succeed before the temporary package
+        // can replace the original.
+        let html = verified
+            .view_as_html(ViewOptions::default())
+            .context("saved package failed slide XML validation; original unchanged")?;
+        let mut post_state = verified.view_as_outline_json()?;
+        inspection_geometry::enrich(&mut post_state, &html);
+        let mut stable_after = handler_affected
             .iter()
             .filter_map(|path| stable_id_for_path(&post_state, path))
             .collect::<Vec<_>>();
+        if stable_after.is_empty() {
+            if let DeckMutation::Add {
+                parent,
+                element_type,
+                ..
+            } = &result_op
+            {
+                if let Some(added) =
+                    stable_id_for_added_element(&before, &post_state, parent, element_type)
+                {
+                    stable_after.push(added);
+                }
+            }
+        }
+        if matches!(result_op, DeckMutation::Add { .. }) && stable_after.is_empty() {
+            bail!("add mutation created no inspectable element; original unchanged");
+        }
         drop(verified);
         std::fs::rename(&temp, path)?;
         Ok(TransactionResult {
@@ -293,11 +322,14 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
             element_type,
             properties,
         } => {
-            if element_type != "slide" {
+            let handler_parent = if element_type == "slide" {
+                parent.clone()
+            } else {
                 ensure_drawing_namespace(handler, &parent)?;
-            }
+                physical_slide_path(handler, &parent)?
+            };
             let reported = handler.add(
-                &parent,
+                &handler_parent,
                 &element_type,
                 InsertPosition::Append,
                 &properties,
@@ -311,6 +343,9 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
             } else {
                 last_shape_path(handler, &parent).unwrap_or(reported)
             };
+            if let Some(preset) = properties.get("preset") {
+                set_shape_preset(handler, &added, preset)?;
+            }
             // The pinned handler applies geometry while creating rectangles, but only
             // applies text-run formatting through `set`.
             let formatting = properties
@@ -528,7 +563,68 @@ fn set_shape_geometry(
     let replacement =
         format!("<a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>");
     xml.replace_range(xfrm_start..xfrm_end, &replacement);
-    handler.raw_set(&part, "/sld", "replace", Some(&xml))?;
+    replace_slide_document(handler, &part, &xml)?;
+    Ok(())
+}
+
+fn set_shape_preset(handler: &PptxHandler, path: &str, preset: &str) -> Result<()> {
+    if preset.is_empty()
+        || !preset
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        bail!("invalid shape preset `{preset}`");
+    }
+    let physical_path = physical_shape_path(handler, path)?;
+    let slide = slide_index(&physical_path)?;
+    let shape = physical_path
+        .split("/shape[")
+        .nth(1)
+        .and_then(|value| value.strip_suffix(']'))
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| anyhow!("preset updates require /slide[N]/shape[M]"))?;
+    let part = format!("ppt/slides/slide{slide}.xml");
+    let mut xml = handler.raw(&part, RawOptions::default())?;
+    let mut cursor = 0;
+    let mut shape_start = None;
+    for _ in 0..shape {
+        let relative = xml[cursor..]
+            .find("<p:sp>")
+            .ok_or_else(|| anyhow!("shape `{path}` was not found"))?;
+        shape_start = Some(cursor + relative);
+        cursor += relative + "<p:sp>".len();
+    }
+    let shape_start = shape_start.unwrap();
+    let shape_end = shape_start
+        + xml[shape_start..]
+            .find("</p:sp>")
+            .ok_or_else(|| anyhow!("malformed shape `{path}`"))?;
+    let geometry_start = shape_start
+        + xml[shape_start..shape_end]
+            .find("<a:prstGeom")
+            .ok_or_else(|| anyhow!("shape `{path}` has no preset geometry"))?;
+    let marker = "prst=\"";
+    let value_start = geometry_start
+        + xml[geometry_start..shape_end]
+            .find(marker)
+            .ok_or_else(|| anyhow!("shape `{path}` has malformed preset geometry"))?
+        + marker.len();
+    let value_end = value_start
+        + xml[value_start..shape_end]
+            .find('"')
+            .ok_or_else(|| anyhow!("shape `{path}` has malformed preset geometry"))?;
+    xml.replace_range(value_start..value_end, preset);
+    replace_slide_document(handler, &part, &xml)?;
+    Ok(())
+}
+
+/// Replace a slide root without duplicating the package XML declaration.
+fn replace_slide_document(handler: &PptxHandler, part: &str, xml: &str) -> Result<()> {
+    let root_start = xml
+        .find("<p:sld")
+        .ok_or_else(|| anyhow!("slide part `{part}` has no p:sld root"))?;
+    handler.raw_set(part, "/sld", "replace", Some(&xml[root_start..]))?;
     Ok(())
 }
 
@@ -574,10 +670,7 @@ fn slide_part(handler: &PptxHandler, index: usize) -> Result<String> {
     bail!("slide {index} relationship target was not found")
 }
 
-fn physical_shape_path(handler: &PptxHandler, path: &str) -> Result<String> {
-    if !path.contains("/shape[") {
-        return Ok(path.to_owned());
-    }
+fn physical_slide_path(handler: &PptxHandler, path: &str) -> Result<String> {
     let logical_index = slide_index(path)?;
     let part = slide_part(handler, logical_index)?;
     let physical_index = part
@@ -585,23 +678,43 @@ fn physical_shape_path(handler: &PptxHandler, path: &str) -> Result<String> {
         .and_then(|value| value.strip_suffix(".xml"))
         .and_then(|value| value.parse::<usize>().ok())
         .ok_or_else(|| anyhow!("unsupported slide part target `{part}`"))?;
-    Ok(path.replacen(
-        &format!("/slide[{logical_index}]"),
-        &format!("/slide[{physical_index}]"),
-        1,
-    ))
+    Ok(format!("/slide[{physical_index}]"))
+}
+
+fn physical_shape_path(handler: &PptxHandler, path: &str) -> Result<String> {
+    if !path.contains("/shape[") {
+        return Ok(path.to_owned());
+    }
+    let logical_index = slide_index(path)?;
+    let physical_slide = physical_slide_path(handler, path)?;
+    Ok(path.replacen(&format!("/slide[{logical_index}]"), &physical_slide, 1))
 }
 
 fn ensure_drawing_namespace(handler: &PptxHandler, slide_path: &str) -> Result<()> {
     let part = slide_part(handler, slide_index(slide_path)?)?;
-    let xml = handler.raw(&part, RawOptions::default())?;
-    if !xml.contains("xmlns:a=") {
-        handler.raw_set(
-            &part,
-            "/sld",
-            "setattr",
-            Some("xmlns:a=http://schemas.openxmlformats.org/drawingml/2006/main"),
-        )?;
+    let mut xml = handler.raw(&part, RawOptions::default())?;
+    let root_start = xml
+        .find("<p:sld")
+        .ok_or_else(|| anyhow!("slide part `{part}` has no p:sld root"))?;
+    let root_end = root_start
+        + xml[root_start..]
+            .find('>')
+            .ok_or_else(|| anyhow!("slide part `{part}` has a malformed p:sld root"))?;
+    let mut declarations = String::new();
+    for (prefix, namespace) in [
+        ("a", "http://schemas.openxmlformats.org/drawingml/2006/main"),
+        (
+            "r",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        ),
+    ] {
+        if !xml[root_start..root_end].contains(&format!("xmlns:{prefix}=")) {
+            declarations.push_str(&format!(" xmlns:{prefix}=\"{namespace}\""));
+        }
+    }
+    if !declarations.is_empty() {
+        xml.insert_str(root_end, &declarations);
+        replace_slide_document(handler, &part, &xml)?;
     }
     Ok(())
 }
@@ -720,6 +833,50 @@ fn slides(outline: &serde_json::Value) -> impl Iterator<Item = &serde_json::Valu
         .flatten()
 }
 
+fn stable_id_for_added_element(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    parent: &str,
+    element_type: &str,
+) -> Option<String> {
+    if !matches!(element_type, "image" | "picture" | "img") {
+        return None;
+    }
+    let previous_ids = slides(before)
+        .find(|slide| slide.get("path").and_then(serde_json::Value::as_str) == Some(parent))
+        .and_then(|slide| slide.get("shapes"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|element| {
+            element
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| path.contains("/picture["))
+        })
+        .filter_map(|element| element.get("id").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>();
+    let slide = slides(after)
+        .find(|slide| slide.get("path").and_then(serde_json::Value::as_str) == Some(parent))?;
+    let picture = slide
+        .get("shapes")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|element| {
+            let is_picture = element
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| path.contains("/picture["));
+            let is_new = element
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| !previous_ids.contains(&id));
+            is_picture && is_new
+        })?;
+    stable_id_for_path(after, picture.get("path")?.as_str()?)
+}
+
 fn stable_id_for_path(outline: &serde_json::Value, path: &str) -> Option<String> {
     for slide in slides(outline) {
         let slide_path = slide.get("path")?.as_str()?;
@@ -734,8 +891,13 @@ fn stable_id_for_path(outline: &serde_json::Value, path: &str) -> Option<String>
             .flatten()
         {
             if shape.get("path")?.as_str()? == path {
+                let kind = if path.contains("/picture[") {
+                    "picture"
+                } else {
+                    "shape"
+                };
                 return Some(format!(
-                    "slide:{slide_id}/shape:{}",
+                    "slide:{slide_id}/{kind}:{}",
                     shape.get("id")?.as_str()?
                 ));
             }
@@ -750,18 +912,26 @@ fn path_for_stable_id(outline: &serde_json::Value, stable_id: &str) -> Option<St
         if stable_id == format!("slide:{slide_id}") {
             return slide.get("path")?.as_str().map(str::to_owned);
         }
-        let prefix = format!("slide:{slide_id}/shape:");
-        if let Some(shape_id) = stable_id.strip_prefix(&prefix) {
-            return slide
-                .get("shapes")?
-                .as_array()?
-                .iter()
-                .find(|shape| {
-                    shape.get("id").and_then(serde_json::Value::as_str) == Some(shape_id)
-                })?
-                .get("path")?
-                .as_str()
-                .map(str::to_owned);
+        for kind in ["shape", "picture"] {
+            let prefix = format!("slide:{slide_id}/{kind}:");
+            if let Some(element_id) = stable_id.strip_prefix(&prefix) {
+                return slide
+                    .get("shapes")?
+                    .as_array()?
+                    .iter()
+                    .find(|shape| {
+                        shape.get("id").and_then(serde_json::Value::as_str) == Some(element_id)
+                            && shape
+                                .get("path")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(|path| {
+                                    (kind == "picture") == path.contains("/picture[")
+                                })
+                    })?
+                    .get("path")?
+                    .as_str()
+                    .map(str::to_owned);
+            }
         }
     }
     None
@@ -887,6 +1057,29 @@ mod tests {
             path_for_stable_id(&outline, "slide:300/shape:7").as_deref(),
             Some("/slide[1]/shape[1]")
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_xml_mutation_is_rolled_back_without_advancing_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("malformed.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let generation = engine.generation();
+
+        let result = engine
+            .mutate(DeckMutation::RawSet {
+                part: "ppt/slides/slide1.xml".into(),
+                xpath: "/sld/cSld".into(),
+                action: "replace".into(),
+                xml: Some("<p:cSld><unclosed></p:cSld>".into()),
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(engine.generation(), generation);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        engine.snapshot().await.unwrap();
     }
 
     #[tokio::test]

@@ -35,7 +35,9 @@ Use these exact argument shapes. Slide indexes are one-based. Geometry values ar
 - `slide_reorder`: `{"from":4,"to":2}`.
 - `text_add`: `{"slide":2,"text":"Label","x":1.0,"y":1.0,"width":3.0,"height":0.6,"font_size":24}`.
 - `image_add`: `{"slide":2,"path":"/absolute/image.png","x":1.0,"y":1.0,"width":4.0,"height":3.0}`.
-- `shape_add`: `{"slide":2,"kind":"rectangle","x":1.0,"y":1.0,"width":4.0,"height":1.0,"fill":"#336699"}`.
+- `shape_add`: `{"slide":2,"kind":"hexagon","x":1.0,"y":1.0,"width":4.0,"height":1.0,"fill":"#336699"}`. Supported kinds are `rectangle`, `ellipse`, `hexagon`, `line`, and `connector`.
+- Colors accept either `#RRGGBB` or `RRGGBB`; tools normalize them before writing OOXML.
+- In text values, either an actual newline or `\\n` creates a line break.
 - `element_update`: `{"id":"<stable ID>","properties":{"text":"Replacement text","font_size":"24"}}`. Put every changed value inside `properties`. Do not send `path` to this tool.
 - `deck_validate`: `{}`.
 
