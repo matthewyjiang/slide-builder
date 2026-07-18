@@ -2,6 +2,17 @@ use super::{DeckEngine, DeckMutation};
 use std::collections::HashMap;
 
 #[tokio::test]
+async fn observed_file_changes_advance_render_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("generation.pptx");
+    let engine = DeckEngine::create(&path, None).await.unwrap();
+    let previous = engine.generation();
+
+    assert_eq!(engine.record_file_change(), previous + 1);
+    assert_eq!(engine.snapshot().await.unwrap().generation, previous + 1);
+}
+
+#[tokio::test]
 async fn whole_deck_inspection_includes_added_shape_geometry() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("geometry.pptx");

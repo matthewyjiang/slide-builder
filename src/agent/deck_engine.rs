@@ -100,6 +100,11 @@ impl DeckEngine {
         self.generation.load(Ordering::Acquire)
     }
 
+    /// Advance render correlation after the deck watcher observes a content change.
+    pub fn record_file_change(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     pub async fn create(path: impl AsRef<Path>, template: Option<&Path>) -> Result<Self> {
         let engine = Self::new(path)?;
         let _guard = engine.lock.lock().await;

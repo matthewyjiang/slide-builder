@@ -479,7 +479,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let agent = AgentHandle::new(rho).await?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let _deck_watcher = watch_deck(engine.path(), event_tx.clone())?;
+    let _deck_watcher = watch_deck(engine.clone(), event_tx.clone())?;
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
     pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
 
@@ -755,14 +755,15 @@ fn complete_render_tools(event: &AppEvent, pending: &mut Vec<PendingRenderTool>)
 }
 
 fn watch_deck(
-    deck: &Path,
+    engine: DeckEngine,
     events: mpsc::UnboundedSender<AppEvent>,
 ) -> Result<notify::RecommendedWatcher> {
-    let deck = deck.to_path_buf();
+    let deck = engine.path().to_path_buf();
     let directory = deck.parent().context("deck has no parent")?.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if let Ok(event) = event {
             if deck_content_changed(&event, &deck) {
+                engine.record_file_change();
                 let _ = events.send(AppEvent::DeckFileChanged);
             }
         }
