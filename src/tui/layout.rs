@@ -8,9 +8,17 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
+    render_with_preview(frame, app, None);
+}
+
+pub fn render_with_preview(
+    frame: &mut Frame<'_>,
+    app: &App,
+    mut preview_image: Option<&mut super::preview_image::PreviewImage>,
+) {
     let area = frame.area();
     if app.fullscreen {
-        slideshow::render(frame, area, app);
+        slideshow::render(frame, area, app, preview_image);
         return;
     }
 
@@ -24,14 +32,19 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         ])
         .split(area);
     statusline::render_header(frame, rows[0], app);
-    render_workspace(frame, rows[1], app);
+    render_workspace(frame, rows[1], app, preview_image.as_deref_mut());
     render_input(frame, rows[2], app);
     render_slash_commands(frame, rows[2], app);
     statusline::render_actions(frame, rows[3], app);
     modal::render(frame, &app.modal);
 }
 
-fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &App) {
+fn render_workspace(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: &App,
+    preview_image: Option<&mut super::preview_image::PreviewImage>,
+) {
     if area.width < 88 {
         let panels = Layout::vertical([
             Constraint::Percentage(50),
@@ -43,7 +56,7 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .split(area);
         chat::render(frame, panels[0], app);
         render_horizontal_separator(frame, panels[1]);
-        preview::render(frame, panels[2], app);
+        preview::render(frame, panels[2], app, preview_image);
         render_horizontal_separator(frame, panels[3]);
         outline::render(frame, panels[4], app);
         return;
@@ -63,7 +76,7 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &App) {
     .split(body[2]);
     chat::render(frame, body[0], app);
     render_vertical_separator(frame, body[1]);
-    preview::render(frame, right[0], app);
+    preview::render(frame, right[0], app, preview_image);
     render_horizontal_separator(frame, right[1]);
     outline::render(frame, right[2], app);
 }

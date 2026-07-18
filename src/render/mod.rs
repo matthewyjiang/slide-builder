@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 pub type RenderFuture = Pin<Box<dyn Future<Output = Result<RenderProduct>> + Send + 'static>>;
 
@@ -83,6 +84,7 @@ pub struct RenderService {
     request_tx: mpsc::UnboundedSender<RenderRequest>,
     events: Mutex<Option<mpsc::UnboundedReceiver<RenderEvent>>>,
     latest_generation: Arc<AtomicU64>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl RenderService {
@@ -90,7 +92,7 @@ impl RenderService {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let latest_generation = Arc::new(AtomicU64::new(0));
-        tokio::spawn(worker(
+        let worker = tokio::spawn(worker(
             request_rx,
             event_tx,
             backend,
@@ -101,6 +103,7 @@ impl RenderService {
             request_tx,
             events: Mutex::new(Some(event_rx)),
             latest_generation,
+            worker: Mutex::new(Some(worker)),
         }
     }
 
@@ -131,6 +134,19 @@ impl RenderService {
 
     pub fn latest_generation(&self) -> u64 {
         self.latest_generation.load(Ordering::Acquire)
+    }
+
+    /// Stop pending and in-flight browser work before its cache directory is removed.
+    pub async fn shutdown(&self) {
+        let worker = self
+            .worker
+            .lock()
+            .expect("render worker mutex poisoned")
+            .take();
+        if let Some(worker) = worker {
+            worker.abort();
+            let _ = worker.await;
+        }
     }
 
     /// Event streams have one consumer, normally the app event pump.

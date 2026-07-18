@@ -5,7 +5,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::StreamExt;
-use notify::Watcher;
+use notify::{EventKind, Watcher};
 use slide_builder::{
     agent::{
         deck_engine::DeckEngine,
@@ -22,7 +22,8 @@ use slide_builder::{
         RenderEvent, RenderRequest, RenderService,
     },
     tui::{
-        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, RenderManifest, SlideRender,
+        App, AppAction, AppEvent, ApprovalDecision, ApprovalRequest, PreviewImage, RenderManifest,
+        SlideRender,
     },
 };
 use std::{
@@ -417,8 +418,14 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         ConfigPermissionMode::Plan => PermissionMode::Plan,
         ConfigPermissionMode::Supervised => PermissionMode::Supervised,
     };
-    let cache_dir = paths.render_cache_dir(&cwd)?;
-    let policy = SlidePolicy::new(policy_mode, deck_parent, &cache_dir);
+    let render_cache_dir = paths.render_cache_dir(&cwd)?;
+    let legacy_render_cache_dir = paths.legacy_render_cache_dir(&cwd)?;
+    if let Err(error) = std::fs::remove_dir_all(&legacy_render_cache_dir) {
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(error).context("remove legacy preview cache");
+        }
+    }
+    let policy = SlidePolicy::new(policy_mode, deck_parent, &render_cache_dir);
     let (rho, approvals) = match build_rho(
         &config.provider,
         &config.model,
@@ -452,7 +459,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
     pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
 
-    let render_service = make_render_service(&config, &cwd, &paths)?;
+    let render_service = make_render_service(&config, &render_cache_dir)?;
     if let Some(service) = &render_service {
         pump_render_events(service, event_tx.clone());
     }
@@ -462,6 +469,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     execute!(out, EnterAlternateScreen)?;
     let backend = ratatui::backend::CrosstermBackend::new(out);
     let mut terminal = ratatui::Terminal::new(backend)?;
+    let mut preview_image = PreviewImage::detect(&config.preview.protocol);
     let mut app = App {
         deck_name: engine
             .path()
@@ -502,7 +510,9 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let result = async {
         let mut input = EventStream::new();
         loop {
-            terminal.draw(|frame| slide_builder::tui::render(frame, &app))?;
+            terminal.draw(|frame| {
+                slide_builder::tui::render_with_preview(frame, &app, Some(&mut preview_image))
+            })?;
             let event = tokio::select! {
                 input = input.next() => match input {
                     Some(Ok(event)) => Some(AppEvent::Input(event)),
@@ -608,9 +618,17 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     }
     .await;
     agent.cancel();
+    if let Some(service) = &render_service {
+        service.shutdown().await;
+    }
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    if let Err(error) = std::fs::remove_dir_all(&render_cache_dir) {
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(error).context("remove temporary preview cache");
+        }
+    }
     result
 }
 
@@ -622,7 +640,7 @@ fn watch_deck(
     let directory = deck.parent().context("deck has no parent")?.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if let Ok(event) = event {
-            if event.paths.iter().any(|path| path == &deck) {
+            if deck_content_changed(&event, &deck) {
                 let _ = events.send(AppEvent::DeckFileChanged);
             }
         }
@@ -633,10 +651,16 @@ fn watch_deck(
     Ok(watcher)
 }
 
+fn deck_content_changed(event: &notify::Event, deck: &Path) -> bool {
+    matches!(
+        event.kind,
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+    ) && event.paths.iter().any(|path| path == deck)
+}
+
 fn make_render_service(
     config: &Config,
-    cwd: &Path,
-    paths: &AppPaths,
+    render_cache_dir: &Path,
 ) -> Result<Option<Arc<RenderService>>> {
     if !config.preview.enabled {
         return Ok(None);
@@ -657,7 +681,10 @@ fn make_render_service(
         scale: config.preview.scale as f32,
         timeout: Duration::from_millis(config.render.timeout_ms),
     };
-    let cache = RenderCache::new(paths.render_cache_dir(cwd)?, config.render.keep_generations)?;
+    let cache = RenderCache::new(
+        render_cache_dir.to_path_buf(),
+        config.render.keep_generations,
+    )?;
     cache.cleanup()?;
     let pipeline = BrowserPipeline::new(browser, cache, options, 4)?;
     Ok(Some(Arc::new(RenderService::new(
@@ -744,6 +771,10 @@ fn pump_render_events(service: &Arc<RenderService>, events: mpsc::UnboundedSende
         }
     });
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;
 
 fn pump_approvals(
     mut receiver: rho_sdk::ApprovalRequestReceiver,

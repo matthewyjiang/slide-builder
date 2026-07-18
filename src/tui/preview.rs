@@ -1,5 +1,6 @@
 use super::{
     app::{App, PreviewStatus},
+    preview_image::PreviewImage,
     theme,
 };
 use ratatui::{
@@ -10,7 +11,12 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
+pub fn render(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: &App,
+    preview_image: Option<&mut PreviewImage>,
+) {
     let count = app.preview.slide_count();
     let title = if count == 0 {
         " Preview ".into()
@@ -22,6 +28,28 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(Line::styled(title, theme::panel_title())),
         regions[0],
     );
+    let content_area = regions[1];
+
+    if let PreviewStatus::Ready { .. } = &app.preview.status {
+        if let (Some(image), Some(path)) = (
+            preview_image,
+            app.preview
+                .slides
+                .get(app.preview.active)
+                .and_then(|slide| slide.image_path.as_deref()),
+        ) {
+            if let Err(error) = image.render(frame, content_area, path) {
+                render_message(
+                    frame,
+                    content_area,
+                    "Preview image could not display",
+                    &format!("{error:#}"),
+                    theme::DANGER,
+                );
+            }
+            return;
+        }
+    }
 
     let (message, detail, color) = match &app.preview.status {
         PreviewStatus::Empty => (
@@ -45,19 +73,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         PreviewStatus::Unavailable { reason } => {
             ("Preview unavailable", reason.as_str(), theme::DANGER)
         }
-        PreviewStatus::Ready { .. } => app
-            .preview
-            .slides
-            .get(app.preview.active)
-            .and_then(|s| s.image_path.as_ref())
-            .and_then(|p| p.to_str())
-            .map(|path| ("Rendered slide", path, theme::MUTED))
-            .unwrap_or((
-                "Slide ready",
-                "Use Present from the actions menu.",
-                theme::SUCCESS,
-            )),
+        PreviewStatus::Ready { .. } => (
+            "Slide ready",
+            "Terminal image output is unavailable.",
+            theme::SUCCESS,
+        ),
     };
+    render_message(frame, content_area, message, detail, color);
+}
+
+fn render_message(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    message: &str,
+    detail: &str,
+    color: ratatui::style::Color,
+) {
     let text = Text::from(vec![
         Line::from(""),
         Line::styled(
@@ -71,6 +102,6 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(text)
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true }),
-        regions[1],
+        area,
     );
 }

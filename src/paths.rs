@@ -9,6 +9,7 @@ pub const APP_NAME: &str = "slide-builder";
 pub struct AppPaths {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
+    pub cache_dir: PathBuf,
 }
 
 impl AppPaths {
@@ -18,13 +19,19 @@ impl AppPaths {
         Ok(Self {
             config_dir: dirs.config_dir().to_path_buf(),
             data_dir: dirs.data_dir().to_path_buf(),
+            cache_dir: dirs.cache_dir().to_path_buf(),
         })
     }
 
-    pub fn from_roots(config_dir: impl Into<PathBuf>, data_dir: impl Into<PathBuf>) -> Self {
+    pub fn from_roots(
+        config_dir: impl Into<PathBuf>,
+        data_dir: impl Into<PathBuf>,
+        cache_dir: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             config_dir: config_dir.into(),
             data_dir: data_dir.into(),
+            cache_dir: cache_dir.into(),
         }
     }
 
@@ -47,6 +54,9 @@ impl AppPaths {
         Ok(self.project_dir(cwd)?.join("sessions"))
     }
     pub fn render_cache_dir(&self, cwd: &Path) -> Result<PathBuf> {
+        Ok(self.cache_dir.join("projects").join(project_key(cwd)?))
+    }
+    pub fn legacy_render_cache_dir(&self, cwd: &Path) -> Result<PathBuf> {
         Ok(self.project_dir(cwd)?.join("render-cache"))
     }
 
@@ -55,6 +65,8 @@ impl AppPaths {
             .with_context(|| format!("creating {}", self.config_dir.display()))?;
         std::fs::create_dir_all(&self.data_dir)
             .with_context(|| format!("creating {}", self.data_dir.display()))?;
+        std::fs::create_dir_all(&self.cache_dir)
+            .with_context(|| format!("creating {}", self.cache_dir.display()))?;
         Ok(())
     }
 }
@@ -134,11 +146,19 @@ mod tests {
 
     #[test]
     fn app_paths_have_expected_shape() {
-        let paths = AppPaths::from_roots("/cfg", "/data");
+        let paths = AppPaths::from_roots("/cfg", "/data", "/cache");
         assert_eq!(paths.config_file(), Path::new("/cfg/config.toml"));
         assert_eq!(paths.skills_dir(), Path::new("/data/skills"));
         assert!(paths
             .project_dir(Path::new("/repo"))
+            .unwrap()
+            .starts_with("/data/projects"));
+        assert!(paths
+            .render_cache_dir(Path::new("/repo"))
+            .unwrap()
+            .starts_with("/cache/projects"));
+        assert!(paths
+            .legacy_render_cache_dir(Path::new("/repo"))
             .unwrap()
             .starts_with("/data/projects"));
     }
