@@ -1,4 +1,6 @@
-use crate::agent::deck_engine::{DeckEngine, DeckMutation, MAX_MEDIA_BYTES};
+use crate::agent::deck_engine::{
+    DeckEngine, DeckMutation, MAX_MEDIA_BYTES, MAX_MUTATIONS_PER_BATCH,
+};
 use rho_sdk::{
     model::ToolSpec,
     tool::{
@@ -47,6 +49,35 @@ pub fn semantic_tools(engine: DeckEngine) -> Vec<Arc<dyn Tool>> {
     .collect()
 }
 fn schema(name: &str) -> Value {
+    let item = single_schema(name);
+    if !is_mutation_tool(name) {
+        return item;
+    }
+    json!({
+        "oneOf": [
+            item.clone(),
+            {
+                "type": "object",
+                "required": ["edits"],
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": crate::agent::deck_engine::MAX_MUTATIONS_PER_BATCH,
+                        "items": item
+                    }
+                },
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
+fn is_mutation_tool(name: &str) -> bool {
+    !matches!(name, "deck_inspect" | "deck_validate")
+}
+
+fn single_schema(name: &str) -> Value {
     match name {
         "slide_create" => json!({"type":"object","properties":{},"additionalProperties":false}),
         "slide_duplicate" | "slide_delete" => {
@@ -62,7 +93,7 @@ fn schema(name: &str) -> Value {
             json!({"type":"object","required":["slide","path","x","y","width","height"],"properties":{"slide":{"type":"integer","minimum":1},"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}}})
         }
         "shape_add" => {
-            json!({"type":"object","required":["slide","kind","x","y","width","height"],"properties":{"slide":{"type":"integer","minimum":1},"kind":{"enum":["rectangle","ellipse","line","connector"]},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"fill":{"type":"string"}}})
+            json!({"type":"object","required":["slide","kind","x","y","width","height"],"properties":{"slide":{"type":"integer","minimum":1},"kind":{"enum":["rectangle","ellipse","hexagon","line","connector"]},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"fill":{"type":"string"}}})
         }
         "element_update" => {
             json!({"type":"object","required":["id","properties"],"properties":{"id":{"type":"string"},"properties":{"type":"object","additionalProperties":{"type":"string"}}}})
@@ -152,17 +183,17 @@ fn schema(name: &str) -> Value {
 }
 fn description(name: &str) -> &'static str {
     match name {
-        "slide_create" => "Add one blank slide to the end of the active deck.",
-        "slide_duplicate" => "Duplicate a one-based slide index.",
-        "slide_delete" => "Delete a one-based slide index.",
-        "slide_reorder" => "Move a slide from one one-based position to another.",
-        "text_add" => "Add a text box to a slide using inch-based geometry.",
-        "image_add" => "Add a local image to a slide using inch-based geometry.",
-        "shape_add" => "Add a rectangle, ellipse, line, or connector using inch-based geometry.",
-        "element_update" => "Update an existing element by the stable ID returned by deck_inspect or an add operation. Put all changed values inside properties.",
+        "slide_create" => "Add blank slides to the end of the active deck. Pass one edit directly or multiple edits in an `edits` array.",
+        "slide_duplicate" => "Duplicate slides by one-based index. Pass one edit directly or multiple edits in an `edits` array.",
+        "slide_delete" => "Delete slides by one-based index. Pass one edit directly or multiple edits in an `edits` array.",
+        "slide_reorder" => "Move slides between one-based positions. Pass one edit directly or multiple edits in an `edits` array.",
+        "text_add" => "Add text boxes using inch-based geometry. Pass one edit directly or multiple edits in an `edits` array.",
+        "image_add" => "Add local images using inch-based geometry. Pass one edit directly or multiple edits in an `edits` array.",
+        "shape_add" => "Add rectangles, ellipses, hexagons, lines, or connectors using inch-based geometry. Pass one edit directly or multiple edits in an `edits` array.",
+        "element_update" => "Update elements by stable ID. Put changed values inside properties. Pass one edit directly or multiple edits in an `edits` array.",
         "deck_inspect" => "Inspect the active deck or one optional handler path before editing. Returns slide geometry, elements, and stable IDs.",
         "deck_validate" => "Validate the active deck after meaningful edits.",
-        "deck_advanced" => "Apply one advanced add, set, remove, move, copy, swap, or raw_set mutation. Use semantic tools for normal edits and follow the exact nested mutation schema.",
+        "deck_advanced" => "Apply advanced add, set, remove, move, copy, swap, or raw_set mutations. Use semantic tools for normal edits. Pass one edit directly or multiple edits in an `edits` array.",
         _ => "Operate on the active PowerPoint deck.",
     }
 }
@@ -219,32 +250,71 @@ impl Tool for DeckTool {
         })
     }
 }
-async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> {
-    let n = |k: &str| {
-        let value = a
-            .get(k)
-            .and_then(Value::as_u64)
-            .ok_or_else(|| anyhow::anyhow!("invalid field `{k}`: expected positive integer"))?;
-        if value == 0 || value > usize::MAX as u64 {
-            anyhow::bail!("invalid field `{k}`: expected positive integer");
-        }
-        Ok(value as usize)
-    };
-    let f = |k: &str| {
-        a.get(k)
-            .and_then(Value::as_f64)
-            .ok_or_else(|| anyhow::anyhow!("invalid field `{k}`: expected number"))
-    };
-    let mutation = match name {
+async fn execute(name: &str, e: &DeckEngine, arguments: Value) -> anyhow::Result<Value> {
+    match name {
         "deck_inspect" => {
             return e
-                .inspect(a.get("path").and_then(Value::as_str).map(str::to_owned))
+                .inspect(
+                    arguments
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                )
                 .await
         }
         "deck_validate" => {
-            let s = e.snapshot().await?;
-            return Ok(json!({"valid":true,"generation":s.generation,"outline":s.outline}));
+            let snapshot = e.snapshot().await?;
+            return Ok(json!({
+                "valid": true,
+                "generation": snapshot.generation,
+                "outline": snapshot.outline
+            }));
         }
+        _ => {}
+    }
+
+    let edits = match arguments.get("edits") {
+        Some(value) => value
+            .as_array()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("invalid field `edits`: expected array"))?,
+        None => vec![arguments],
+    };
+    if edits.is_empty() {
+        anyhow::bail!("field `edits` must contain at least one edit");
+    }
+    if edits.len() > MAX_MUTATIONS_PER_BATCH {
+        anyhow::bail!("field `edits` exceeds {MAX_MUTATIONS_PER_BATCH} edit limit");
+    }
+    let mutations = edits
+        .iter()
+        .enumerate()
+        .map(|(index, arguments)| {
+            mutation_from_arguments(name, arguments)
+                .map_err(|error| anyhow::anyhow!("edit {}: {error}", index + 1))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(serde_json::to_value(e.mutate_many(mutations).await?)?)
+}
+
+fn mutation_from_arguments(name: &str, arguments: &Value) -> anyhow::Result<DeckMutation> {
+    let n = |key: &str| {
+        let value = arguments
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow::anyhow!("invalid field `{key}`: expected positive integer"))?;
+        if value == 0 || value > usize::MAX as u64 {
+            anyhow::bail!("invalid field `{key}`: expected positive integer");
+        }
+        Ok(value as usize)
+    };
+    let f = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_f64)
+            .ok_or_else(|| anyhow::anyhow!("invalid field `{key}`: expected number"))
+    };
+    let mut mutation = match name {
         "slide_create" => DeckMutation::Add {
             parent: "/presentation".into(),
             element_type: "slide".into(),
@@ -264,61 +334,101 @@ async fn execute(name: &str, e: &DeckEngine, a: Value) -> anyhow::Result<Value> 
             index: Some(n("to")?),
         },
         "element_update" => {
-            let path = e.resolve_element(req_str(&a, "id")?.into()).await?;
-            let mut properties: HashMap<String, String> =
-                serde_json::from_value(a.get("properties").cloned().unwrap_or(Value::Null))?;
+            let path = req_str(arguments, "id")?.to_owned();
+            let mut properties: HashMap<String, String> = serde_json::from_value(
+                arguments.get("properties").cloned().unwrap_or(Value::Null),
+            )?;
             normalize_update_properties(&mut properties)?;
             DeckMutation::Set { path, properties }
         }
         "deck_advanced" => serde_json::from_value(
-            a.get("mutation")
+            arguments
+                .get("mutation")
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("missing mutation"))?,
         )?,
         "text_add" | "image_add" | "shape_add" => {
             let slide = n("slide")?;
-            let (x, y, w, h) = (f("x")?, f("y")?, f("width")?, f("height")?);
-            validate_geometry(x, y, w, h)?;
-            let mut p = HashMap::from([
+            let (x, y, width, height) = (f("x")?, f("y")?, f("width")?, f("height")?);
+            validate_geometry(x, y, width, height)?;
+            let mut properties = HashMap::from([
                 ("x".into(), format!("{x}in")),
                 ("y".into(), format!("{y}in")),
-                ("width".into(), format!("{w}in")),
-                ("height".into(), format!("{h}in")),
+                ("width".into(), format!("{width}in")),
+                ("height".into(), format!("{height}in")),
             ]);
-            let typ = if name == "text_add" {
-                p.insert("text".into(), req_str(&a, "text")?.into());
-                if let Some(v) = a.get("font_size") {
-                    p.insert(
+            let element_type = if name == "text_add" {
+                properties.insert("text".into(), req_str(arguments, "text")?.into());
+                if let Some(value) = arguments.get("font_size") {
+                    properties.insert(
                         "fontSize".into(),
-                        finite_number(v, "font_size")?.to_string(),
+                        finite_number(value, "font_size")?.to_string(),
                     );
                 }
                 "rectangle"
             } else if name == "image_add" {
-                let path = req_str(&a, "path")?;
-                let meta = std::fs::metadata(path)?;
-                if meta.len() > MAX_MEDIA_BYTES {
-                    anyhow::bail!("image exceeds {MAX_MEDIA_BYTES} byte limit")
-                };
-                p.insert("path".into(), path.into());
+                let path = req_str(arguments, "path")?;
+                let metadata = std::fs::metadata(path)?;
+                if metadata.len() > MAX_MEDIA_BYTES {
+                    anyhow::bail!("image exceeds {MAX_MEDIA_BYTES} byte limit");
+                }
+                properties.insert("path".into(), path.into());
                 "image"
             } else {
-                let k = req_str(&a, "kind")?;
-                if let Some(v) = a.get("fill").and_then(Value::as_str) {
-                    p.insert("fill".into(), v.into());
+                let kind = req_str(arguments, "kind")?;
+                if let Some(value) = arguments.get("fill").and_then(Value::as_str) {
+                    properties.insert("fill".into(), value.into());
                 }
-                k
+                if kind == "hexagon" {
+                    properties.insert("preset".into(), kind.into());
+                    "rectangle"
+                } else {
+                    kind
+                }
             };
             DeckMutation::Add {
                 parent: format!("/slide[{slide}]"),
-                element_type: typ.into(),
-                properties: p,
+                element_type: element_type.into(),
+                properties,
             }
         }
         _ => anyhow::bail!("unknown deck tool"),
     };
-    Ok(serde_json::to_value(e.mutate(mutation).await?)?)
+    normalize_mutation_properties(&mut mutation)?;
+    Ok(mutation)
 }
+fn normalize_mutation_properties(mutation: &mut DeckMutation) -> anyhow::Result<()> {
+    let properties = match mutation {
+        DeckMutation::Add { properties, .. } | DeckMutation::Set { properties, .. } => properties,
+        _ => return Ok(()),
+    };
+    if let Some(text) = properties.get_mut("text") {
+        *text = text.replace("\\r\\n", "\n").replace("\\n", "\n");
+    }
+    for key in [
+        "fill",
+        "fillColor",
+        "bg",
+        "bgColor",
+        "background",
+        "color",
+        "fontColor",
+        "font.color",
+        "lineColor",
+        "borderColor",
+    ] {
+        let Some(color) = properties.get_mut(key) else {
+            continue;
+        };
+        let normalized = color.strip_prefix('#').unwrap_or(color);
+        if normalized.len() != 6 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            anyhow::bail!("invalid `{key}` color `{color}`: expected six hexadecimal digits");
+        }
+        *color = normalized.to_ascii_uppercase();
+    }
+    Ok(())
+}
+
 fn finite_number(value: &Value, field: &str) -> anyhow::Result<f64> {
     let number = value
         .as_f64()
@@ -406,7 +516,15 @@ mod tests {
         execute(
             "element_update",
             &engine,
-            json!({"id": stable_id, "properties": {"text": "updated", "x": "2"}}),
+            json!({
+                "id": stable_id,
+                "properties": {
+                    "text": "updated",
+                    "x": "2",
+                    "color": "#003057",
+                    "fill": "#F3F7FA"
+                }
+            }),
         )
         .await
         .unwrap();
@@ -454,6 +572,20 @@ mod tests {
             vec![ids[1].clone(), ids[2].clone(), ids[0].clone()]
         );
         execute(
+            "text_add",
+            &engine,
+            json!({"slide":1,"text":"added after reorder","x":1,"y":2,"width":3,"height":1}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            engine
+                .inspect(Some("/slide[1]/shape[1]".into()))
+                .await
+                .unwrap()["text"],
+            "added after reorder"
+        );
+        execute(
             "element_update",
             &engine,
             json!({"id": shape_id, "properties":{"text":"after move"}}),
@@ -492,6 +624,207 @@ mod tests {
         assert!(!after_ids.contains(&ids[2].as_str()));
         assert!(after_ids.contains(&ids[0].as_str()));
         assert!(after_ids.contains(&ids[1].as_str()));
+    }
+
+    #[tokio::test]
+    async fn slide_create_batch_accepts_empty_edit_objects() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("slides-batch.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+
+        let result = execute("slide_create", &engine, json!({"edits": [{}, {}]}))
+            .await
+            .unwrap();
+
+        assert_eq!(result["generation"], 1);
+        assert_eq!(result["affected"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            engine.inspect(None).await.unwrap()["slides"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn text_add_batch_commits_once_and_returns_all_affected_ids() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("batch.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+
+        let result = execute(
+            "text_add",
+            &engine,
+            json!({"edits": [
+                {"slide":1,"text":"first","x":1,"y":1,"width":3,"height":1},
+                {"slide":1,"text":"second","x":1,"y":2,"width":3,"height":1}
+            ]}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["generation"], 1);
+        assert_eq!(result["affected"].as_array().unwrap().len(), 2);
+        assert_eq!(engine.generation(), 1);
+        let inspected = engine.inspect(None).await.unwrap();
+        let previews = inspected["slides"][0]["shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|shape| shape["text_preview"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(previews, vec!["first", "second"]);
+    }
+
+    #[tokio::test]
+    async fn failed_batch_rolls_back_prior_edits_and_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rollback.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let result = execute(
+            "deck_advanced",
+            &engine,
+            json!({"edits": [
+                {"mutation": {
+                    "operation":"add",
+                    "parent":"/slide[1]",
+                    "element_type":"rectangle",
+                    "properties":{"x":"1in","y":"1in","width":"2in","height":"1in"}
+                }},
+                {"mutation": {"operation":"remove","path":"/slide[999]"}}
+            ]}),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(engine.generation(), 0);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(
+            engine.inspect(None).await.unwrap()["slides"][0]["shape_count"],
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn image_add_embeds_visible_picture_and_returns_stable_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("pixel.png");
+        image::RgbImage::from_pixel(2, 2, image::Rgb([0, 48, 87]))
+            .save(&image_path)
+            .unwrap();
+        let deck_path = dir.path().join("image.pptx");
+        let engine = DeckEngine::create(&deck_path, None).await.unwrap();
+
+        let result = execute(
+            "image_add",
+            &engine,
+            json!({
+                "slide": 1,
+                "path": image_path,
+                "x": 0,
+                "y": 0,
+                "width": 13.333,
+                "height": 7.5
+            }),
+        )
+        .await
+        .unwrap();
+
+        let stable_id = result["affected"][0].as_str().unwrap();
+        assert!(stable_id.contains("/picture:"), "{result}");
+        assert!(engine
+            .resolve_element(stable_id.to_owned())
+            .await
+            .unwrap()
+            .starts_with("/slide[1]/picture["));
+        let xml = engine.raw("ppt/slides/slide1.xml".into()).await.unwrap();
+        assert!(xml.contains("xmlns:r="), "{xml}");
+        assert!(xml.contains("<p:pic>"), "{xml}");
+        let snapshot = engine.snapshot().await.unwrap();
+        assert!(
+            snapshot.html.contains("data-path=\"/slide[1]/picture["),
+            "{}",
+            snapshot.html
+        );
+        let inspected = engine.inspect(None).await.unwrap();
+        let picture = inspected["slides"][0]["shapes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|shape| shape["type"] == "image")
+            .unwrap_or_else(|| panic!("missing image from inspection: {inspected}"));
+        assert!((picture["geometry"]["width"].as_f64().unwrap() - 13.333).abs() < 0.0002);
+        assert_eq!(picture["geometry"]["height"], 7.5);
+    }
+
+    #[tokio::test]
+    async fn semantic_tools_normalize_colors_newlines_and_hexagons() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("normalized.pptx");
+        let engine = DeckEngine::create(&path, None).await.unwrap();
+        execute(
+            "text_add",
+            &engine,
+            json!({
+                "slide": 1,
+                "text": "first\\nsecond",
+                "x": 1,
+                "y": 1,
+                "width": 3,
+                "height": 1
+            }),
+        )
+        .await
+        .unwrap();
+        execute(
+            "shape_add",
+            &engine,
+            json!({
+                "slide": 1,
+                "kind": "hexagon",
+                "x": 5,
+                "y": 1,
+                "width": 2,
+                "height": 2,
+                "fill": "#003057"
+            }),
+        )
+        .await
+        .unwrap();
+        let xml = engine.raw("ppt/slides/slide1.xml".into()).await.unwrap();
+        assert!(xml.contains("first\nsecond"), "{xml}");
+        assert!(!xml.contains(r"first\nsecond"), "{xml}");
+        assert!(xml.contains(r#"prst="hexagon""#), "{xml}");
+        assert!(xml.contains(r#"val="003057""#), "{xml}");
+    }
+
+    #[test]
+    fn normalizes_hash_prefixed_colors() {
+        let mut mutation = DeckMutation::Set {
+            path: "/slide[1]/shape[1]".into(),
+            properties: HashMap::from([
+                ("fill".into(), "#f3f7fa".into()),
+                ("fontColor".into(), "003057".into()),
+            ]),
+        };
+        normalize_mutation_properties(&mut mutation).unwrap();
+        let DeckMutation::Set { properties, .. } = mutation else {
+            unreachable!();
+        };
+        assert_eq!(properties["fill"], "F3F7FA");
+        assert_eq!(properties["fontColor"], "003057");
+    }
+
+    #[test]
+    fn rejects_invalid_colors_before_mutation() {
+        let mut mutation = DeckMutation::Set {
+            path: "/slide[1]/shape[1]".into(),
+            properties: HashMap::from([("fill".into(), "#xyz".into())]),
+        };
+        assert!(normalize_mutation_properties(&mut mutation).is_err());
     }
 
     #[test]

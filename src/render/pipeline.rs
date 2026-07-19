@@ -386,14 +386,39 @@ pub fn validate_offline_html(source: &str) -> Result<()> {
         .filter(|c| !c.is_ascii_whitespace() && !c.is_control())
         .flat_map(char::to_lowercase)
         .collect();
-    for forbidden in [
-        "http:", "https:", "ftp:", "ftps:", "ws:", "wss:", "file:", "//", "@import", "srcset=",
-    ] {
+    for forbidden in ["@import", "srcset="] {
         if compact.contains(forbidden) {
             bail!("offline renderer rejected external resource marker {forbidden:?}");
         }
     }
+    for introducer in [
+        "src=",
+        "href=",
+        "xlink:href=",
+        "poster=",
+        "background=",
+        "action=",
+        "formaction=",
+        "url(",
+    ] {
+        let mut remainder = compact.as_str();
+        while let Some(position) = remainder.find(introducer) {
+            let value = remainder[position + introducer.len()..].trim_start_matches(['\'', '"']);
+            if starts_with_external_url(value) {
+                bail!("offline renderer rejected external URL in {introducer:?}");
+            }
+            remainder = &remainder[position + introducer.len()..];
+        }
+    }
     Ok(())
+}
+
+fn starts_with_external_url(value: &str) -> bool {
+    [
+        "http:", "https:", "ftp:", "ftps:", "ws:", "wss:", "file:", "//",
+    ]
+    .iter()
+    .any(|scheme| value.starts_with(scheme))
 }
 
 fn strip_active_content(source: &str) -> (String, bool) {
@@ -455,10 +480,23 @@ mod tests {
             "<style>@import url(x)</style>",
             "<img src='//host/x'>",
             "<img src=file:///etc/passwd>",
+            "<a href='https://example.com'>external</a>",
+            "<style>.slide { background: url(\"//host/image.png\") }</style>",
         ] {
             assert!(validate_offline_html(html).is_err(), "accepted {html}");
         }
         assert!(validate_offline_html("<img src='data:image/png;base64,AA'>").is_ok());
+    }
+
+    #[test]
+    fn accepts_double_slashes_and_url_schemes_that_are_not_resources() {
+        for html in [
+            "<p>Use // to separate these labels</p>",
+            "<style>/* https://example.com design reference */</style>",
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>"#,
+        ] {
+            assert!(validate_offline_html(html).is_ok(), "rejected {html}");
+        }
     }
 
     #[test]

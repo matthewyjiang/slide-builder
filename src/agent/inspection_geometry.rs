@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub(super) fn enrich(inspected: &mut Value, html: &str) {
+    add_missing_pictures(inspected, html);
     let geometry = geometry_by_path(html);
     add_geometry(inspected, &geometry);
 
@@ -18,6 +19,63 @@ pub(super) fn enrich(inspected: &mut Value, html: &str) {
                     "unit": "in"
                 }),
             );
+        }
+    }
+}
+
+fn add_missing_pictures(inspected: &mut Value, html: &str) {
+    let picture_paths = geometry_by_path(html)
+        .into_keys()
+        .filter(|path| path.contains("/picture["))
+        .collect::<Vec<_>>();
+    let Some(slides) = inspected.get_mut("slides").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for slide in slides {
+        let Some(slide_path) = slide.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let prefix = format!("{slide_path}/picture[");
+        let pictures = picture_paths
+            .iter()
+            .filter(|path| path.starts_with(&prefix))
+            .filter_map(|path| {
+                // The pinned handler writes p:cNvPr/@id inside picture brackets,
+                // not the picture's position in the slide. Preserve that OOXML ID
+                // so stable IDs survive insertions before the picture.
+                let non_visual_id = path.strip_prefix(&prefix)?.strip_suffix(']')?;
+                Some(json!({
+                    "path": path,
+                    "type": "image",
+                    "name": "Picture",
+                    "id": non_visual_id,
+                    "paragraph_count": 0,
+                    "text_preview": ""
+                }))
+            })
+            .collect::<Vec<_>>();
+        let Some(object) = slide.as_object_mut() else {
+            continue;
+        };
+        let shapes = object
+            .entry("shapes")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let count = if let Some(shapes) = shapes.as_array_mut() {
+            for picture in pictures {
+                let path = picture.get("path").and_then(Value::as_str);
+                if !shapes
+                    .iter()
+                    .any(|shape| shape.get("path").and_then(Value::as_str) == path)
+                {
+                    shapes.push(picture);
+                }
+            }
+            Some(shapes.len())
+        } else {
+            None
+        };
+        if let Some(count) = count {
+            object.insert("shape_count".into(), json!(count));
         }
     }
 }
