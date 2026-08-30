@@ -208,7 +208,8 @@ pub fn build_rho(
         builder = builder.tool_shared(tool)
     }
     builder = builder.tool_shared(rho_agent_tools::shell_tool(
-        rho_agent_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        rho_agent_tools::ShellToolOptions::new()
+            .max_output_bytes(rho_agent_tools::DEFAULT_MAX_OUTPUT_BYTES),
     ));
     builder = builder.tool(LoadSkillTool::new(skills.to_vec()));
     builder = builder.tool(UiTool::render(ui_tools.clone()));
