@@ -178,17 +178,7 @@ fn missing_provider_credential(error: &anyhow::Error) -> bool {
 
     matches!(
         error.downcast_ref::<ModelError>(),
-        Some(
-            ModelError::MissingApiKey
-                | ModelError::MissingCodexAuth
-                | ModelError::MissingAnthropicApiKey
-                | ModelError::MissingGithubCopilotAuth
-                | ModelError::MissingXaiApiKey
-                | ModelError::MissingXaiAuth
-                | ModelError::MissingMoonshotApiKey
-                | ModelError::MissingOpenRouterApiKey
-                | ModelError::MissingKimiAuth
-        )
+        Some(ModelError::MissingCredentials(_))
     )
 }
 
@@ -200,14 +190,16 @@ async fn run_provider_login(provider: &str, diagnostic: &str) -> Result<()> {
 
     let descriptor = provider_descriptor(provider)
         .with_context(|| format!("unsupported provider {provider}"))?;
-    match descriptor.auth_kind {
+    let auth = descriptor.default_auth();
+    match auth.auth_kind {
+        ProviderAuthKind::None => Ok(()),
         ProviderAuthKind::ApiKey { .. } => run_api_key_login(provider, diagnostic),
         ProviderAuthKind::CodexOAuth { .. } => {
             let login = codex_oauth::start_codex_device_login().await?;
             let verification_uri = login.verification_uri.clone();
             let user_code = login.user_code.clone();
             let tokens = show_device_login(
-                descriptor.login_label,
+                auth.login_label,
                 diagnostic,
                 &verification_uri,
                 &user_code,
@@ -221,7 +213,7 @@ async fn run_provider_login(provider: &str, diagnostic: &str) -> Result<()> {
             let verification_uri = login.verification_uri.clone();
             let user_code = login.user_code.clone();
             let tokens = show_device_login(
-                descriptor.login_label,
+                auth.login_label,
                 diagnostic,
                 &verification_uri,
                 &user_code,
@@ -235,7 +227,7 @@ async fn run_provider_login(provider: &str, diagnostic: &str) -> Result<()> {
             let verification_uri = login.verification_uri.clone();
             let user_code = login.user_code.clone();
             let tokens = show_device_login(
-                descriptor.login_label,
+                auth.login_label,
                 diagnostic,
                 &verification_uri,
                 &user_code,
@@ -249,7 +241,7 @@ async fn run_provider_login(provider: &str, diagnostic: &str) -> Result<()> {
             let verification_uri = login.verification_uri.clone();
             let user_code = login.user_code.clone();
             let tokens = show_device_login(
-                descriptor.login_label,
+                auth.login_label,
                 diagnostic,
                 &verification_uri,
                 &user_code,
@@ -257,6 +249,12 @@ async fn run_provider_login(provider: &str, diagnostic: &str) -> Result<()> {
             )
             .await?;
             slide_builder::credentials::save_xai_tokens(&tokens)
+        }
+        ProviderAuthKind::BearerCredential { .. } | ProviderAuthKind::OllamaDeviceKey { .. } => {
+            bail!(
+                "{} login is not supported by slide-builder",
+                auth.login_label
+            )
         }
     }
 }
