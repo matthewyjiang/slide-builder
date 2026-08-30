@@ -11,19 +11,13 @@ Linux terminal-first, AI-assisted PowerPoint authoring built on `rho-sdk` and th
 
 ## Providers
 
-Set `provider` and, optionally, `model` in
-`$XDG_CONFIG_HOME/slide-builder/config.toml`. Every provider exposed by the
-pinned `rho-providers` registry is supported:
-
-- `openai`
-- `openai-codex`
-- `anthropic`
-- `github-copilot`
-- `moonshot`
-- `openrouter`
-- `kimi-code`
-- `xai`
-- `xai-oauth`
+On first launch, slide-builder lists every provider exposed by the pinned
+`rho-providers` registry. Choose a provider, authenticate in the terminal, and
+then select from the models Rho detects for that account. Providers with more
+than one authentication mode open a nested connection picker. The resulting
+`provider`, `auth`, and `model` are saved to
+`$XDG_CONFIG_HOME/slide-builder/config.toml`. Set `SLIDE_BUILDER_FORCE_FIRST_RUN=1`
+to open this flow even when that config already exists.
 
 The workspace keeps the active deck, preview state, and contextual controls visible.
 Keyboard input stays in the prompt editor. Click a slide in the slide list to make it
@@ -52,9 +46,9 @@ configuration file immediately and take effect after restarting the application.
 
 API-key providers show a masked key prompt. OAuth and device-login providers
 show the authorization URL and code, then store the resulting tokens in
-slide-builder's isolated OS-keyring service. When `model` is empty,
-slide-builder opens model setup on launch and preselects Rho's default or cached
-model when available. The provider-specific environment variables exposed by
+slide-builder's isolated OS-keyring service. After authentication, slide-builder
+refreshes the provider's live model list through Rho, with Rho's cached or static
+catalog as the fallback. The provider-specific environment variables exposed by
 Rho can also be used for automation.
 
 At startup, slide-builder discovers project skills from `.agents/skills`, user

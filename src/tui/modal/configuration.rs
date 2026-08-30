@@ -74,6 +74,11 @@ impl ConfigurationState {
     fn to_config(&self) -> Result<Config, String> {
         let mut config = self.original.clone();
         config.provider = self.string("provider")?;
+        if config.provider != self.original.provider {
+            config.auth = Config::resolve_auth_mode(&config.provider, "")
+                .map_err(|error| error.to_string())?
+                .to_owned();
+        }
         config.model = self.string("model")?;
         config.reasoning = self.string("reasoning")?;
         config.permission_mode = match self.string("permission")?.as_str() {

@@ -1,5 +1,7 @@
 # AGENTS.md
 
+To test first-run onboarding with an existing config, run with `SLIDE_BUILDER_FORCE_FIRST_RUN=1`.
+
 ## Commits and pull requests
 
 Use Conventional Commits for commit messages and PR titles:
@@ -62,4 +64,4 @@ For PRs:
 
 ## Design context
 
-Before changing the TUI or other user-facing surfaces, read `PRODUCT.md` for product strategy and `DESIGN.md` for the normative visual system. Preserve the Focused Studio principles, terminal-derived ANSI palette, keyboard-first operation, and narrow-terminal support. `.impeccable/design.json` contains matching machine-readable design metadata.
+Before changing the TUI or other user-facing surfaces, read `PRODUCT.md` for product strategy and `DESIGN.md` for the normative visual system. Preserve the Focused Studio principles, terminal-derived ANSI palette, keyboard-first operation, and narrow-terminal support. In nested flows, Escape returns to the previous view; only Escape from the root view cancels the flow. `.impeccable/design.json` contains matching machine-readable design metadata.

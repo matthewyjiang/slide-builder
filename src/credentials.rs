@@ -41,38 +41,6 @@ impl CredentialStore for SlideCredentialStore {
     }
 }
 
-/// Save an API key using provider-specific account naming, but in the isolated
-/// slide-builder keyring service.
-pub fn save_api_key(provider: &str, key: &str) -> anyhow::Result<()> {
-    if key.trim().is_empty() {
-        anyhow::bail!("API key cannot be empty");
-    }
-    rho_providers::credentials::save_provider_api_key(&SlideCredentialStore, provider, key)?;
-    Ok(())
-}
-
-pub fn save_codex_tokens(tokens: &rho_providers::credentials::CodexTokens) -> anyhow::Result<()> {
-    rho_providers::credentials::save_codex_tokens(&SlideCredentialStore, tokens)?;
-    Ok(())
-}
-
-pub fn save_github_copilot_tokens(
-    tokens: &rho_providers::credentials::GitHubCopilotTokens,
-) -> anyhow::Result<()> {
-    rho_providers::credentials::save_github_copilot_tokens(&SlideCredentialStore, tokens)?;
-    Ok(())
-}
-
-pub fn save_kimi_tokens(tokens: &rho_providers::credentials::KimiTokens) -> anyhow::Result<()> {
-    rho_providers::credentials::save_kimi_tokens(&SlideCredentialStore, tokens)?;
-    Ok(())
-}
-
-pub fn save_xai_tokens(tokens: &rho_providers::credentials::XaiTokens) -> anyhow::Result<()> {
-    rho_providers::credentials::save_xai_tokens(&SlideCredentialStore, tokens)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

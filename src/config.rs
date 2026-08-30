@@ -11,6 +11,7 @@ pub struct Config {
     pub schema_version: u32,
     pub decks_dir: PathBuf,
     pub provider: String,
+    pub auth: String,
     pub model: String,
     pub reasoning: String,
     pub permission_mode: PermissionMode,
@@ -27,6 +28,7 @@ impl Default for Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             decks_dir: PathBuf::from("~/decks"),
             provider: "anthropic".into(),
+            auth: String::new(),
             model: String::new(),
             reasoning: "medium".into(),
             permission_mode: PermissionMode::Supervised,
@@ -81,6 +83,27 @@ impl Config {
         Ok(())
     }
 
+    /// Resolved authentication mode id.
+    ///
+    /// Empty `auth` means the provider default so older config files without an
+    /// `auth` field, or with `auth = ""`, keep working.
+    pub fn auth_mode(&self) -> Result<&str> {
+        Self::resolve_auth_mode(&self.provider, &self.auth)
+    }
+
+    /// Resolves a configured auth id, using the provider default when `auth` is blank.
+    pub fn resolve_auth_mode<'a>(provider: &'a str, auth: &'a str) -> Result<&'a str> {
+        let provider = provider.trim();
+        let auth = auth.trim();
+        if !auth.is_empty() {
+            return Ok(auth);
+        }
+        Ok(rho_providers::provider::provider_descriptor(provider)
+            .with_context(|| format!("unsupported provider {provider}"))?
+            .default_auth()
+            .id)
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != CONFIG_SCHEMA_VERSION {
             bail!(
@@ -100,6 +123,9 @@ impl Config {
                 self.provider
             );
         }
+        rho_providers::provider::resolve_profile_exact(self.provider.trim(), self.auth_mode()?)
+            .map_err(anyhow::Error::new)
+            .context("provider authentication mode is invalid")?;
         if self.reasoning.trim().is_empty() {
             bail!("reasoning cannot be empty");
         }
@@ -294,6 +320,36 @@ mod tests {
             ..Config::default()
         };
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn empty_auth_resolves_to_the_provider_default() {
+        let config = Config::default();
+        let expected = rho_providers::provider::provider_descriptor("anthropic")
+            .unwrap()
+            .default_auth()
+            .id;
+        assert_eq!(config.auth_mode().unwrap(), expected);
+        assert_eq!(
+            Config::resolve_auth_mode("xai", "xai-oauth").unwrap(),
+            "xai-oauth"
+        );
+    }
+
+    #[test]
+    fn provider_auth_mode_is_persisted_and_validated() {
+        let config = Config {
+            provider: "xai".into(),
+            auth: "xai-oauth".into(),
+            ..Config::default()
+        };
+        config.validate().unwrap();
+
+        let invalid = Config {
+            auth: "codex".into(),
+            ..config
+        };
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
