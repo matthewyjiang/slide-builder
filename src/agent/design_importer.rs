@@ -20,21 +20,31 @@ impl DesignImporterDefinition {
     pub async fn create(
         self,
         provider: &str,
+        auth: &str,
         model: &str,
         workspace_root: &Path,
     ) -> Result<DesignImporter> {
-        let rho = self.build_runtime(provider, model, workspace_root)?;
+        let rho = self.build_runtime(provider, auth, model, workspace_root)?;
         Ok(DesignImporter {
             session: rho.session(SessionOptions::default()).await?,
             cancellation: Arc::new(Mutex::new(None)),
         })
     }
 
-    fn build_runtime(&self, provider: &str, model: &str, workspace_root: &Path) -> Result<Rho> {
+    fn build_runtime(
+        &self,
+        provider: &str,
+        auth: &str,
+        model: &str,
+        workspace_root: &Path,
+    ) -> Result<Rho> {
         let reasoning = rho_sdk::ReasoningLevel::Medium;
         let options = rho_providers::ProviderBuildOptions::new(provider, model, reasoning)
             .map_err(anyhow::Error::new)
-            .context("design importer provider configuration failed")?;
+            .context("design importer provider configuration failed")?
+            .with_auth(auth)
+            .map_err(anyhow::Error::new)
+            .context("design importer authentication mode failed")?;
         let credentials =
             rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(Arc::new(
                 crate::credentials::SlideCredentialStore,

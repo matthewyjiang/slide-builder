@@ -171,6 +171,7 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
 #[allow(clippy::too_many_arguments)]
 pub fn build_rho(
     provider: &str,
+    auth: &str,
     model: &str,
     prompt: String,
     repo: &Path,
@@ -184,7 +185,10 @@ pub fn build_rho(
     let reasoning = rho_sdk::ReasoningLevel::Medium;
     let options = rho_providers::ProviderBuildOptions::new(provider, model, reasoning)
         .map_err(anyhow::Error::new)
-        .context("provider configuration failed")?;
+        .context("provider configuration failed")?
+        .with_auth(auth)
+        .map_err(anyhow::Error::new)
+        .context("provider authentication mode failed")?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         std::sync::Arc::new(crate::credentials::SlideCredentialStore),
     );

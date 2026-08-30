@@ -19,6 +19,7 @@ pub struct DesignImportRequest {
     pub configured_browser: Option<PathBuf>,
     pub render_timeout: Duration,
     pub provider: String,
+    pub auth: String,
     pub model: String,
 }
 
@@ -147,7 +148,12 @@ impl DesignImportWorkflow {
             DesignImportWorkflowStage::Analyzing,
         ));
         let importer = match DesignImporterDefinition
-            .create(&request.provider, &request.model, &prepared.job_dir)
+            .create(
+                &request.provider,
+                &request.auth,
+                &request.model,
+                &prepared.job_dir,
+            )
             .await
         {
             Ok(importer) => importer,
