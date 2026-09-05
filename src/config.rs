@@ -183,14 +183,26 @@ impl Default for PreviewConfig {
             enabled: true,
             protocol: "kitty".into(),
             width: 1600,
-            scale: 2,
+            scale: 1,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderEngine {
+    #[default]
+    Obscura,
+    Chromium,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RenderConfig {
+    pub engine: RenderEngine,
+    pub obscura_path: PathBuf,
+    pub sandbox_path: PathBuf,
+    /// Used only when the Chromium engine is explicitly selected.
     pub browser_path: PathBuf,
     pub debounce_ms: u64,
     pub timeout_ms: u64,
@@ -199,6 +211,9 @@ pub struct RenderConfig {
 impl Default for RenderConfig {
     fn default() -> Self {
         Self {
+            engine: RenderEngine::default(),
+            obscura_path: "auto".into(),
+            sandbox_path: "auto".into(),
             browser_path: "auto".into(),
             debounce_ms: 1500,
             timeout_ms: 60_000,
@@ -253,6 +268,10 @@ impl ProjectConfig {
             .with_context(|| format!("writing project state {}", path.display()))
     }
 }
+
+#[cfg(test)]
+#[path = "config_render_tests.rs"]
+mod render_tests;
 
 #[cfg(test)]
 mod tests {

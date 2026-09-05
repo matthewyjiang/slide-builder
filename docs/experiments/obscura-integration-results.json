@@ -1,0 +1,97 @@
+{
+  "date": "2026-09-05",
+  "profile": "dev (unoptimized)",
+  "obscura_version": "0.2.2",
+  "bubblewrap_version": "0.12.0",
+  "chromium_headless_shell_version": "149.0.7827.55",
+  "width": 1600,
+  "height": 900,
+  "scale": 1,
+  "concurrency": 4,
+  "workloads": {
+    "isolated-pipeline-final": {
+      "slide_count": 12,
+      "export_seconds": 0.023866058,
+      "engines": {
+        "chromium": {
+          "median_seconds": 1.339404137,
+          "samples_seconds": [
+            1.369782863,
+            1.330822511,
+            1.290177457,
+            1.339404137,
+            1.355859359
+          ],
+          "probe_seconds": 6.9542e-05,
+          "cache_hit_seconds": [
+            0.000135163,
+            0.000133204,
+            0.000133743,
+            0.000135484,
+            0.000134674
+          ]
+        },
+        "obscura": {
+          "median_seconds": 0.777071502,
+          "samples_seconds": [
+            0.783878471,
+            0.765571213,
+            0.777071502,
+            0.774326481,
+            0.78798022
+          ],
+          "probe_seconds": 7.8413e-05,
+          "cache_hit_seconds": [
+            0.000137794,
+            0.000137424,
+            0.000137503,
+            0.000139604,
+            0.000138863
+          ]
+        }
+      }
+    },
+    "local-deck-pipeline": {
+      "slide_count": 1,
+      "export_seconds": 0.007067174,
+      "engines": {
+        "chromium": {
+          "median_seconds": 0.797368923,
+          "samples_seconds": [
+            0.781016574,
+            0.797368923,
+            0.784692783,
+            0.800616932,
+            0.800110685
+          ],
+          "probe_seconds": 5.8692e-05,
+          "cache_hit_seconds": [
+            8.3602e-05,
+            7.6042e-05,
+            8.4462e-05,
+            8.2632e-05,
+            8.4982e-05
+          ]
+        },
+        "obscura": {
+          "median_seconds": 0.300923621,
+          "samples_seconds": [
+            0.300552826,
+            0.299380059,
+            0.301133554,
+            0.301269921,
+            0.300923621
+          ],
+          "probe_seconds": 5.8182e-05,
+          "cache_hit_seconds": [
+            8.7582e-05,
+            8.7482e-05,
+            8.6893e-05,
+            8.8552e-05,
+            8.8243e-05
+          ]
+        }
+      }
+    }
+  }
+}

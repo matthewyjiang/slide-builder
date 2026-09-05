@@ -201,7 +201,14 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
     let pending_approvals = Arc::new(Mutex::new(HashMap::new()));
     pump_approvals(approvals, event_tx.clone(), pending_approvals.clone());
 
-    let render_service = make_render_service(&config, &render_cache_dir)?;
+    let (render_service, renderer_notice) = match make_render_service(&config, &render_cache_dir) {
+        Ok(Some(service)) => (Some(service), None),
+        Ok(None) => (
+            None,
+            Some("Previews are disabled in configuration".to_owned()),
+        ),
+        Err(error) => (None, Some(format!("{error:#}"))),
+    };
     if let Some(service) = &render_service {
         pump_render_events(service, event_tx.clone());
     }
@@ -245,10 +252,8 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
             &config,
             event_tx.clone(),
         );
-    } else {
-        app.apply(AppEvent::RendererUnavailable(
-            "No supported Chromium renderer was found".into(),
-        ));
+    } else if let Some(notice) = renderer_notice {
+        app.apply(AppEvent::RendererUnavailable(notice));
     }
 
     let mut pending_design_context: Option<String> = None;
@@ -451,9 +456,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                                 source,
                                 cache_dir: render_cache_dir.clone(),
                                 packages_dir: paths.design_packages_dir(),
-                                configured_browser: (config.render.browser_path
-                                    != Path::new("auto"))
-                                .then(|| config.render.browser_path.clone()),
+                                render_config: config.render.clone(),
                                 render_timeout: Duration::from_millis(config.render.timeout_ms),
                                 provider: config.provider.clone(),
                                 auth: config.auth_mode()?.to_owned(),
@@ -651,14 +654,7 @@ fn make_render_service(
     if !config.preview.enabled {
         return Ok(None);
     }
-    let browser_path = if config.render.browser_path == Path::new("auto") {
-        None
-    } else {
-        Some(config.render.browser_path.as_path())
-    };
-    let Ok(browser) = Browser::probe(browser_path) else {
-        return Ok(None);
-    };
+    let browser = Browser::probe(&config.render)?;
     let width = config.preview.width;
     let height = width.saturating_mul(9) / 16;
     let options = CaptureOptions {

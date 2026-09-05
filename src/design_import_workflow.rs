@@ -1,6 +1,7 @@
 use crate::agent::design_importer::{
     DesignImporter, DesignImporterDefinition, DesignImporterOutcome,
 };
+use crate::config::RenderConfig;
 use crate::design_import::{
     DesignImportPreparationStage, DesignImportPublicationStage, PreparedImport,
 };
@@ -16,7 +17,7 @@ pub struct DesignImportRequest {
     pub source: PathBuf,
     pub cache_dir: PathBuf,
     pub packages_dir: PathBuf,
-    pub configured_browser: Option<PathBuf>,
+    pub render_config: RenderConfig,
     pub render_timeout: Duration,
     pub provider: String,
     pub auth: String,
@@ -117,7 +118,7 @@ impl DesignImportWorkflow {
         let prepared = PreparedImport::prepare_with_progress(
             &request.source,
             &request.cache_dir,
-            request.configured_browser.as_deref(),
+            &request.render_config,
             request.render_timeout,
             {
                 let events = events.clone();

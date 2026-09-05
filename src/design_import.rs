@@ -1,4 +1,5 @@
 use crate::agent::deck_engine::DeckEngine;
+use crate::config::RenderConfig;
 use crate::design::DesignPackage;
 use crate::render::{
     browser::{Browser, CaptureOptions},
@@ -73,23 +74,16 @@ impl PreparedImport {
     pub async fn prepare(
         source: &Path,
         cache_dir: &Path,
-        configured_browser: Option<&Path>,
+        render_config: &RenderConfig,
         render_timeout: Duration,
     ) -> Result<Self> {
-        Self::prepare_with_progress(
-            source,
-            cache_dir,
-            configured_browser,
-            render_timeout,
-            |_| {},
-        )
-        .await
+        Self::prepare_with_progress(source, cache_dir, render_config, render_timeout, |_| {}).await
     }
 
     pub async fn prepare_with_progress<F>(
         source: &Path,
         cache_dir: &Path,
-        configured_browser: Option<&Path>,
+        render_config: &RenderConfig,
         render_timeout: Duration,
         mut progress: F,
     ) -> Result<Self>
@@ -139,7 +133,7 @@ impl PreparedImport {
             &template,
             &job_dir,
             &snapshot.html,
-            configured_browser,
+            render_config,
             render_timeout,
         )
         .await
@@ -260,10 +254,10 @@ async fn render_contact_sheet(
     template: &Path,
     job_dir: &Path,
     html: &str,
-    configured_browser: Option<&Path>,
+    render_config: &RenderConfig,
     timeout: Duration,
 ) -> Result<PathBuf> {
-    let browser = Browser::probe(configured_browser)?;
+    let browser = Browser::probe(render_config)?;
     let slide_count = handler_slide_count(html).min(12);
     if slide_count == 0 {
         bail!("template contains no slides");
@@ -544,7 +538,11 @@ mod tests {
         let prepared = PreparedImport::prepare(
             &source,
             &root.path().join("cache"),
-            Some(Path::new("/missing/chromium")),
+            &RenderConfig {
+                engine: crate::config::RenderEngine::Chromium,
+                browser_path: "/missing/chromium".into(),
+                ..RenderConfig::default()
+            },
             Duration::from_secs(1),
         )
         .await

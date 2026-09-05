@@ -6,13 +6,11 @@ use anyhow::{bail, Context, Result};
 use image::{DynamicImage, ImageReader, Rgba};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 // Bump when capture HTML/layout changes so stale blank or mis-scaled cache entries
 // are not reused.
-pub const RENDERER_VERSION: &str = "html-capture-v2";
+pub const RENDERER_VERSION: &str = "html-capture-v3";
 pub const HANDLER_REVISION: &str = "officecli-acabe4959a37235dd587bbcc788565f19a824bb7";
 const CAPTURE_ATTEMPTS: u32 = 3;
 
@@ -43,6 +41,7 @@ impl BrowserPipeline {
         if max_concurrency == 0 || max_concurrency > 32 {
             bail!("render concurrency must be between 1 and 32");
         }
+        browser.validate_options(&options)?;
         Ok(Self {
             browser,
             cache,
@@ -64,6 +63,7 @@ impl BrowserPipeline {
         if slide_count == 0 || slide_count > 10_000 {
             bail!("slide count must be between 1 and 10000");
         }
+        let key = key.with_renderer(self.browser.cache_identity());
         let final_dir = self.cache.entry_dir(deck_identity, &key);
         if let Some(mut manifest) = self.cache.load(&final_dir)? {
             if manifest.cache_key == key {
@@ -113,29 +113,38 @@ impl BrowserPipeline {
         slide_count: u32,
     ) -> Result<Vec<SlideImage>> {
         // Per-slide HTML is sanitized and validated by build_capture_html.
-        let semaphore = Arc::new(Semaphore::new(self.max_concurrency));
         let mut jobs = JoinSet::new();
-        for index in 1..=slide_count {
-            let permit = semaphore.clone().acquire_owned().await?;
-            let html = build_capture_html(source_html, index, &self.options)?;
-            let browser = self.browser.clone();
-            let options = self.options.clone();
-            let directory = directory.to_path_buf();
-            jobs.spawn(async move {
-                let _permit = permit;
-                render_one(browser, options, directory, html, index).await
-            });
-        }
         let mut slides = Vec::with_capacity(slide_count as usize);
-        while let Some(result) = jobs.join_next().await {
+        let mut next = 1;
+        loop {
+            while next <= slide_count && jobs.len() < self.max_concurrency {
+                let index = next;
+                let html = match build_capture_html(source_html, index, &self.options) {
+                    Ok(html) => html,
+                    Err(error) => {
+                        jobs.shutdown().await;
+                        return Err(error);
+                    }
+                };
+                let browser = self.browser.clone();
+                let options = self.options.clone();
+                let directory = directory.to_path_buf();
+                jobs.spawn(
+                    async move { render_one(browser, options, directory, html, index).await },
+                );
+                next += 1;
+            }
+            let Some(result) = jobs.join_next().await else {
+                break;
+            };
             match result {
                 Ok(Ok(slide)) => slides.push(slide),
                 Ok(Err(error)) => {
-                    jobs.abort_all();
+                    jobs.shutdown().await;
                     return Err(error);
                 }
                 Err(error) => {
-                    jobs.abort_all();
+                    jobs.shutdown().await;
                     return Err(error).context("render task failed");
                 }
             }
@@ -552,7 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn chromium_captures_pinned_handler_slide_when_available() {
-        let Ok(browser) = Browser::probe(None) else {
+        let Ok(browser) = Browser::probe_chromium(None) else {
             return;
         };
         let directory = tempfile::tempdir().unwrap();
@@ -586,7 +595,7 @@ mod tests {
 
     #[tokio::test]
     async fn chromium_captures_deck_pptx_content_when_available() {
-        let Ok(browser) = Browser::probe(None) else {
+        let Ok(browser) = Browser::probe_chromium(None) else {
             return;
         };
         let deck = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("deck.pptx");

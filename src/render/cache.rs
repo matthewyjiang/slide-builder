@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -55,6 +55,18 @@ impl CacheKey {
 
     pub fn short_digest(&self) -> &str {
         &self.digest[..16.min(self.digest.len())]
+    }
+
+    /// Bind a caller's content/geometry key to the renderer actually executing
+    /// it. Keeping this at the pipeline boundary covers previews and imports.
+    pub fn with_renderer(mut self, identity: &str) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"slide-builder-render-backend-v1\0");
+        put_field(&mut hash, self.digest.as_bytes());
+        put_field(&mut hash, identity.as_bytes());
+        self.digest = format!("{:x}", hash.finalize());
+        self.renderer_version = format!("{}/{identity}", self.renderer_version);
+        self
     }
 }
 
@@ -205,7 +217,19 @@ impl RenderCache {
 }
 
 pub fn sha256_file(path: &Path) -> Result<String> {
-    Ok(format!("{:x}", Sha256::digest(fs::read(path)?)))
+    let mut file = fs::File::open(path)?;
+    let mut hash = Sha256::new();
+    // Renderer executables can be large; don't allocate their entire contents
+    // merely to identify a cache backend. This is an I/O chunk, not a file cap.
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hash.finalize()))
 }
 
 fn validate_slides(slides: &[SlideImage]) -> Result<()> {

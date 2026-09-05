@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crossterm::event::KeyEvent;
 
-use crate::config::{Config, PermissionMode};
+use crate::config::{Config, PermissionMode, RenderEngine};
 
 use super::menu::{MenuEvent, MenuGroup, MenuItem, MenuState, MenuValue};
 
@@ -40,12 +40,15 @@ impl ConfigurationState {
                         toggle("preview_enabled", "Enabled", "Enable inline terminal slide previews.", config.preview.enabled),
                         text("preview_protocol", "Protocol", "Terminal image protocol (normally kitty).", &config.preview.protocol),
                         text("preview_width", "Render width", "Preview render width in pixels; must be greater than zero.", &config.preview.width.to_string()),
-                        text("preview_scale", "Scale", "Device scale factor; must be greater than zero.", &config.preview.scale.to_string()),
+                        text("preview_scale", "Scale", "Obscura requires 1. Chromium supports higher scales.\nIncrease render width for larger Obscura captures.", &config.preview.scale.to_string()),
                     ]},
                     MenuGroup { title: "Renderer".into(), items: vec![
-                        text("browser_path", "Browser path", "Chromium executable path, or auto.", &config.render.browser_path.to_string_lossy()),
+                        choice("render_engine", "Engine", "Obscura: Linux + bwrap + user namespaces.\nChromium: opt-in. No fallback. Restart required.", vec!["obscura".into(), "chromium".into()], match config.render.engine { RenderEngine::Obscura => "obscura", RenderEngine::Chromium => "chromium" }),
+                        text("obscura_path", "Obscura path", "Render-enabled Obscura >=0.2.2 executable.\nauto searches PATH. Restart required.", &config.render.obscura_path.to_string_lossy()),
+                        text("sandbox_path", "Sandbox path", "Required bwrap path, or auto. No bypass.\nMissing isolation disables previews. Restart required.", &config.render.sandbox_path.to_string_lossy()),
+                        text("browser_path", "Chromium path", "Chromium only: executable path, or auto.\nIgnored by Obscura. Restart required.", &config.render.browser_path.to_string_lossy()),
                         text("debounce_ms", "Debounce (ms)", "Delay before rendering after deck changes.", &config.render.debounce_ms.to_string()),
-                        text("timeout_ms", "Timeout (ms)", "Browser rendering timeout; must be greater than zero.", &config.render.timeout_ms.to_string()),
+                        text("timeout_ms", "Timeout (ms)", "Rendering timeout; must be greater than zero.", &config.render.timeout_ms.to_string()),
                         text("keep_generations", "Keep generations", "Number of render-cache generations to retain.", &config.render.keep_generations.to_string()),
                     ]},
                     MenuGroup { title: "Compatibility".into(), items: vec![
@@ -91,12 +94,25 @@ impl ConfigurationState {
         config.preview.protocol = self.string("preview_protocol")?;
         config.preview.width = self.number("preview_width")?;
         config.preview.scale = self.number("preview_scale")?;
+        config.render.engine = match self.string("render_engine")?.as_str() {
+            "obscura" => RenderEngine::Obscura,
+            "chromium" => RenderEngine::Chromium,
+            engine => return Err(format!("unsupported render engine {engine}")),
+        };
+        config.render.obscura_path = PathBuf::from(self.string("obscura_path")?);
+        config.render.sandbox_path = PathBuf::from(self.string("sandbox_path")?);
         config.render.browser_path = PathBuf::from(self.string("browser_path")?);
         config.render.debounce_ms = self.number("debounce_ms")?;
         config.render.timeout_ms = self.number("timeout_ms")?;
         config.render.keep_generations = self.number("keep_generations")?;
         config.compat.officecli_path = PathBuf::from(self.string("officecli_path")?);
         config.compat.detect_optional = self.boolean("detect_optional")?;
+        if config.preview.enabled
+            && config.render.engine == RenderEngine::Obscura
+            && config.preview.scale != 1
+        {
+            return Err(format!("Obscura requires Scale = 1; requested {}. Increase Render width or select Chromium.", config.preview.scale));
+        }
         config.validate().map_err(|error| error.to_string())?;
         Ok(config)
     }
@@ -166,27 +182,5 @@ fn choice(id: &str, label: &str, help: &str, mut options: Vec<String>, value: &s
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{KeyCode, KeyModifiers};
-
-    #[test]
-    fn configuration_round_trips() {
-        let config = Config::default();
-        assert_eq!(
-            ConfigurationState::new(&config).to_config().unwrap(),
-            config
-        );
-    }
-
-    #[test]
-    fn bad_numeric_value_is_reported_without_closing() {
-        let mut state = ConfigurationState::new(&Config::default());
-        if let MenuValue::Text(value) = &mut state.menu.groups[2].items[2].value {
-            *value = "nope".into();
-        }
-        let event = state.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-        assert_eq!(event, ConfigurationEvent::None);
-        assert!(state.menu.status.is_some());
-    }
-}
+#[path = "configuration_tests.rs"]
+mod tests;

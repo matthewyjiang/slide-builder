@@ -6,7 +6,8 @@ Linux terminal-first, AI-assisted PowerPoint authoring built on `rho-sdk` and th
 
 - Rust 1.85+
 - Kitty or Ghostty for inline slide images
-- Chromium, Chrome, or another Chromium-family browser for previews
+- Render-enabled Obscura >=0.2.2 and bubblewrap (`bwrap`) for previews on Linux, with user namespaces enabled
+- Alternatively, explicitly select Chromium, Chrome, or another Chromium-family browser
 - Provider credentials entered through slide-builder's in-TUI login (stored separately from rho)
 
 ## Providers
@@ -72,7 +73,8 @@ Each package contains a required `DESIGN.md` and one or more PowerPoint template
 Run `/import-design` to create a managed package from an existing `.pptx` file.
 The file picker accepts keyboard navigation or a typed or pasted path.
 Slide-builder copies the source into a private staging directory, extracts its
-presentation structure, and renders a contact sheet when Chromium is available.
+presentation structure, and renders a contact sheet using the configured renderer.
+If rendering is unavailable, import continues with extracted presentation evidence only.
 The configured model uses that evidence and the built-in import skill in a fresh,
 tool-free importer session to write `DESIGN.md`. Import stages appear beside the
 prompt; generated model output is not added to the chat transcript. Slide-builder
@@ -81,12 +83,52 @@ saved as `template.pptx`. Existing packages are never overwritten; repeated name
 receive a numeric suffix. Run `/design` to select an imported package before the
 next deck prompt.
 
+## Preview renderer
+
+Obscura is the default renderer. It requires a render-enabled Obscura >=0.2.2
+binary and bubblewrap on Linux with user namespaces enabled. Slide-builder never
+installs or downloads either tool. Missing or unusable isolation disables previews
+with an error; it never falls back to unisolated Obscura or another engine.
+
+Renderer settings in `$XDG_CONFIG_HOME/slide-builder/config.toml` default to:
+
+```toml
+[preview]
+scale = 1
+
+[render]
+engine = "obscura"
+obscura_path = "auto"
+sandbox_path = "auto"
+browser_path = "auto"
+```
+
+`auto` discovers executables on PATH. `sandbox_path` selects `bwrap`;
+`browser_path` is used only by Chromium. Set explicit executable paths when needed,
+or use the Renderer section in `/config`, then restart.
+
+### Migrating an existing configuration
+
+Configs without `render.engine` now select Obscura, even if `browser_path` is set.
+To keep Chromium, add `engine = "chromium"` to the existing `[render]` section:
+
+```toml
+[render]
+engine = "chromium"
+browser_path = "auto" # Or retain your existing Chromium executable path.
+```
+
+The default `preview.scale` is now 1. An explicit `scale = 2` is preserved, not
+silently downgraded. Obscura requires scale 1: either explicitly
+choose `scale = 1` for native-resolution previews or select Chromium to retain
+the higher device scale. See `INSTALL.md` for runtime requirements.
+
 ## Run
 
 ```sh
 cargo run -- ~/decks/example.pptx
 ```
 
-All application state is stored beneath XDG config/data directories. The current repository is never modified without approval. Browser rendering is offline, sandboxed, and isolated in the render cache.
+All application state is stored beneath XDG config/data directories. The current repository is never modified without approval. Rendering is offline and sandboxed, with artifacts isolated in the render cache.
 
 See `delegated-doodling-cocke.md` for architecture and qualification requirements.

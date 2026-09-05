@@ -1,29 +1,30 @@
-//! Discovery and constrained execution of a Chromium-family browser.
-
+//! Renderer discovery and constrained HTML-to-PNG capture.
+use crate::config::{RenderConfig, RenderEngine};
 use anyhow::{bail, Context, Result};
-use std::ffi::{OsStr, OsString};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
-const CANDIDATES: &[&str] = &[
-    "google-chrome-stable",
-    "google-chrome",
-    "chromium",
-    "chromium-browser",
-    "microsoft-edge-stable",
-    "microsoft-edge",
-];
-const DIAGNOSTIC_LIMIT: usize = 64 * 1024;
+mod chromium;
+mod obscura;
+mod process;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Engine {
+    Chromium,
+    Obscura(obscura::Sandbox),
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Browser {
     executable: PathBuf,
+    engine: Engine,
+    cache_identity: Arc<str>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,50 +53,46 @@ pub struct CaptureDiagnostics {
 }
 
 impl Browser {
-    /// Probe an explicit path first. `None` and `"auto"` search PATH and common
-    /// absolute Linux installation paths.
-    pub fn probe(configured: Option<&Path>) -> Result<Self> {
-        if let Some(path) = configured {
-            if path != Path::new("auto") {
-                return Self::from_path(path);
+    /// Select exactly the configured engine. Missing Obscura or isolation is
+    /// an error, never permission to fall back to an unisolated renderer.
+    pub fn probe(config: &RenderConfig) -> Result<Self> {
+        match config.engine {
+            RenderEngine::Chromium => Self::probe_chromium(Some(&config.browser_path)),
+            RenderEngine::Obscura => {
+                let executable = executable_path(&config.obscura_path, &["obscura"])
+                    .context("no Obscura renderer found; install a render-enabled Obscura release (0.2.2 or newer) or configure render.obscura_path")?;
+                let sandbox = obscura::Sandbox::probe(&config.sandbox_path)?;
+                let identity = format!(
+                    "obscura-isolated-v1-{}-{}",
+                    executable_identity(&executable)?,
+                    executable_identity(&sandbox.executable)?
+                );
+                Ok(Self {
+                    executable,
+                    engine: Engine::Obscura(sandbox),
+                    cache_identity: identity.into(),
+                })
             }
         }
-        for name in CANDIDATES {
-            if let Some(path) = find_in_path(OsStr::new(name)) {
-                if let Ok(browser) = Self::from_path(&path) {
-                    return Ok(browser);
-                }
-            }
-        }
-        for path in [
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-            "/opt/google/chrome/chrome",
-            "/usr/bin/microsoft-edge-stable",
-        ] {
-            if let Ok(browser) = Self::from_path(Path::new(path)) {
-                return Ok(browser);
-            }
-        }
-        bail!("no supported Chromium-family browser found; configure render.browser_path")
     }
 
+    pub fn probe_chromium(configured: Option<&Path>) -> Result<Self> {
+        let executable = executable_path(
+            configured.unwrap_or(Path::new("auto")),
+            chromium::CANDIDATES,
+        )
+        .context("no Chromium-family browser found; configure render.browser_path")?;
+        Self::from_path(&executable)
+    }
+
+    /// Explicit Chromium constructor, also useful with test capture executables.
     pub fn from_path(path: &Path) -> Result<Self> {
-        if !path.is_absolute() {
-            bail!("browser path must be absolute: {}", path.display());
-        }
-        let metadata = fs::metadata(path)
-            .with_context(|| format!("cannot inspect browser {}", path.display()))?;
-        if !metadata.is_file() {
-            bail!("browser is not a regular file: {}", path.display());
-        }
-        if metadata.permissions().mode() & 0o111 == 0 {
-            bail!("browser is not executable: {}", path.display());
-        }
+        let executable = validate_executable(path)?;
+        let cache_identity = format!("chromium-v1-{}", executable_identity(&executable)?).into();
         Ok(Self {
-            executable: path.to_path_buf(),
+            executable,
+            engine: Engine::Chromium,
+            cache_identity,
         })
     }
 
@@ -103,50 +100,39 @@ impl Browser {
         &self.executable
     }
 
-    /// Returns the exact fixed argument set used by `capture`. Paths are passed
-    /// as OS strings and never interpreted by a shell.
-    pub fn capture_args(
-        &self,
-        html: &Path,
-        output: &Path,
-        profile: &Path,
-        options: &CaptureOptions,
-    ) -> Result<Vec<OsString>> {
-        validate_capture_path(html, "capture HTML")?;
-        validate_capture_path(output, "screenshot")?;
-        validate_capture_path(profile, "browser profile")?;
-        let render_root = html
-            .parent()
-            .context("capture HTML has no parent directory")?;
-        if !output.starts_with(render_root) || !profile.starts_with(render_root) {
-            bail!("browser capture paths must share the private render directory");
-        }
+    /// Includes adapter policy and executable installation identity, not just
+    /// the engine name. Restart after upgrading a renderer.
+    pub fn cache_identity(&self) -> &str {
+        &self.cache_identity
+    }
+
+    pub fn validate_options(&self, options: &CaptureOptions) -> Result<()> {
         if options.width == 0
             || options.height == 0
             || options.width > 16_384
             || options.height > 16_384
         {
-            bail!("capture dimensions must be between 1 and 16384 pixels");
+            bail!(
+                "capture dimensions must be between 1 and 16384 pixels; requested {}x{}",
+                options.width,
+                options.height
+            );
         }
         if !options.scale.is_finite() || !(0.25..=4.0).contains(&options.scale) {
-            bail!("device scale must be finite and between 0.25 and 4.0");
+            bail!(
+                "device scale must be finite and between 0.25 and 4.0; requested {}",
+                options.scale
+            );
         }
-        let url = format!("file://{}", percent_encode_path(html)?);
-        Ok(vec![
-            "--headless=new".into(), "--hide-scrollbars".into(),
-            "--disable-background-networking".into(), "--disable-component-update".into(),
-            "--disable-default-apps".into(), "--disable-domain-reliability".into(),
-            "--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication".into(),
-            "--disable-sync".into(), "--metrics-recording-only".into(),
-            "--no-first-run".into(), "--no-pings".into(),
-            "--password-store=basic".into(), "--use-mock-keychain".into(),
-            // Intentionally no --no-sandbox and no remote debugging interface.
-            format!("--user-data-dir={}", profile.display()).into(),
-            format!("--window-size={},{}", options.width, options.height).into(),
-            format!("--force-device-scale-factor={}", options.scale).into(),
-            format!("--virtual-time-budget={}", options.timeout.as_millis()).into(),
-            format!("--screenshot={}", output.display()).into(), url.into(),
-        ])
+        if options.timeout.is_zero() {
+            bail!("capture timeout must be positive; requested 0 ms");
+        }
+        match self.engine {
+            Engine::Obscura(_) if options.scale != 1.0 => {
+                bail!("Obscura requires preview.scale = 1; requested {}. Increase preview.width for larger native captures, or select render.engine = \"chromium\" for device scaling", options.scale);
+            }
+            Engine::Obscura(_) | Engine::Chromium => Ok(()),
+        }
     }
 
     pub async fn capture(
@@ -156,120 +142,118 @@ impl Browser {
         profile: &Path,
         options: &CaptureOptions,
     ) -> Result<CaptureDiagnostics> {
-        let args = self.capture_args(html, output, profile, options)?;
-        fs::create_dir_all(profile).context("create isolated browser profile")?;
-        let mut command = Command::new(&self.executable);
-        command
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            // Isolate Chromium and all of its helper processes. The guard below
-            // kills this whole group on timeout or future cancellation.
-            .process_group(0);
-        let mut child = command.spawn().context("launch browser")?;
-        let mut process_group =
-            ProcessGroupGuard(child.id().context("browser has no process id")? as i32);
-        let stdout = child.stdout.take().context("capture browser stdout")?;
-        let stderr = child.stderr.take().context("capture browser stderr")?;
-        let out_task = tokio::spawn(read_bounded(stdout));
-        let err_task = tokio::spawn(read_bounded(stderr));
-        let status = match tokio::time::timeout(options.timeout, child.wait()).await {
-            Ok(status) => {
-                let status = status.context("wait for browser")?;
-                process_group.disarm();
-                status
-            }
-            Err(_) => {
-                process_group.kill();
-                let _ = child.wait().await;
-                bail!(
-                    "browser capture timed out after {} ms",
-                    options.timeout.as_millis()
-                );
-            }
-        };
-        let stdout =
-            String::from_utf8_lossy(&out_task.await.context("join stdout reader")??).into_owned();
-        let stderr =
-            String::from_utf8_lossy(&err_task.await.context("join stderr reader")??).into_owned();
-        if !status.success() {
-            bail!("browser exited with {status}: {}", stderr.trim());
+        self.validate_options(options)?;
+        for (path, label) in [
+            (html, "capture HTML"),
+            (output, "screenshot"),
+            (profile, "browser profile"),
+        ] {
+            validate_capture_path(path, label)?;
         }
-        if !output.is_file() {
-            let stdout = stdout.trim();
-            let stderr = stderr.trim();
+        let root = html
+            .parent()
+            .context("capture HTML has no parent directory")?;
+        if output.parent() != Some(root)
+            || profile.parent() != Some(root)
+            || html == output
+            || html == profile
+            || output == profile
+        {
             bail!(
-                "browser succeeded without producing screenshot {} (stdout: {}; stderr: {})",
-                output.display(),
-                if stdout.is_empty() { "<empty>" } else { stdout },
-                if stderr.is_empty() { "<empty>" } else { stderr },
+                "browser capture paths must be distinct siblings in the private render directory"
             );
         }
-        Ok(CaptureDiagnostics { stderr, stdout })
-    }
-}
-
-struct ProcessGroupGuard(i32);
-
-impl ProcessGroupGuard {
-    fn disarm(&mut self) {
-        self.0 = 0;
-    }
-
-    fn kill(&mut self) {
-        if self.0 != 0 {
-            // Linux kill(2) with a negative PID targets the process group. This
-            // tiny FFI avoids adding a libc dependency solely for one syscall.
-            unsafe extern "C" {
-                fn kill(pid: i32, signal: i32) -> i32;
+        let command = match &self.engine {
+            Engine::Chromium => {
+                fs::create_dir_all(profile).context("create isolated browser profile")?;
+                let mut command = Command::new(&self.executable);
+                command.args(chromium::capture_args(html, output, profile, options)?);
+                command
             }
-            const SIGKILL: i32 = 9;
-            // Failure is intentionally best-effort. The child handle retains
-            // tokio's kill-on-drop fallback for the browser parent process.
-            let _ = unsafe { kill(-self.0, SIGKILL) };
-            self.0 = 0;
+            Engine::Obscura(sandbox) => {
+                obscura::capture_command(sandbox, &self.executable, html, output, options)?
+            }
+        };
+        let diagnostics = process::run(command, options.timeout).await.with_context(|| match self.engine {
+            Engine::Chromium => "Chromium capture failed",
+            Engine::Obscura(_) => "isolated Obscura capture failed; bubblewrap must support unprivileged user/network namespaces. No unsandboxed fallback is allowed",
+        })?;
+        if !output.is_file() || output.metadata()?.len() == 0 {
+            bail!(
+                "renderer succeeded without producing screenshot {} (stdout: {}; stderr: {})",
+                output.display(),
+                diagnostics.stdout.trim(),
+                diagnostics.stderr.trim()
+            );
         }
+        Ok(diagnostics)
     }
 }
 
-impl Drop for ProcessGroupGuard {
-    fn drop(&mut self) {
-        self.kill();
+fn executable_path(configured: &Path, candidates: &[&str]) -> Result<PathBuf> {
+    if configured != Path::new("auto") {
+        return validate_executable(configured);
     }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let directories: Vec<_> = std::env::split_paths(&path)
+        .chain([PathBuf::from("/usr/bin"), PathBuf::from("/usr/local/bin")])
+        .collect();
+    for name in candidates {
+        for directory in &directories {
+            if let Ok(path) = validate_executable(&directory.join(name)) {
+                return Ok(path);
+            }
+        }
+    }
+    bail!("executable not found on PATH: {}", candidates.join(", "))
 }
 
-async fn read_bounded(mut reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
-    let mut all = Vec::new();
-    let mut chunk = [0; 4096];
-    loop {
-        let n = reader.read(&mut chunk).await?;
-        if n == 0 {
-            break;
-        }
-        if all.len() < DIAGNOSTIC_LIMIT {
-            let remaining = DIAGNOSTIC_LIMIT - all.len();
-            all.extend_from_slice(&chunk[..n.min(remaining)]);
-        }
+fn validate_executable(path: &Path) -> Result<PathBuf> {
+    if !path.is_absolute() {
+        bail!("renderer path must be absolute: {}", path.display());
     }
-    Ok(all)
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("cannot inspect executable {}", path.display()))?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+        bail!("not an executable file: {}", path.display());
+    }
+    fs::canonicalize(path).with_context(|| format!("resolve executable {}", path.display()))
+}
+
+/// Stat tracks replacement and in-place updates without hashing hundreds of
+/// megabytes at startup. That took 2-4 seconds in the measured debug build.
+/// ctime also catches rewrites that restore mtime; the renderer is trusted code,
+/// so this is cache invalidation, not executable authenticity verification.
+fn executable_identity(path: &Path) -> Result<String> {
+    let metadata = fs::metadata(path)?;
+    let mut hash = Sha256::new();
+    hash.update(path.as_os_str().as_bytes());
+    hash.update([0]);
+    hash.update(metadata.dev().to_le_bytes());
+    hash.update(metadata.ino().to_le_bytes());
+    hash.update(metadata.size().to_le_bytes());
+    hash.update(metadata.mtime().to_le_bytes());
+    hash.update(metadata.mtime_nsec().to_le_bytes());
+    hash.update(metadata.ctime().to_le_bytes());
+    hash.update(metadata.ctime_nsec().to_le_bytes());
+    Ok(format!("{:x}", hash.finalize()))
 }
 
 fn validate_capture_path(path: &Path, label: &str) -> Result<()> {
-    if !path.is_absolute() {
-        bail!("{label} path must be absolute: {}", path.display());
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        bail!(
+            "{label} path must be absolute without parent traversal: {}",
+            path.display()
+        );
     }
     if path.as_os_str().as_bytes().contains(&0) {
         bail!("{label} path contains NUL");
     }
     Ok(())
-}
-
-fn find_in_path(name: &OsStr) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|p| p.join(name))
-        .find(|p| p.is_file())
 }
 
 fn percent_encode_path(path: &Path) -> Result<String> {
@@ -286,54 +270,5 @@ fn percent_encode_path(path: &Path) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn args_preserve_sandbox_and_disable_network_features() {
-        let browser = Browser {
-            executable: "/bin/true".into(),
-        };
-        let args = browser
-            .capture_args(
-                Path::new("/tmp/a b.html"),
-                Path::new("/tmp/o.png"),
-                Path::new("/tmp/p"),
-                &CaptureOptions::default(),
-            )
-            .unwrap();
-        let joined = args
-            .iter()
-            .map(|x| x.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(!joined.contains("--no-sandbox"));
-        assert!(!joined.contains("remote-debugging"));
-        assert!(joined.contains("file:///tmp/a%20b.html"));
-    }
-    #[test]
-    fn rejects_relative_and_invalid_geometry() {
-        let b = Browser {
-            executable: "/bin/true".into(),
-        };
-        assert!(b
-            .capture_args(
-                Path::new("x"),
-                Path::new("/tmp/o"),
-                Path::new("/tmp/p"),
-                &CaptureOptions::default()
-            )
-            .is_err());
-        let o = CaptureOptions {
-            scale: f32::NAN,
-            ..CaptureOptions::default()
-        };
-        assert!(b
-            .capture_args(
-                Path::new("/tmp/x"),
-                Path::new("/tmp/o"),
-                Path::new("/tmp/p"),
-                &o
-            )
-            .is_err());
-    }
-}
+#[path = "browser_tests.rs"]
+mod tests;
