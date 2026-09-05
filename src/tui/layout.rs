@@ -177,7 +177,12 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let mut title_spans = vec![Span::styled(" Prompt ", theme::panel_title()), attachment];
     title_spans.extend(import_status_spans(app));
     let title = Line::from(title_spans);
-    let display = if app.input.text.is_empty() {
+    let display = if app.input.quit_armed {
+        Text::from(Line::styled(
+            "Cleared. Press Ctrl+C again to exit.",
+            Style::default().fg(theme::WARNING),
+        ))
+    } else if app.input.text.is_empty() {
         Text::from(Line::styled(
             "Describe what to create, revise, or explore...",
             Style::default().fg(theme::MUTED),

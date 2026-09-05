@@ -131,6 +131,9 @@ pub struct InputState {
     pub attach_active_slide: bool,
     pub slash_selection: usize,
     pub slash_menu_hidden: bool,
+    /// Set by Ctrl+C after clearing the composer; a second Ctrl+C then quits.
+    /// Any other key press disarms it.
+    pub quit_armed: bool,
 }
 
 impl InputState {
@@ -443,6 +446,7 @@ impl App {
         if key.kind == KeyEventKind::Release {
             return vec![];
         }
+        let quit_armed = std::mem::take(&mut self.input.quit_armed);
         if !matches!(self.modal, ModalState::None) {
             return self.handle_modal_key(key);
         }
@@ -502,13 +506,14 @@ impl App {
                     self.input.attach_active_slide = !self.input.attach_active_slide;
                     vec![]
                 }
-                KeyCode::Char('c' | 'C') if !self.input.text.is_empty() => {
-                    self.input.clear();
-                    vec![]
-                }
-                KeyCode::Char('c' | 'C') => {
+                KeyCode::Char('c' | 'C') if quit_armed => {
                     self.should_quit = true;
                     vec![AppAction::Quit]
+                }
+                KeyCode::Char('c' | 'C') => {
+                    self.input.clear();
+                    self.input.quit_armed = true;
+                    vec![]
                 }
                 _ => vec![],
             };

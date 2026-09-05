@@ -80,7 +80,7 @@ fn escape_dismisses_slash_suggestions_until_the_input_changes() {
 }
 
 #[test]
-fn ctrl_c_clears_the_composer_before_quitting() {
+fn ctrl_c_clears_and_arms_quit_then_second_press_exits() {
     let mut app = App::default();
     app.input.text = "unfinished prompt".into();
     app.input.cursor = app.input.text.len();
@@ -90,6 +90,7 @@ fn ctrl_c_clears_the_composer_before_quitting() {
         .is_empty());
     assert!(app.input.text.is_empty());
     assert_eq!(app.input.cursor, 0);
+    assert!(app.input.quit_armed);
     assert!(!app.should_quit);
 
     assert_eq!(
@@ -97,6 +98,36 @@ fn ctrl_c_clears_the_composer_before_quitting() {
         vec![AppAction::Quit]
     );
     assert!(app.should_quit);
+}
+
+#[test]
+fn ctrl_c_on_empty_composer_still_requires_second_press() {
+    let mut app = App::default();
+
+    assert!(app
+        .handle_key(shortcut(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .is_empty());
+    assert!(app.input.quit_armed);
+    assert!(!app.should_quit);
+
+    assert_eq!(
+        app.handle_key(shortcut(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        vec![AppAction::Quit]
+    );
+}
+
+#[test]
+fn any_other_key_disarms_ctrl_c_quit() {
+    let mut app = App::default();
+    app.handle_key(shortcut(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    app.handle_key(shortcut(KeyCode::Char('x'), KeyModifiers::NONE));
+    assert!(!app.input.quit_armed);
+    assert_eq!(app.input.text, "x");
+
+    assert!(app
+        .handle_key(shortcut(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .is_empty());
+    assert!(!app.should_quit);
 }
 
 #[test]
