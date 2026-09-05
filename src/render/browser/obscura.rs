@@ -1,4 +1,4 @@
-//! Fail-closed Linux isolation for Obscura's native screenshot CLI.
+//! Fail-closed Linux isolation for the embedded Obscura worker.
 //!
 //! The renderer sees only its executable, read-only runtime libraries/fonts,
 //! one input HTML file, and one writable output file. It cannot see the host
@@ -28,13 +28,7 @@ impl Sandbox {
 
     /// Build a fresh namespace for each capture. Only explicitly selected input
     /// and output files are bind-mounted, never their containing directories.
-    pub fn command(
-        &self,
-        executable: &Path,
-        html: &Path,
-        output: &Path,
-        options: &CaptureOptions,
-    ) -> Result<Command> {
+    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Command> {
         let html = fs::canonicalize(html).context("resolve capture HTML")?;
         // Refuse existing files/symlinks. The pipeline removes its previous
         // temporary output before each retry; a renderer cannot redirect writes.
@@ -111,21 +105,15 @@ impl Sandbox {
         args.extend([
             "--ro-bind".into(),
             executable.as_os_str().to_owned(),
-            "/app/obscura".into(),
+            "/app/slide-builder".into(),
             "--ro-bind".into(),
             html.into_os_string(),
             "/input/capture.html".into(),
             "--bind".into(),
             output.into_os_string(),
             "/output/capture.png".into(),
-            "--setenv".into(),
-            "OBSCURA_SHOT_W".into(),
-            options.width.to_string().into(),
-            "--setenv".into(),
-            "OBSCURA_SHOT_H".into(),
-            options.height.to_string().into(),
             "--".into(),
-            "/app/obscura".into(),
+            "/app/slide-builder".into(),
         ]);
         let mut command = Command::new(&self.executable);
         // Clear before launching bwrap too: LD_PRELOAD, proxies, credentials,
@@ -142,20 +130,13 @@ pub(super) fn capture_command(
     output: &Path,
     options: &CaptureOptions,
 ) -> Result<Command> {
-    let mut command = sandbox.command(executable, html, output, options)?;
-    let seconds = options
-        .timeout
-        .as_secs()
-        .saturating_add(u64::from(options.timeout.subsec_nanos() != 0));
+    let mut command = sandbox.command(executable, html, output)?;
     command.args([
-        "fetch",
-        "file:///input/capture.html",
-        "--screenshot",
-        "/output/capture.png",
-        "--wait",
-        "0",
-        "--timeout",
-        &seconds.to_string(),
+        super::super::worker::WORKER_ARGUMENT,
+        &options.width.to_string(),
+        &options.height.to_string(),
+        &options.scale.to_string(),
+        &options.timeout.as_millis().to_string(),
     ]);
     Ok(command)
 }

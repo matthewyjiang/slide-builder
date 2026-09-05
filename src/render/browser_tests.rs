@@ -19,10 +19,9 @@ fn chromium_arguments_preserve_sandbox_and_paths() {
 }
 
 #[test]
-fn missing_sandbox_fails_closed_and_scale_is_explicit() {
+fn missing_sandbox_fails_closed_and_scale_is_validated() {
     let config = RenderConfig {
         engine: RenderEngine::Obscura,
-        obscura_path: "/bin/true".into(),
         sandbox_path: "/missing/slide-builder-bwrap".into(),
         ..RenderConfig::default()
     };
@@ -35,11 +34,7 @@ fn missing_sandbox_fails_closed_and_scale_is_explicit() {
         scale: 2.0,
         ..CaptureOptions::default()
     };
-    assert!(browser
-        .validate_options(&scaled)
-        .unwrap_err()
-        .to_string()
-        .contains("preview.scale = 1; requested 2"));
+    browser.validate_options(&scaled).unwrap();
     let invalid = CaptureOptions {
         scale: f32::NAN,
         ..CaptureOptions::default()
@@ -60,6 +55,56 @@ fn renderer_identity_separates_cache_entries() {
         key.clone().with_renderer("obscura-binary-two").digest
     );
     assert_eq!(old, key.with_renderer("obscura-binary-one"));
+}
+
+#[tokio::test]
+async fn capture_budgets_fail_before_creating_output_or_launching_worker() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
+    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/bin/true")).unwrap());
+    for (width, height, scale, asked) in [
+        (4096, 2304, 2.0, "8192x4608 output pixels"),
+        (16384, 1, 4.0, "65536x4 output pixels"),
+        (8192, 4096, 0.25, "8192x4096 CSS pixels"),
+    ] {
+        let options = CaptureOptions {
+            width,
+            height,
+            scale,
+            ..Default::default()
+        };
+        let output = directory.path().join("output.png");
+        let error = browser
+            .capture(
+                &directory.path().join("missing.html"),
+                &output,
+                &directory.path().join("profile"),
+                &options,
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(asked), "{error}");
+        assert!(
+            error.contains("32768") && error.contains("16777216"),
+            "{error}"
+        );
+        assert!(!output.exists());
+        options.validate_for_engine(RenderEngine::Chromium).unwrap();
+    }
+    for scale in [0.0, 0.24, 4.01, f32::NAN, f32::INFINITY] {
+        let options = CaptureOptions {
+            scale,
+            ..Default::default()
+        };
+        for engine in [RenderEngine::Obscura, RenderEngine::Chromium] {
+            assert!(options
+                .validate_for_engine(engine)
+                .unwrap_err()
+                .to_string()
+                .contains("between 0.25 and 4.0"));
+        }
+    }
 }
 
 #[test]
@@ -85,12 +130,7 @@ fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
     fs::write(&html, "capture").unwrap();
     let sandbox = obscura::Sandbox::probe(Path::new("/bin/true")).unwrap();
     let command = sandbox
-        .command(
-            Path::new("/bin/true"),
-            &html,
-            &output,
-            &CaptureOptions::default(),
-        )
+        .command(Path::new("/bin/true"), &html, &output)
         .unwrap();
     let args: Vec<_> = command.as_std().get_args().collect();
     assert!(!args.contains(&directory.path().as_os_str()));
@@ -106,12 +146,7 @@ fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
     fs::remove_file(&output).unwrap();
     symlink(&html, &output).unwrap();
     assert!(sandbox
-        .command(
-            Path::new("/bin/true"),
-            &html,
-            &output,
-            &CaptureOptions::default()
-        )
+        .command(Path::new("/bin/true"), &html, &output,)
         .is_err());
     assert_eq!(fs::read_to_string(html).unwrap(), "capture");
 }
@@ -196,12 +231,7 @@ async fn sandbox_blocks_host_files_and_network() {
     let host_net = fs::read_link("/proc/self/ns/net").unwrap();
     let sandbox = obscura::Sandbox::probe(Path::new("auto")).unwrap();
     let mut command = sandbox
-        .command(
-            Path::new("/usr/bin/python3"),
-            &html,
-            &output,
-            &CaptureOptions::default(),
-        )
+        .command(Path::new("/usr/bin/python3"), &html, &output)
         .unwrap();
     let script = format!(
         r#"
@@ -234,53 +264,4 @@ pathlib.Path('/output/extra').write_text('private tmpfs only')
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");
     assert_eq!(fs::read_to_string(secret).unwrap(), "not permitted");
     assert!(!directory.path().join("extra").exists());
-}
-
-#[tokio::test]
-#[ignore = "set SLIDE_BUILDER_TEST_OBSCURA to a render-enabled binary; requires bubblewrap"]
-async fn isolated_obscura_captures_handler_html_and_rejects_external_styles() {
-    let config = RenderConfig {
-        obscura_path: std::env::var_os("SLIDE_BUILDER_TEST_OBSCURA")
-            .map(PathBuf::from)
-            .expect("set SLIDE_BUILDER_TEST_OBSCURA"),
-        ..RenderConfig::default()
-    };
-    let browser = Browser::probe(&config).unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let deck = directory.path().join("fixture.pptx");
-    fs::write(&deck, crate::agent::deck_engine::BLANK_DECK).unwrap();
-    let snapshot = crate::agent::deck_engine::DeckEngine::new(&deck)
-        .unwrap()
-        .snapshot()
-        .await
-        .unwrap();
-    let options = CaptureOptions {
-        width: 640,
-        height: 360,
-        ..CaptureOptions::default()
-    };
-    // Host sentinel was applied by unisolated Obscura in the investigation.
-    fs::write(
-        directory.path().join("sentinel.css"),
-        "html,body,.slide{background:#00ff00!important}",
-    )
-    .unwrap();
-    let source = snapshot.html.replace(
-        "</body>",
-        "<link rel=\"stylesheet\" href=\"sentinel.css\"></body>",
-    );
-    let html = directory.path().join("capture.html");
-    fs::write(
-        &html,
-        crate::render::pipeline::build_capture_html(&source, 1, &options).unwrap(),
-    )
-    .unwrap();
-    let output = directory.path().join("capture.png");
-    browser
-        .capture(&html, &output, &directory.path().join("profile"), &options)
-        .await
-        .unwrap();
-    let image = image::open(output).unwrap().to_rgb8();
-    assert_eq!(image.dimensions(), (640, 360));
-    assert!(!image.pixels().any(|pixel| pixel.0 == [0, 255, 0]));
 }

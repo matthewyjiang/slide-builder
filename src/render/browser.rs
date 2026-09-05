@@ -53,27 +53,37 @@ pub struct CaptureDiagnostics {
 }
 
 impl Browser {
-    /// Select exactly the configured engine. Missing Obscura or isolation is
+    /// Select exactly the configured engine. Missing isolation is
     /// an error, never permission to fall back to an unisolated renderer.
     pub fn probe(config: &RenderConfig) -> Result<Self> {
         match config.engine {
             RenderEngine::Chromium => Self::probe_chromium(Some(&config.browser_path)),
             RenderEngine::Obscura => {
-                let executable = executable_path(&config.obscura_path, &["obscura"])
-                    .context("no Obscura renderer found; install a render-enabled Obscura release (0.2.2 or newer) or configure render.obscura_path")?;
-                let sandbox = obscura::Sandbox::probe(&config.sandbox_path)?;
-                let identity = format!(
-                    "obscura-isolated-v1-{}-{}",
-                    executable_identity(&executable)?,
-                    executable_identity(&sandbox.executable)?
-                );
-                Ok(Self {
-                    executable,
-                    engine: Engine::Obscura(sandbox),
-                    cache_identity: identity.into(),
-                })
+                let executable =
+                    std::env::current_exe().context("locate embedded renderer executable")?;
+                Self::with_embedded_worker(&executable, &config.sandbox_path)
             }
         }
+    }
+
+    /// Use a slide-builder executable with the private worker entry point.
+    /// Embedding applications and integration tests may supply their worker
+    /// executable explicitly; ordinary app discovery always uses `current_exe`.
+    /// The executable must dispatch `render::worker::run_if_requested` before
+    /// starting its normal runtime. Standalone Obscura CLI binaries do not work.
+    pub fn with_embedded_worker(executable: &Path, sandbox_path: &Path) -> Result<Self> {
+        let executable = validate_executable(executable)?;
+        let sandbox = obscura::Sandbox::probe(sandbox_path)?;
+        let identity = format!(
+            "obscura-embedded-a1e09de6-isolated-v3-{}-{}",
+            executable_identity(&executable)?,
+            executable_identity(&sandbox.executable)?
+        );
+        Ok(Self {
+            executable,
+            engine: Engine::Obscura(sandbox),
+            cache_identity: identity.into(),
+        })
     }
 
     pub fn probe_chromium(configured: Option<&Path>) -> Result<Self> {
@@ -107,32 +117,10 @@ impl Browser {
     }
 
     pub fn validate_options(&self, options: &CaptureOptions) -> Result<()> {
-        if options.width == 0
-            || options.height == 0
-            || options.width > 16_384
-            || options.height > 16_384
-        {
-            bail!(
-                "capture dimensions must be between 1 and 16384 pixels; requested {}x{}",
-                options.width,
-                options.height
-            );
-        }
-        if !options.scale.is_finite() || !(0.25..=4.0).contains(&options.scale) {
-            bail!(
-                "device scale must be finite and between 0.25 and 4.0; requested {}",
-                options.scale
-            );
-        }
-        if options.timeout.is_zero() {
-            bail!("capture timeout must be positive; requested 0 ms");
-        }
-        match self.engine {
-            Engine::Obscura(_) if options.scale != 1.0 => {
-                bail!("Obscura requires preview.scale = 1; requested {}. Increase preview.width for larger native captures, or select render.engine = \"chromium\" for device scaling", options.scale);
-            }
-            Engine::Obscura(_) | Engine::Chromium => Ok(()),
-        }
+        options.validate_for_engine(match self.engine {
+            Engine::Obscura(_) => RenderEngine::Obscura,
+            Engine::Chromium => RenderEngine::Chromium,
+        })
     }
 
     pub async fn capture(
@@ -187,6 +175,57 @@ impl Browser {
             );
         }
         Ok(diagnostics)
+    }
+}
+
+impl CaptureOptions {
+    /// Validate without discovering or spawning a renderer, including at config save.
+    pub fn validate_for_engine(&self, engine: RenderEngine) -> Result<()> {
+        self.validate()?;
+        match engine {
+            RenderEngine::Chromium => Ok(()),
+            RenderEngine::Obscura => obscura_js::validate_capture_region(self.capture_region())
+                .map_err(|error| anyhow::anyhow!(
+                    "Obscura capture budget exceeded ({error:?}): requested {}x{} CSS pixels at scale {} ({}x{} output pixels); each surface allows at most {} pixels per dimension and {} total pixels. Reduce preview.width or preview.scale",
+                    self.width, self.height, self.scale,
+                    (f64::from(self.width) * f64::from(self.scale)).ceil(),
+                    (f64::from(self.height) * f64::from(self.scale)).ceil(),
+                    obscura_js::MAX_CAPTURE_DIMENSION, obscura_js::MAX_CAPTURE_PIXELS,
+                )),
+        }
+    }
+
+    pub(crate) fn capture_region(&self) -> obscura_js::CaptureRegion {
+        obscura_js::CaptureRegion::new(
+            /*x*/ 0.0,
+            /*y*/ 0.0,
+            self.width as f32,
+            self.height as f32,
+            self.scale,
+        )
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.width == 0 || self.height == 0 || self.width > 16_384 || self.height > 16_384 {
+            bail!(
+                "capture dimensions must be between 1 and 16384 pixels; requested {}x{}",
+                self.width,
+                self.height
+            );
+        }
+        if !self.scale.is_finite() || !(0.25..=4.0).contains(&self.scale) {
+            bail!(
+                "device scale must be finite and between 0.25 and 4.0; requested {}",
+                self.scale
+            );
+        }
+        if self.timeout.is_zero() || self.timeout.as_millis() == 0 {
+            bail!(
+                "capture timeout must be at least 1 ms; requested {} ns",
+                self.timeout.as_nanos()
+            );
+        }
+        Ok(())
     }
 }
 

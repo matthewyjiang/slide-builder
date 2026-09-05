@@ -32,7 +32,7 @@ fn missing_renderer_fields_use_obscura_without_rewriting_explicit_scale() {
 }
 
 #[test]
-fn explicit_chromium_and_all_executable_paths_survive_round_trip() {
+fn explicit_chromium_and_active_executable_paths_survive_round_trip() {
     let render: RenderConfig = toml::from_str(
         r#"
         engine = "chromium"
@@ -45,7 +45,6 @@ fn explicit_chromium_and_all_executable_paths_survive_round_trip() {
     let expected = RenderConfig {
         engine: RenderEngine::Chromium,
         browser_path: "/opt/chromium".into(),
-        obscura_path: "/opt/obscura".into(),
         sandbox_path: "/opt/bwrap".into(),
         ..RenderConfig::default()
     };
@@ -59,4 +58,15 @@ fn explicit_chromium_and_all_executable_paths_survive_round_trip() {
 #[test]
 fn unknown_engine_is_an_error_instead_of_a_fallback() {
     assert!(toml::from_str::<RenderConfig>("engine = 'other'").is_err());
+}
+
+#[test]
+fn existing_oversized_preview_config_loads_for_recovery_in_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config.toml");
+    let mut config = Config::default();
+    config.preview.width = 4096;
+    config.preview.scale = 2;
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    assert_eq!(Config::load_from(&path).unwrap(), config);
 }

@@ -4,9 +4,9 @@ Linux terminal-first, AI-assisted PowerPoint authoring built on `rho-sdk` and th
 
 ## Requirements
 
-- Rust 1.85+
+- Rust 1.92+ to build from source
 - Kitty or Ghostty for inline slide images
-- Render-enabled Obscura >=0.2.2 and bubblewrap (`bwrap`) for previews on Linux, with user namespaces enabled
+- Bubblewrap (`bwrap`) for the embedded Obscura renderer on Linux, with user namespaces enabled
 - Alternatively, explicitly select Chromium, Chrome, or another Chromium-family browser
 - Provider credentials entered through slide-builder's in-TUI login (stored separately from rho)
 
@@ -85,9 +85,10 @@ next deck prompt.
 
 ## Preview renderer
 
-Obscura is the default renderer. It requires a render-enabled Obscura >=0.2.2
-binary and bubblewrap on Linux with user namespaces enabled. Slide-builder never
-installs or downloads either tool. Missing or unusable isolation disables previews
+Obscura is the default renderer and is embedded in the slide-builder executable.
+Captures run in a sandboxed worker process of that same executable; no separate
+Obscura installation is needed. Bubblewrap is still required on Linux with user
+namespaces enabled. Missing or unusable isolation disables previews
 with an error; it never falls back to unisolated Obscura or another engine.
 
 Renderer settings in `$XDG_CONFIG_HOME/slide-builder/config.toml` default to:
@@ -98,7 +99,6 @@ scale = 1
 
 [render]
 engine = "obscura"
-obscura_path = "auto"
 sandbox_path = "auto"
 browser_path = "auto"
 ```
@@ -110,6 +110,8 @@ or use the Renderer section in `/config`, then restart.
 ### Migrating an existing configuration
 
 Configs without `render.engine` now select Obscura, even if `browser_path` is set.
+The embedded worker replaces the external Obscura executable. Legacy
+`render.obscura_path` entries are ignored and can be removed.
 To keep Chromium, add `engine = "chromium"` to the existing `[render]` section:
 
 ```toml
@@ -118,16 +120,20 @@ engine = "chromium"
 browser_path = "auto" # Or retain your existing Chromium executable path.
 ```
 
-The default `preview.scale` is now 1. An explicit `scale = 2` is preserved, not
-silently downgraded. Obscura requires scale 1: either explicitly
-choose `scale = 1` for native-resolution previews or select Chromium to retain
-the higher device scale. See `INSTALL.md` for runtime requirements.
+The default `preview.scale` is 1. Both renderers support `scale = 2` without
+changing the slide's layout size: a 1600×900 viewport produces a 3200×1800 PNG.
+Existing explicit scales are preserved. Obscura renders supported content at the
+higher resolution; some effects use an upscaled native-resolution surface instead.
+Scaled captures must fit Obscura's capture limits. See `INSTALL.md` for details.
 
 ## Run
 
 ```sh
-cargo run -- ~/decks/example.pptx
+cargo run --release -- ~/decks/example.pptx
 ```
+
+Use the release profile for normal use. Debug builds also leave the embedded
+native renderer unoptimized and produce substantially slower previews.
 
 All application state is stored beneath XDG config/data directories. The current repository is never modified without approval. Rendering is offline and sandboxed, with artifacts isolated in the render cache.
 

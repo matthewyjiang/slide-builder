@@ -200,7 +200,6 @@ pub enum RenderEngine {
 #[serde(default)]
 pub struct RenderConfig {
     pub engine: RenderEngine,
-    pub obscura_path: PathBuf,
     pub sandbox_path: PathBuf,
     /// Used only when the Chromium engine is explicitly selected.
     pub browser_path: PathBuf,
@@ -212,7 +211,6 @@ impl Default for RenderConfig {
     fn default() -> Self {
         Self {
             engine: RenderEngine::default(),
-            obscura_path: "auto".into(),
             sandbox_path: "auto".into(),
             browser_path: "auto".into(),
             debounce_ms: 1500,

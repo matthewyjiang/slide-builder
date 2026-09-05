@@ -8,6 +8,8 @@
 pub mod browser;
 pub mod cache;
 pub mod pipeline;
+#[doc(hidden)]
+pub mod worker;
 
 use anyhow::Result;
 use cache::RenderManifest;

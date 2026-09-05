@@ -1,5 +1,5 @@
 //! Benchmark actual isolated Obscura and Chromium pipelines on the same deck.
-//! Usage: benchmark_pipeline DECK OUTPUT OBSCURA CHROMIUM [WIDTH]
+//! Usage: benchmark_pipeline DECK OUTPUT CHROMIUM [WIDTH]
 //! Each sample uses a fresh cache. Renderer discovery and handler export are
 //! outside capture timing, as they are not repeated for every app refresh.
 use anyhow::{bail, Context, Result};
@@ -14,15 +14,21 @@ use slide_builder::{
 };
 use std::{path::PathBuf, time::Instant};
 
+fn main() -> Result<()> {
+    if slide_builder::render::worker::run_if_requested()? {
+        return Ok(());
+    }
+    run_benchmark()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run_benchmark() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let deck = PathBuf::from(
         args.next()
-            .context("expected DECK OUTPUT OBSCURA CHROMIUM [WIDTH]")?,
+            .context("expected DECK OUTPUT CHROMIUM [WIDTH]")?,
     );
     let output = PathBuf::from(args.next().context("expected OUTPUT")?);
-    let obscura = PathBuf::from(args.next().context("expected OBSCURA executable")?);
     let chromium = PathBuf::from(args.next().context("expected CHROMIUM executable")?);
     let width = args
         .next()
@@ -43,7 +49,6 @@ async fn main() -> Result<()> {
     for engine in [RenderEngine::Chromium, RenderEngine::Obscura] {
         let config = RenderConfig {
             engine,
-            obscura_path: obscura.clone(),
             browser_path: chromium.clone(),
             ..RenderConfig::default()
         };

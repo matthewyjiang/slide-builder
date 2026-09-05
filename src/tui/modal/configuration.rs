@@ -40,11 +40,10 @@ impl ConfigurationState {
                         toggle("preview_enabled", "Enabled", "Enable inline terminal slide previews.", config.preview.enabled),
                         text("preview_protocol", "Protocol", "Terminal image protocol (normally kitty).", &config.preview.protocol),
                         text("preview_width", "Render width", "Preview render width in pixels; must be greater than zero.", &config.preview.width.to_string()),
-                        text("preview_scale", "Scale", "Obscura requires 1. Chromium supports higher scales.\nIncrease render width for larger Obscura captures.", &config.preview.scale.to_string()),
+                        text("preview_scale", "Scale", "Output pixels per CSS pixel, from 1 to 4.\nHigher scales keep layout size; Obscura capture budgets apply.", &config.preview.scale.to_string()),
                     ]},
                     MenuGroup { title: "Renderer".into(), items: vec![
                         choice("render_engine", "Engine", "Obscura: Linux + bwrap + user namespaces.\nChromium: opt-in. No fallback. Restart required.", vec!["obscura".into(), "chromium".into()], match config.render.engine { RenderEngine::Obscura => "obscura", RenderEngine::Chromium => "chromium" }),
-                        text("obscura_path", "Obscura path", "Render-enabled Obscura >=0.2.2 executable.\nauto searches PATH. Restart required.", &config.render.obscura_path.to_string_lossy()),
                         text("sandbox_path", "Sandbox path", "Required bwrap path, or auto. No bypass.\nMissing isolation disables previews. Restart required.", &config.render.sandbox_path.to_string_lossy()),
                         text("browser_path", "Chromium path", "Chromium only: executable path, or auto.\nIgnored by Obscura. Restart required.", &config.render.browser_path.to_string_lossy()),
                         text("debounce_ms", "Debounce (ms)", "Delay before rendering after deck changes.", &config.render.debounce_ms.to_string()),
@@ -99,7 +98,6 @@ impl ConfigurationState {
             "chromium" => RenderEngine::Chromium,
             engine => return Err(format!("unsupported render engine {engine}")),
         };
-        config.render.obscura_path = PathBuf::from(self.string("obscura_path")?);
         config.render.sandbox_path = PathBuf::from(self.string("sandbox_path")?);
         config.render.browser_path = PathBuf::from(self.string("browser_path")?);
         config.render.debounce_ms = self.number("debounce_ms")?;
@@ -107,13 +105,17 @@ impl ConfigurationState {
         config.render.keep_generations = self.number("keep_generations")?;
         config.compat.officecli_path = PathBuf::from(self.string("officecli_path")?);
         config.compat.detect_optional = self.boolean("detect_optional")?;
-        if config.preview.enabled
-            && config.render.engine == RenderEngine::Obscura
-            && config.preview.scale != 1
-        {
-            return Err(format!("Obscura requires Scale = 1; requested {}. Increase Render width or select Chromium.", config.preview.scale));
-        }
         config.validate().map_err(|error| error.to_string())?;
+        if config.preview.enabled {
+            crate::render::browser::CaptureOptions {
+                width: config.preview.width,
+                height: config.preview.width.saturating_mul(9) / 16,
+                scale: config.preview.scale as f32,
+                timeout: std::time::Duration::from_millis(config.render.timeout_ms),
+            }
+            .validate_for_engine(config.render.engine)
+            .map_err(|error| error.to_string())?;
+        }
         Ok(config)
     }
 

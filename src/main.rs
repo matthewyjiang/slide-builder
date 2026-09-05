@@ -55,8 +55,15 @@ struct PendingRenderTool {
     response: oneshot::Sender<Result<Vec<PathBuf>, String>>,
 }
 
+fn main() -> Result<()> {
+    if slide_builder::render::worker::run_if_requested()? {
+        return Ok(());
+    }
+    run_app()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run_app() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let first = args.next().map(PathBuf::from);
     if first.as_deref() == Some(Path::new("--help")) {
@@ -99,7 +106,7 @@ async fn main() -> Result<()> {
 }
 
 fn print_help() {
-    println!("slide-builder\n\nUSAGE:\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty and Chromium for previews.")
+    println!("slide-builder\n\nUSAGE:\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty. Embedded Obscura previews require Linux and bubblewrap; Chromium is opt-in.")
 }
 
 fn missing_provider_credential(error: &anyhow::Error) -> bool {
@@ -297,7 +304,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         );
                     } else {
                         let _ = response.send(Err(
-                            "No supported Chromium renderer was found".into(),
+                            "No configured preview renderer is available".into(),
                         ));
                     }
                     continue;
@@ -371,7 +378,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         }
                         None => {
                             let _ = event_tx.send(AppEvent::RendererUnavailable(
-                                "No supported Chromium renderer was found".into(),
+                                "No configured preview renderer is available".into(),
                             ));
                         }
                     },

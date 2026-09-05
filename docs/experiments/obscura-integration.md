@@ -1,5 +1,11 @@
 # Isolated Obscura default
 
+This record describes the external-CLI integration and its measurements. The
+current implementation embeds Obscura in a sandboxed worker of the slide-builder
+executable. See `INSTALL.md` for current requirements and `embedded-obscura.md`
+for its qualification. The timings below describe the external CLI, and the
+reproduction commands refer to the earlier implementation.
+
 Implemented September 5, 2026, after the initial renderer investigation. The selected rollout is Obscura by default with mandatory OS filesystem and network isolation, not a trusted-input-only mode.
 
 ## What changed
