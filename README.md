@@ -1,165 +1,26 @@
 # slide-builder
 
-Linux terminal-first, AI-assisted PowerPoint authoring built on `rho-sdk` and the native `pptx-handler` crate.
+AI-assisted PowerPoint authoring in your terminal. Linux only.
 
-## Requirements
+## Install
 
-- Rust 1.92+ to build from source
-- Kitty or Ghostty for inline slide images
-- Bubblewrap (`bwrap`) for the embedded Obscura renderer on Linux, with user namespaces enabled
-- Alternatively, explicitly select Chromium, Chrome, or another Chromium-family browser
-- Provider credentials entered through slide-builder's in-TUI login (stored separately from rho)
+You need Rust 1.92+, Kitty or Ghostty for inline previews, and Bubblewrap (`bwrap`) with user namespaces enabled.
 
-## Providers
-
-On first launch, slide-builder lists every provider exposed by the pinned
-`rho-providers` registry. Choose a provider, authenticate in the terminal, and
-then select from the models Rho detects for that account. Providers with more
-than one authentication mode open a nested connection picker. The resulting
-`provider`, `auth`, and `model` are saved to
-`$XDG_CONFIG_HOME/slide-builder/config.toml`. Set `SLIDE_BUILDER_FORCE_FIRST_RUN=1`
-to open this flow even when that config already exists.
-
-The workspace keeps the active deck, preview state, and contextual controls visible.
-Keyboard input stays in the prompt editor unless tool inspection is active. Click a slide in the slide list to make it
-active. Use the mouse wheel over the conversation to scroll through its history. Drag
-across visible conversation text and release to copy it; a brief popup
-confirms how many characters were copied. Use the tmux-style `Ctrl+B` slide prefix,
-followed by
-`h`/`k` to move to the previous slide or `j`/`l` to move to the next, `g`/`G`
-to jump to the first/last slide, `r` to refresh the preview, or Enter/`f` to
-present. `Ctrl+K` opens the complete action menu, with `F2` as a fallback for
-terminal hosts that reserve `Ctrl+K`; `F1` opens keyboard help. Direct shortcuts
-include `Ctrl+O` for decks, `Ctrl+P` for designs, `Ctrl+R` for preview refresh,
-and `Ctrl+V` to attach the active slide to the next prompt.
-`Ctrl+C` clears a non-empty prompt; pressing it again with an empty composer exits.
-Type `/` in the prompt editor to browse slash commands, use Up/Down to choose one,
-Tab to complete it, and Enter to run it. Available commands cover the action menu,
-decks, designs, preview rendering, settings, attachments, presentation, help, and quit.
-On smaller terminals, all three status surfaces stack vertically above the prompt.
-
-Consecutive tool calls appear in an expandable **Tool activity** group. Running
-groups stay open; successful groups collapse when the agent moves on or finishes.
-Failures stay expanded with their error messages. Groups do not span assistant
-messages or separate runs, and slide/task relationships are not inferred.
-
-Press `Ctrl+B`, then `t` to inspect the latest tool group. Up/Down or `j`/`k`
-move between group headers and visible calls. Enter toggles a group or a call's
-details; Right opens a group and selects its first call. Details include the raw
-tool name, arguments, and recorded output. Page Up/Down scroll long details.
-Escape closes details, then returns to the group, then returns to the prompt;
-it does not cancel the run while inspection is active. Groups opened manually
-stay open after completion. Mouse-wheel scrolling leaves tool inspection.
-
-The configuration can also be edited without leaving the TUI: press `Ctrl+,` or
-type `/config` in the message input and press Enter. The responsive configuration
-popup groups model, permissions, preview, renderer, and compatibility settings. Use arrow
-keys (or `j`/`k`) to navigate, Left/Right to change choices, Enter to edit text,
-`Ctrl+S` to save, and Escape to close without saving. Changes are written to the
-configuration file immediately. Model changes apply to the running session; other
-changes take effect after restarting the application.
-
-To switch models quickly, type `/model` for a filterable picker. Both `/model` and
-the Model choice in `/config` list only models from providers you have signed in
-to (via rho's catalog and the slide-builder keyring); the switch is applied live and
-saved to the configuration file.
-
-API-key providers show a masked key prompt. OAuth and device-login providers
-show the authorization URL and code, then store the resulting tokens in
-slide-builder's isolated OS-keyring service. After authentication, slide-builder
-refreshes the provider's live model list through Rho, with Rho's cached or static
-catalog as the fallback. The provider-specific environment variables exposed by
-Rho can also be used for automation.
-
-At startup, slide-builder discovers project skills from `.agents/skills`, user
-skills from `~/.agents/skills`, and its embedded deck-authoring skills. Matching
-skills are advertised to the agent and loaded on demand through the built-in
-`load_skill` tool. Project skills take precedence over user and embedded skills
-with the same name.
-
-## Design packages
-
-Slide-builder stores imported packages in its managed package directory. On Linux,
-managed packages live at:
-
-```text
-$XDG_DATA_HOME/slide-builder/design-packages/
-```
-
-This normally resolves to `~/.local/share/slide-builder/design-packages/`.
-Each package contains a required `DESIGN.md` and one or more PowerPoint templates.
-
-Run `/import-design` to create a managed package from an existing `.pptx` file.
-Type in the file picker to fuzzy-filter files and folders in the current directory.
-Use the arrow keys to choose a match and Enter to open it. You can also type or
-paste a full path, or a relative path containing `/`.
-Slide-builder copies the source into a private staging directory, extracts its
-presentation structure, and renders a contact sheet using the configured renderer.
-If rendering is unavailable, import continues with extracted presentation evidence only.
-The configured model uses that evidence and the built-in import skill in a fresh,
-tool-free importer session to write `DESIGN.md`. Import stages appear beside the
-prompt; generated model output is not added to the chat transcript. Slide-builder
-validates the result and publishes it atomically with the original presentation
-saved as `template.pptx`. Existing packages are never overwritten; repeated names
-receive a numeric suffix. Run `/design` to select an imported package before the
-next deck prompt.
-
-## Preview renderer
-
-Obscura is the default renderer and is embedded in the slide-builder executable.
-Captures run in a sandboxed worker process of that same executable; no separate
-Obscura installation is needed. Bubblewrap is still required on Linux with user
-namespaces enabled. Missing or unusable isolation disables previews
-with an error; it never falls back to unisolated Obscura or another engine.
-
-Renderer settings in `$XDG_CONFIG_HOME/slide-builder/config.toml` default to:
-
-```toml
-[preview]
-scale = 1
-
-[render]
-engine = "obscura"
-sandbox_path = "auto"
-browser_path = "auto"
-```
-
-`auto` discovers executables on PATH. `sandbox_path` selects `bwrap`;
-`browser_path` is used only by Chromium. Set explicit executable paths when needed,
-or use the Renderer section in `/config`, then restart.
-
-### Migrating an existing configuration
-
-Configs without `render.engine` now select Obscura, even if `browser_path` is set.
-The embedded worker replaces the external Obscura executable. Legacy
-`render.obscura_path` entries are ignored and can be removed.
-To keep Chromium, add `engine = "chromium"` to the existing `[render]` section:
-
-```toml
-[render]
-engine = "chromium"
-browser_path = "auto" # Or retain your existing Chromium executable path.
-```
-
-The default `preview.scale` is 1. Both renderers support `scale = 2` without
-changing the slide's layout size: a 1600×900 viewport produces a 3200×1800 PNG.
-Existing explicit scales are preserved. Obscura renders supported content at the
-higher resolution; some effects use an upscaled native-resolution surface instead.
-Scaled captures must fit Obscura's capture limits. See `INSTALL.md` for details.
-
-## Run
+From the repository root:
 
 ```sh
-cargo run --release -- ~/decks/example.pptx
+cargo build --release --locked -j 8
+install -Dm755 target/release/slide-builder ~/.local/bin/slide-builder
 ```
 
-Passing a path that does not exist creates a new deck there. Run without a
-path to browse for a `.pptx` starting from the current directory; you can also
-type a new file name in the picker to create it.
+Make sure `~/.local/bin` is on your `PATH`. See `INSTALL.md` for detailed requirements and renderer setup.
 
-Use the release profile for normal use. Debug builds also leave the embedded
-native renderer unoptimized and produce substantially slower previews.
+## First run
 
-All application state is stored beneath XDG config/data directories. The current repository is never modified without approval. Rendering is offline and sandboxed, with artifacts isolated in the render cache.
+```sh
+slide-builder ~/my-deck.pptx
+```
 
-See `delegated-doodling-cocke.md` for architecture and qualification requirements.
+Choose a provider, sign in, and select a model when prompted. The path opens an existing deck or creates a new one.
+
+Tell the agent what slides you want. Press `F1` for keyboard help.
