@@ -33,6 +33,20 @@ Choose a provider, sign in, and select a model when prompted. The path opens an 
 
 Tell the agent what slides you want. Press `F1` for keyboard help.
 
+## Slide styling and review
+
+The agent can set text color, font family, size, weight, and alignment when adding
+text. Dark slides need an explicit contrasting text color; changing a background
+does not automatically recolor existing text.
+Text formatting currently requires the standard `p:` and `a:` XML namespace
+prefixes; imported files using alternative prefixes return an explicit error.
+
+When the agent calls `render_deck`, the rendered slide images are sent back to the
+model automatically for visual review. Use an image-capable model for this workflow.
+You can also attach the active slide with `Ctrl+V` to ask about a specific layout.
+The preview is an HTML-based rendering, so check the final deck in PowerPoint when
+exact Office rendering matters.
+
 ## Development checks
 
 GitHub Actions runs on pull requests and pushes to `main`, using the Rust version
@@ -48,5 +62,5 @@ A separate workflow runs Actionlint when `.github/workflows/` changes. Both
 workflows can also be started manually from GitHub's Actions tab.
 
 CI runs the ordinary test suite, including the direct-worker rejection check.
-The three ignored renderer and namespace tests require a qualified Bubblewrap
+The ignored renderer and namespace tests require a qualified Bubblewrap
 host and are not run in CI. See `INSTALL.md` for the commands to run those checks.

@@ -8,8 +8,9 @@ use crate::skills::Skill;
 use crate::tui::{AgentEvent, AppEvent};
 use anyhow::{Context, Result};
 use rho_sdk::{
-    approval_channel, model::ImageContent, ApprovalRequestReceiver, Rho, Session, SessionOptions,
-    SystemPrompt, UserInput, Workspace,
+    approval_channel,
+    model::{ContentBlock, ImageContent},
+    ApprovalRequestReceiver, Rho, Session, SessionOptions, SystemPrompt, UserInput, Workspace,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -100,14 +101,49 @@ impl AgentHandle {
         } else {
             UserInput::text(text)
         };
+        let (source, mut boundaries) = rho_sdk::boundary_input_channel();
+        self.session.set_boundary_inputs(Some(source))?;
         let mut run = self.session.start(input).await?;
         *self
             .cancellation
             .lock()
             .expect("agent cancellation mutex poisoned") = Some(run.cancellation_handle());
-        while let Some(event) = run.next_event().await {
-            for event in adapt_run_event(event) {
-                let _ = events.send(event);
+        let mut pending = Vec::new();
+        loop {
+            tokio::select! {
+                // ToolFinished events precede the boundary request. Drain them
+                // first so their assets reach the very next provider request.
+                biased;
+                event = run.next_event() => {
+                    let Some(event) = event else { break };
+                    if let rho_sdk::RunEvent::ToolFinished {
+                        call_id,
+                        result: rho_sdk::ToolCompletion::Success(output),
+                    } = &event {
+                        let images: Vec<_> = output.presentation().assets().iter()
+                            .filter(|asset| asset.media_type().starts_with("image/"))
+                            .map(|asset| ContentBlock::Image(ImageContent {
+                                data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, asset.bytes()),
+                                mime_type: asset.media_type().to_owned(),
+                            })).collect();
+                        if !images.is_empty() {
+                            pending.push(ContentBlock::Text(format!(
+                                "Internal tool image feedback for call {call_id}. Images follow in the order listed in the tool result.\n{}",
+                                output.content(),
+                            )));
+                            pending.extend(images);
+                        }
+                    }
+                    for event in adapt_run_event(event) {
+                        let _ = events.send(event);
+                    }
+                }
+                Some(request) = boundaries.recv() => {
+                    let input = if pending.is_empty() { None } else {
+                        Some(UserInput::content(std::mem::take(&mut pending))?)
+                    };
+                    request.respond(input).await;
+                }
             }
         }
         Ok(())

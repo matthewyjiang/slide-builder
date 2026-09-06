@@ -1,6 +1,9 @@
 use rho_sdk::{
     model::ToolSpec,
-    tool::{Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput},
+    tool::{
+        Tool, ToolAsset, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
+        ToolMetadata, ToolOutput,
+    },
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -41,7 +44,7 @@ impl Tool for UiTool {
         if self.name == "render_deck" {
             ToolSpec {
                 name: self.name.into(),
-                description: "Render every slide, wait for completion, and return the generated image paths. The paths synchronize the user-facing preview but do not attach image bytes to the model."
+                description: "Render every slide, wait for completion, and return the generated image paths. The rendered slide images are attached in slide order for visual inspection before your next response."
                     .into(),
                 input_schema: json!({"type":"object","additionalProperties":false}),
             }
@@ -62,13 +65,22 @@ impl Tool for UiTool {
                     .map_err(|_| unavailable())?;
                 let paths = await_response(receiver, &context).await?;
                 let mut output = format!("Rendered {} slides.", paths.len());
+                let mut metadata = ToolMetadata::new();
                 for (index, path) in paths.iter().enumerate() {
+                    let bytes = tokio::select! {
+                        result = tokio::fs::read(path) => result.map_err(|error| ToolError::new(
+                            ToolErrorKind::Execution,
+                            format!("could not attach rendered slide {} ({}): {error}", index + 1, path.display()),
+                        ))?,
+                        () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
+                    };
+                    metadata = metadata.asset(ToolAsset::new("image/png", bytes));
                     output.push_str(&format!("\nslide {}: {}", index + 1, path.display()));
                 }
                 output.push_str(
-                    "\nThe images are visible in the TUI preview but are not attached to the model. Ask the user to attach a slide when visual inspection is required.",
+                    "\nThe rendered images are attached in slide order for visual inspection.",
                 );
-                Ok(ToolOutput::text(output))
+                Ok(ToolOutput::text(output).metadata(metadata))
             } else {
                 let index = positive_index(inv.arguments())?;
                 let (response, receiver) = oneshot::channel();

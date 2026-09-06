@@ -14,6 +14,10 @@ use handler_common::{
 use pptx_handler::PptxHandler;
 use std::{collections::HashMap, path::Path};
 
+// Bypass the pinned handler's incomplete DrawingML run formatting.
+#[path = "text_format.rs"]
+mod text_format;
+
 pub(super) struct TransactionResult {
     pub(super) affected: Vec<String>,
     pub(super) post_state: serde_json::Value,
@@ -156,7 +160,7 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
         DeckMutation::Add {
             parent,
             element_type,
-            properties,
+            mut properties,
         } => {
             let handler_parent = if element_type == "slide" {
                 parent.clone()
@@ -171,6 +175,9 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
                 &properties,
                 None,
             )?;
+            // Adders also use some of these keys for non-text properties, such
+            // as line color. Preserve the original payload during construction.
+            let formatting = text_format::take(&mut properties);
             if mutation_element_is_picture(&element_type) {
                 // Pictures are absent from the pinned handler's outline, and its
                 // reported shape path can point past the inserted element. The
@@ -188,27 +195,8 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
                 if let Some(preset) = properties.get("preset") {
                     set_shape_preset(handler, &added, preset)?;
                 }
-                // The pinned handler applies geometry while creating rectangles, but
-                // only applies text-run formatting through `set`.
-                let formatting = properties
-                    .iter()
-                    .filter(|(key, _)| {
-                        matches!(
-                            key.as_str(),
-                            "bold"
-                                | "italic"
-                                | "font"
-                                | "fontName"
-                                | "fontSize"
-                                | "color"
-                                | "fontColor"
-                                | "alignment"
-                        )
-                    })
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect::<HashMap<_, _>>();
                 if !formatting.is_empty() {
-                    handler.set(&added, &formatting)?;
+                    text_format::set(handler, &added, &formatting)?;
                 }
                 vec![added]
             }
@@ -217,6 +205,7 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
             path,
             mut properties,
         } => {
+            let formatting = text_format::take(&mut properties);
             let geometry = take_geometry(&mut properties);
             if !geometry.is_empty() {
                 let physical_path = physical_shape_path(handler, &path)?;
@@ -226,6 +215,9 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
             // updates must retain the logical path after a slide reorder.
             if !properties.is_empty() {
                 handler.set(&path, &properties)?;
+            }
+            if !formatting.is_empty() {
+                text_format::set(handler, &path, &formatting)?;
             }
             vec![path]
         }

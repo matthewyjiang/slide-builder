@@ -5263,6 +5263,7 @@ dependencies = [
  "obscura-js",
  "pptx-handler",
  "pulldown-cmark",
+ "quick-xml 0.37.5",
  "ratatui",
  "ratatui-image",
  "rho-agent-tools",

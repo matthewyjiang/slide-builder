@@ -89,6 +89,7 @@ the target host:
 
 ```sh
 cargo test --locked -j 8 --test embedded_render -- --include-ignored
+cargo test --locked -j 8 --test styled_text_render -- --ignored
 cargo test --locked -j 8 --lib sandbox_blocks_host_files_and_network -- --ignored
 ```
 

@@ -87,7 +87,14 @@ fn single_schema(name: &str) -> Value {
             json!({"type":"object","required":["from","to"],"properties":{"from":{"type":"integer","minimum":1},"to":{"type":"integer","minimum":1}}})
         }
         "text_add" => {
-            json!({"type":"object","required":["slide","text","x","y","width","height"],"properties":{"slide":{"type":"integer","minimum":1},"text":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"font_size":{"type":"number"}}})
+            json!({"type":"object","required":["slide","text","x","y","width","height"],"properties":{
+                "slide":{"type":"integer","minimum":1},"text":{"type":"string"},
+                "x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},
+                "font_size":{"type":"number","exclusiveMinimum":0},
+                "color":{"type":"string","description":"Explicit text foreground, #RRGGBB or RRGGBB. Choose for contrast against the background."},
+                "font_family":{"type":"string"},"bold":{"type":"boolean"},"italic":{"type":"boolean"},
+                "alignment":{"type":"string","enum":["left","center","right","justify"]}
+            }})
         }
         "image_add" => {
             json!({"type":"object","required":["slide","path","x","y","width","height"],"properties":{"slide":{"type":"integer","minimum":1},"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}}})
@@ -360,10 +367,31 @@ fn mutation_from_arguments(name: &str, arguments: &Value) -> anyhow::Result<Deck
             let element_type = if name == "text_add" {
                 properties.insert("text".into(), req_str(arguments, "text")?.into());
                 if let Some(value) = arguments.get("font_size") {
-                    properties.insert(
-                        "fontSize".into(),
-                        finite_number(value, "font_size")?.to_string(),
-                    );
+                    let size = finite_number(value, "font_size")?;
+                    if size <= 0.0 {
+                        anyhow::bail!("invalid `font_size` {size}: expected positive points");
+                    }
+                    properties.insert("fontSize".into(), size.to_string());
+                }
+                for (argument, property) in [("color", "color"), ("font_family", "font")] {
+                    if arguments.get(argument).is_some() {
+                        properties.insert(property.into(), req_str(arguments, argument)?.into());
+                    }
+                }
+                for key in ["bold", "italic"] {
+                    if let Some(value) = arguments.get(key) {
+                        let value = value.as_bool().ok_or_else(|| {
+                            anyhow::anyhow!("invalid field `{key}`: expected boolean")
+                        })?;
+                        properties.insert(key.into(), value.to_string());
+                    }
+                }
+                if arguments.get("alignment").is_some() {
+                    let alignment = req_str(arguments, "alignment")?;
+                    if !matches!(alignment, "left" | "center" | "right" | "justify") {
+                        anyhow::bail!("invalid alignment `{alignment}`: expected left, center, right, or justify");
+                    }
+                    properties.insert("alignment".into(), alignment.into());
                 }
                 "rectangle"
             } else if name == "image_add" {
@@ -452,8 +480,10 @@ fn normalize_update_properties(properties: &mut HashMap<String, String>) -> anyh
             }
         }
     }
-    if let Some(value) = properties.remove("font_size") {
-        properties.insert("fontSize".into(), value);
+    for (argument, property) in [("font_size", "fontSize"), ("font_family", "font")] {
+        if let Some(value) = properties.remove(argument) {
+            properties.insert(property.into(), value);
+        }
     }
     Ok(())
 }
@@ -472,6 +502,10 @@ fn validate_geometry(x: f64, y: f64, w: f64, h: f64) -> anyhow::Result<()> {
     };
     Ok(())
 }
+#[cfg(test)]
+#[path = "deck_tools_style_tests.rs"]
+mod style_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

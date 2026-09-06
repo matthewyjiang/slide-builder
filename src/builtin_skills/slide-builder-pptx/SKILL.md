@@ -14,8 +14,8 @@ Use the semantic native deck tools first. They operate on the active deck, enfor
 4. Use `text_add`, `image_add`, and `shape_add` for content. Keep returned stable IDs.
 5. Use `element_update` with a stable ID instead of positional or ambiguous selectors.
 6. Run `deck_validate` after meaningful edits.
-7. Run `render_deck` and wait for its completed image-path result, then use `set_active_slide` to synchronize the UI while reviewing slides. Rendered images appear in the TUI but are not attached to the model, so do not claim visual inspection unless the user attaches a slide with Ctrl+V.
-8. Ask the user to attach the active slide with Ctrl+V when you need visual feedback. Fix clipping, overlap, contrast, alignment, and hierarchy, then render again.
+7. Run `render_deck` and wait for completion. The rendered slide images are attached automatically before your next response, in the order listed in the tool result. Inspect those images, not just the returned paths. Use `set_active_slide` to synchronize the UI while discussing a slide.
+8. Fix clipping, overlap, contrast, alignment, and hierarchy, then render again to check the affected output. If rendering or image delivery fails, report that visual review is incomplete; never claim to have inspected an image you did not receive. The user can still attach the active slide with Ctrl+V for targeted feedback.
 
 ## Coordinates and layout
 
@@ -33,7 +33,7 @@ Use these exact argument shapes. Slide indexes are one-based. Geometry values ar
 - `slide_create`: `{}`.
 - `slide_duplicate` and `slide_delete`: `{"index":2}`.
 - `slide_reorder`: `{"from":4,"to":2}`.
-- `text_add`: `{"slide":2,"text":"Label","x":1.0,"y":1.0,"width":3.0,"height":0.6,"font_size":24}`.
+- `text_add`: `{"slide":2,"text":"Label","x":1.0,"y":1.0,"width":3.0,"height":0.6,"font_size":24,"color":"#F4F7FA","font_family":"Arial","bold":true,"alignment":"left"}`. Set the foreground explicitly against the actual slide or shape background, especially on dark slides. Optional `bold` and `italic` are booleans; `alignment` is `left`, `center`, `right`, or `justify`. Choose a deliberate title/body/caption size hierarchy instead of leaving all text at its default size.
 - `image_add`: `{"slide":2,"path":"/absolute/image.png","x":1.0,"y":1.0,"width":4.0,"height":3.0}`.
 - `shape_add`: `{"slide":2,"kind":"hexagon","x":1.0,"y":1.0,"width":4.0,"height":1.0,"fill":"#336699"}`. Supported kinds are `rectangle`, `ellipse`, `hexagon`, `line`, and `connector`.
 - Colors accept either `#RRGGBB` or `RRGGBB`; tools normalize them before writing OOXML.
@@ -49,7 +49,7 @@ Batch independent edits of the same kind with `edits`. The whole batch is atomic
 
 Single-edit payloads remain valid. A batch may contain up to 100 edits. If any edit fails, none are committed.
 
-- `element_update`: `{"id":"<stable ID>","properties":{"text":"Replacement text","font_size":"24"}}`. Put every changed value inside `properties`. Do not send `path` to this tool.
+- `element_update`: `{"id":"<stable ID>","properties":{"text":"Replacement text","font_size":"24","color":"#F4F7FA","font_family":"Arial","bold":"true"}}`. Put every changed value inside `properties`; update values are strings. Do not send `path` to this tool.
 - `deck_validate`: `{}`.
 
 Prefer `element_update` for an existing element and the dedicated add tools for new content. Do not use `deck_advanced` when one of those tools can perform the edit.
