@@ -190,7 +190,24 @@ impl CommandPaletteState {
 }
 
 pub fn render(frame: &mut Frame<'_>, state: &CommandPaletteState) {
-    let area = centered(frame.area(), 76, 22);
+    let label_width = COMMANDS
+        .iter()
+        .map(|item| item.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let detail_width = COMMANDS
+        .iter()
+        .map(|item| item.detail.chars().count())
+        .max()
+        .unwrap_or(0);
+    let shortcut_width = COMMANDS
+        .iter()
+        .map(|item| item.shortcut.chars().count())
+        .max()
+        .unwrap_or(0);
+    // "  " indent + label + 2 gap + detail + 2 gap + " shortcut " keycap + borders
+    let needed_width = (2 + label_width + 2 + detail_width + 2 + shortcut_width + 2 + 2) as u16;
+    let area = centered(frame.area(), needed_width.max(76), 22);
     frame.render_widget(Clear, area);
     let block = Block::default()
         .title(" Actions ")
@@ -215,7 +232,7 @@ pub fn render(frame: &mut Frame<'_>, state: &CommandPaletteState) {
         let selected = index == state.selected;
         ListItem::new(Line::from(vec![
             Span::styled(
-                format!("  {:<20}", item.label),
+                format!("  {:<label_width$}  ", item.label),
                 if selected {
                     Style::default()
                         .fg(theme::TEXT)
@@ -225,10 +242,17 @@ pub fn render(frame: &mut Frame<'_>, state: &CommandPaletteState) {
                 },
             ),
             Span::styled(
-                format!("{:<34}", item.detail),
+                format!("{:<detail_width$}  ", item.detail),
                 Style::default().fg(theme::MUTED),
             ),
-            Span::styled(format!(" {:>8} ", item.shortcut), theme::keycap()),
+            Span::styled(
+                format!(" {:>shortcut_width$} ", item.shortcut),
+                if item.shortcut.is_empty() {
+                    Style::default()
+                } else {
+                    theme::keycap()
+                },
+            ),
         ]))
         .style(if selected {
             theme::accent_block()
