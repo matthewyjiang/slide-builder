@@ -90,3 +90,28 @@ fn invalid_typed_path_stays_open_with_an_error() {
     assert!(state.error.is_some());
     assert_eq!(state.path_input, "missing.pptx");
 }
+
+#[test]
+fn new_pptx_name_is_accepted_when_creating_is_allowed() {
+    let root = tempdir().unwrap();
+    let mut state = FileSystemPickerState::new(root.path().to_path_buf()).allowing_new_files();
+    state.paste("fresh.pptx");
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        FileSystemPickerEvent::Selected(root.path().join("fresh.pptx"))
+    );
+}
+
+#[test]
+fn new_non_pptx_name_is_rejected_even_when_creating_is_allowed() {
+    let root = tempdir().unwrap();
+    let mut state = FileSystemPickerState::new(root.path().to_path_buf()).allowing_new_files();
+    state.paste("notes.txt");
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        FileSystemPickerEvent::None
+    );
+    assert!(state.error.is_some());
+}

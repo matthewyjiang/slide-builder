@@ -138,6 +138,10 @@ Scaled captures must fit Obscura's capture limits. See `INSTALL.md` for details.
 cargo run --release -- ~/decks/example.pptx
 ```
 
+Passing a path that does not exist creates a new deck there. Run without a
+path to browse for a `.pptx` starting from the current directory; you can also
+type a new file name in the picker to create it.
+
 Use the release profile for normal use. Debug builds also leave the embedded
 native renderer unoptimized and produce substantially slower previews.
 

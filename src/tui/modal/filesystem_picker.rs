@@ -27,6 +27,9 @@ pub struct FileSystemPickerState {
     pub selected: usize,
     pub path_input: String,
     pub error: Option<String>,
+    /// When set, a typed `.pptx` path that does not exist yet is accepted so
+    /// the caller can create it.
+    pub allow_new_files: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,9 +47,15 @@ impl FileSystemPickerState {
             selected: 0,
             path_input: String::new(),
             error: None,
+            allow_new_files: false,
         };
         state.open_directory(state.current_directory.clone());
         state
+    }
+
+    pub fn allowing_new_files(mut self) -> Self {
+        self.allow_new_files = true;
+        self
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> FileSystemPickerEvent {
@@ -121,7 +130,14 @@ impl FileSystemPickerState {
         if path.is_file() && is_powerpoint(&path) {
             return FileSystemPickerEvent::Selected(path);
         }
-        self.error = Some("Choose a directory or a .pptx file".into());
+        if self.allow_new_files && !path.exists() && is_powerpoint(&path) {
+            return FileSystemPickerEvent::Selected(path);
+        }
+        self.error = Some(if self.allow_new_files {
+            "Choose a directory or a .pptx file, or type a new .pptx name to create it".into()
+        } else {
+            "Choose a directory or a .pptx file".into()
+        });
         FileSystemPickerEvent::None
     }
 
@@ -182,9 +198,13 @@ fn file_name(path: &Path) -> String {
 }
 
 pub fn render(frame: &mut Frame<'_>, state: &FileSystemPickerState) {
+    render_titled(frame, state, " Import design from PowerPoint ");
+}
+
+pub fn render_titled(frame: &mut Frame<'_>, state: &FileSystemPickerState, title: &str) {
     let area = popup(frame, 82, 24);
     let block = Block::default()
-        .title(" Import design from PowerPoint ")
+        .title(title)
         .title_style(
             Style::default()
                 .fg(theme::TEXT)
@@ -236,7 +256,11 @@ pub fn render(frame: &mut Frame<'_>, state: &FileSystemPickerState) {
     frame.render_widget(List::new(items).highlight_symbol("›"), rows[1]);
 
     let input = if state.path_input.is_empty() {
-        "Type or paste a path...".to_owned()
+        if state.allow_new_files {
+            "Type or paste a path, or a new .pptx name to create it...".to_owned()
+        } else {
+            "Type or paste a path...".to_owned()
+        }
     } else {
         state.path_input.clone()
     };

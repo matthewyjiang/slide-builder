@@ -88,9 +88,16 @@ async fn run_app() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&e.inspect(None).await?)?);
         return Ok(());
     }
-    let Some(deck) = first else {
-        print_help();
-        return Ok(());
+    let deck = match first {
+        Some(deck) => deck,
+        None if io::stdout().is_terminal() => match choose_deck_interactively()? {
+            Some(deck) => deck,
+            None => return Ok(()),
+        },
+        None => {
+            print_help();
+            return Ok(());
+        }
     };
     let engine = if deck.exists() {
         DeckEngine::new(&deck)?
@@ -105,8 +112,51 @@ async fn run_app() -> Result<()> {
     run_tui(engine).await
 }
 
+/// Shows a filesystem picker rooted at the current directory so the user can
+/// open an existing `.pptx` (or type a new name to create one) without passing
+/// a path on the command line. Returns `None` if the user cancels.
+fn choose_deck_interactively() -> Result<Option<PathBuf>> {
+    use crossterm::event::{read, Event, KeyEventKind};
+    use slide_builder::tui::modal::filesystem_picker::{
+        self, FileSystemPickerEvent, FileSystemPickerState,
+    };
+
+    let cwd = std::env::current_dir()?;
+    let mut state = FileSystemPickerState::new(cwd).allowing_new_files();
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout))?;
+    slide_builder::tui::theme::initialize_from_terminal();
+
+    let result = (|| -> Result<Option<PathBuf>> {
+        loop {
+            terminal.draw(|frame| {
+                filesystem_picker::render_titled(frame, &state, " Open deck ");
+            })?;
+            match read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    match state.handle_key(key) {
+                        FileSystemPickerEvent::None => {}
+                        FileSystemPickerEvent::Cancel => return Ok(None),
+                        FileSystemPickerEvent::Selected(path) => return Ok(Some(path)),
+                    }
+                }
+                Event::Paste(text) => state.paste(&text),
+                _ => {}
+            }
+        }
+    })();
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
+    result
+}
+
 fn print_help() {
-    println!("slide-builder\n\nUSAGE:\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty. Embedded Obscura previews require Linux and bubblewrap; Chromium is opt-in.")
+    println!("slide-builder\n\nUSAGE:\n  slide-builder              open a picker for .pptx files in the current directory\n  slide-builder DECK.pptx    open (or create) a deck\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty. Embedded Obscura previews require Linux and bubblewrap; Chromium is opt-in.")
 }
 
 fn missing_provider_credential(error: &anyhow::Error) -> bool {
