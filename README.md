@@ -32,3 +32,21 @@ slide-builder ~/my-deck.pptx
 Choose a provider, sign in, and select a model when prompted. The path opens an existing deck or creates a new one.
 
 Tell the agent what slides you want. Press `F1` for keyboard help.
+
+## Development checks
+
+GitHub Actions runs on pull requests and pushes to `main`, using the Rust version
+in `.mise.toml`. Run the same checks locally:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -j 8 -- -D warnings
+cargo test --locked --all-features -j 8
+```
+
+A separate workflow runs Actionlint when `.github/workflows/` changes. Both
+workflows can also be started manually from GitHub's Actions tab.
+
+CI runs the ordinary test suite, including the direct-worker rejection check.
+The three ignored renderer and namespace tests require a qualified Bubblewrap
+host and are not run in CI. See `INSTALL.md` for the commands to run those checks.
