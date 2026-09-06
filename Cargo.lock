@@ -4591,8 +4591,8 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "1.1.1"
-source = "git+https://github.com/matthewyjiang/rho.git?rev=a6a398878649568a61a31a5553da1d93654a4bea#a6a398878649568a61a31a5553da1d93654a4bea"
+version = "1.2.0"
+source = "git+https://github.com/matthewyjiang/rho.git?rev=5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0#5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0"
 dependencies = [
  "calamine",
  "flate2",
@@ -4618,8 +4618,8 @@ dependencies = [
 
 [[package]]
 name = "rho-providers"
-version = "2.4.0"
-source = "git+https://github.com/matthewyjiang/rho.git?rev=a6a398878649568a61a31a5553da1d93654a4bea#a6a398878649568a61a31a5553da1d93654a4bea"
+version = "2.5.0"
+source = "git+https://github.com/matthewyjiang/rho.git?rev=5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0#5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4651,8 +4651,8 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "5.2.1"
-source = "git+https://github.com/matthewyjiang/rho.git?rev=a6a398878649568a61a31a5553da1d93654a4bea#a6a398878649568a61a31a5553da1d93654a4bea"
+version = "5.3.0"
+source = "git+https://github.com/matthewyjiang/rho.git?rev=5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0#5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0"
 dependencies = [
  "serde",
  "serde_json",
