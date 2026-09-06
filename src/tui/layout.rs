@@ -280,6 +280,13 @@ fn render_slash_commands(frame: &mut Frame<'_>, input_area: Rect, app: &App) {
     let width = input_area.width.clamp(1, 72);
     let height = visible_rows as u16 + 2;
     let area = Rect::new(input_area.x, input_area.y - height, width, height);
+    let name_width = suggestions
+        .iter()
+        .map(|suggestion| suggestion.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(12)
+        + 2;
     let items = suggestions[start..start + visible_rows]
         .iter()
         .enumerate()
@@ -287,7 +294,7 @@ fn render_slash_commands(frame: &mut Frame<'_>, input_area: Rect, app: &App) {
             let is_selected = start + offset == selected;
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!(" {:<12}", suggestion.name),
+                    format!(" {:<name_width$}", suggestion.name),
                     Style::default()
                         .fg(theme::TEXT)
                         .add_modifier(if is_selected {
