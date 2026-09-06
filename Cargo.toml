@@ -24,9 +24,9 @@ pptx-handler = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "a
 pulldown-cmark = "0.13"
 ratatui = "0.30.0"
 ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm"] }
-rho-sdk = { git = "https://github.com/matthewyjiang/rho.git", rev = "3ebbdf951f01c6a32e827d4b819bdd9441c76684" }
-rho-providers = { git = "https://github.com/matthewyjiang/rho.git", rev = "3ebbdf951f01c6a32e827d4b819bdd9441c76684" }
-rho-agent-tools = { git = "https://github.com/matthewyjiang/rho.git", rev = "3ebbdf951f01c6a32e827d4b819bdd9441c76684" }
+rho-sdk = { git = "https://github.com/matthewyjiang/rho.git", rev = "a6a398878649568a61a31a5553da1d93654a4bea" }
+rho-providers = { git = "https://github.com/matthewyjiang/rho.git", rev = "a6a398878649568a61a31a5553da1d93654a4bea" }
+rho-agent-tools = { git = "https://github.com/matthewyjiang/rho.git", rev = "a6a398878649568a61a31a5553da1d93654a4bea" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

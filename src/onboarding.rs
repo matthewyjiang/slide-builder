@@ -16,10 +16,13 @@ use ratatui::{
     Terminal,
 };
 use rho_providers::{
-    auth::login_dispatch::{
-        AuthenticationFuture, AuthenticationMethod, CompletedAuthentication,
-        InteractiveLoginCompletion, InteractiveLoginMode, InteractiveUserAction,
-        ProviderAuthentication,
+    auth::{
+        browser::{BrowserAvailability, BrowserOpen},
+        login_dispatch::{
+            AuthenticationFuture, AuthenticationMethod, CompletedAuthentication,
+            InteractiveLoginCompletion, InteractiveLoginMode, ProviderAuthentication,
+        },
+        login_prompt::LoginPrompt,
     },
     model::{catalog, provider_models, provider_models::ProviderModel},
     provider::{AuthMode, ProviderAuthKind, ProviderDescriptor, ProviderRuntime},
@@ -274,21 +277,19 @@ async fn interactive_login(
     } else {
         InteractiveLoginMode::Browser
     };
-    let login = ProviderAuthentication::start_interactive_login(auth, mode)
-        .await
-        .map_err(anyhow::Error::new)?;
+    let login = ProviderAuthentication::start_interactive_login_with_availability(
+        auth,
+        mode,
+        BrowserAvailability::from_process(),
+    )
+    .await
+    .map_err(anyhow::Error::new)?;
     let provider_label = login.provider_label;
-    let user_action = login.user_action;
+    let prompt = login.prompt;
     match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => {
-            match interactive_login_wait(
-                terminal,
-                provider_label,
-                &user_action,
-                completion,
-                diagnostic,
-            )
-            .await?
+            match interactive_login_wait(terminal, provider_label, &prompt, completion, diagnostic)
+                .await?
             {
                 Navigation::Selected(completed) => {
                     completed.save(&SlideCredentialStore)?;
@@ -297,13 +298,9 @@ async fn interactive_login(
                 Navigation::Back => Ok(Navigation::Back),
             }
         }
-        InteractiveLoginCompletion::Unconfirmed { instruction } => confirm_external_login(
-            terminal,
-            provider_label,
-            &user_action,
-            instruction,
-            diagnostic,
-        ),
+        InteractiveLoginCompletion::Unconfirmed { instruction } => {
+            confirm_external_login(terminal, provider_label, &prompt, instruction, diagnostic)
+        }
     }
 }
 
@@ -385,7 +382,7 @@ fn cancels_authentication(key: KeyEvent) -> bool {
 
 fn interactive_login_body(
     label: &str,
-    action: &InteractiveUserAction,
+    prompt: &LoginPrompt,
     status: &str,
     footer: &str,
     diagnostic: Option<&str>,
@@ -401,34 +398,28 @@ fn interactive_login_body(
         Line::from("Complete sign-in in your browser."),
         Line::from(""),
     ]);
-    match action {
-        InteractiveUserAction::BrowserOpened => {
+    match prompt.browser {
+        BrowserOpen::Launched => {
             lines.push(Line::from("A browser window was opened for sign-in."));
         }
-        InteractiveUserAction::OpenUrl { url, instruction } => {
-            lines.push(Line::from(instruction.clone()));
-            lines.push(Line::from(""));
-            lines.push(Line::styled(url.clone(), Style::default().fg(Color::Cyan)));
+        BrowserOpen::Skipped | BrowserOpen::Failed => {
+            lines.push(Line::from(prompt.instruction.clone()));
         }
-        InteractiveUserAction::DeviceCode {
-            verification_uri,
-            user_code,
-            ..
-        } => {
-            lines.push(Line::from("Open:"));
-            lines.push(Line::styled(
-                verification_uri.clone(),
-                Style::default().fg(Color::Cyan),
-            ));
-            lines.push(Line::from(""));
-            lines.push(Line::from("Enter code:"));
-            lines.push(Line::styled(
-                user_code.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        prompt.copyable_url().to_owned(),
+        Style::default().fg(Color::Cyan),
+    ));
+    if let Some(user_code) = &prompt.user_code {
+        lines.push(Line::from(""));
+        lines.push(Line::from("Enter code:"));
+        lines.push(Line::styled(
+            user_code.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
     lines.push(Line::from(""));
     lines.push(Line::styled(
@@ -446,14 +437,14 @@ fn interactive_login_body(
 async fn interactive_login_wait(
     terminal: &mut CrosstermTerminal,
     label: &str,
-    action: &InteractiveUserAction,
+    prompt: &LoginPrompt,
     completion: AuthenticationFuture,
     diagnostic: Option<&str>,
 ) -> Result<Navigation<CompletedAuthentication>> {
     terminal.draw(|frame| {
         let body = interactive_login_body(
             label,
-            action,
+            prompt,
             "Waiting for authorization…",
             "Esc or Ctrl+C back",
             diagnostic,
@@ -493,7 +484,7 @@ async fn interactive_login_wait(
 fn confirm_external_login(
     terminal: &mut CrosstermTerminal,
     label: &str,
-    action: &InteractiveUserAction,
+    prompt: &LoginPrompt,
     instruction: &str,
     diagnostic: Option<&str>,
 ) -> Result<Navigation<()>> {
@@ -501,7 +492,7 @@ fn confirm_external_login(
         terminal.draw(|frame| {
             let body = interactive_login_body(
                 label,
-                action,
+                prompt,
                 instruction,
                 "Enter continue  ·  Esc or Ctrl+C back",
                 diagnostic,
