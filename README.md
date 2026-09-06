@@ -77,7 +77,9 @@ This normally resolves to `~/.local/share/slide-builder/design-packages/`.
 Each package contains a required `DESIGN.md` and one or more PowerPoint templates.
 
 Run `/import-design` to create a managed package from an existing `.pptx` file.
-The file picker accepts keyboard navigation or a typed or pasted path.
+Type in the file picker to fuzzy-filter files and folders in the current directory.
+Use the arrow keys to choose a match and Enter to open it. You can also type or
+paste a full path, or a relative path containing `/`.
 Slide-builder copies the source into a private staging directory, extracts its
 presentation structure, and renders a contact sheet using the configured renderer.
 If rendering is unavailable, import continues with extracted presentation evidence only.

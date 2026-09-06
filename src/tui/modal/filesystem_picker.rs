@@ -58,6 +58,33 @@ impl FileSystemPickerState {
         self
     }
 
+    // Explicit paths bypass search; bare names filter the current directory.
+    fn is_path_input(&self) -> bool {
+        let input = self.path_input.trim();
+        input.contains(std::path::MAIN_SEPARATOR)
+            || input.starts_with('~')
+            || matches!(input, "." | "..")
+            || (self.allow_new_files && is_powerpoint(Path::new(input)))
+    }
+
+    fn filtered_entries(&self) -> Vec<&FileSystemEntry> {
+        let query = self.path_input.trim().to_lowercase();
+        self.entries
+            .iter()
+            .filter(|entry| {
+                if query.is_empty() || self.is_path_input() {
+                    return true;
+                }
+                if Some(entry.path.as_path()) == self.current_directory.parent() {
+                    return false;
+                }
+                let name = file_name(&entry.path).to_lowercase();
+                let mut characters = name.chars();
+                query.chars().all(|wanted| characters.any(|c| c == wanted))
+            })
+            .collect()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> FileSystemPickerEvent {
         match key.code {
             KeyCode::Esc => FileSystemPickerEvent::Cancel,
@@ -66,7 +93,8 @@ impl FileSystemPickerState {
                 FileSystemPickerEvent::None
             }
             KeyCode::Down => {
-                self.selected = (self.selected + 1).min(self.entries.len().saturating_sub(1));
+                self.selected =
+                    (self.selected + 1).min(self.filtered_entries().len().saturating_sub(1));
                 FileSystemPickerEvent::None
             }
             KeyCode::Home => {
@@ -74,11 +102,12 @@ impl FileSystemPickerState {
                 FileSystemPickerEvent::None
             }
             KeyCode::End => {
-                self.selected = self.entries.len().saturating_sub(1);
+                self.selected = self.filtered_entries().len().saturating_sub(1);
                 FileSystemPickerEvent::None
             }
             KeyCode::Backspace => {
                 self.path_input.pop();
+                self.selected = 0;
                 self.error = None;
                 FileSystemPickerEvent::None
             }
@@ -91,10 +120,18 @@ impl FileSystemPickerState {
             }
             KeyCode::Char(character) => {
                 self.path_input.push(character);
+                self.selected = 0;
                 self.error = None;
                 FileSystemPickerEvent::None
             }
             KeyCode::Enter if !self.path_input.trim().is_empty() => {
+                if !self.is_path_input() {
+                    if let Some(entry) = self.filtered_entries().get(self.selected) {
+                        return self.activate(entry.path.clone());
+                    }
+                    self.error = Some("No matching files or folders".into());
+                    return FileSystemPickerEvent::None;
+                }
                 let input = self.path_input.trim();
                 let path = PathBuf::from(input);
                 let path = match expand_tilde(&path) {
@@ -119,6 +156,7 @@ impl FileSystemPickerState {
 
     pub fn paste(&mut self, text: &str) {
         self.path_input.push_str(text.trim());
+        self.selected = 0;
         self.error = None;
     }
 
@@ -233,8 +271,8 @@ pub fn render_titled(frame: &mut Frame<'_>, state: &FileSystemPickerState, title
     let start = state
         .selected
         .saturating_sub(visible_height.saturating_sub(1));
-    let items = state
-        .entries
+    let entries = state.filtered_entries();
+    let items = entries
         .iter()
         .enumerate()
         .skip(start)
@@ -247,19 +285,26 @@ pub fn render_titled(frame: &mut Frame<'_>, state: &FileSystemPickerState, title
             } else {
                 file_name(&entry.path)
             };
-            ListItem::new(Span::raw(format!("  {name}"))).style(if index == state.selected {
+            let marker = if index == state.selected { "›" } else { " " };
+            ListItem::new(Span::raw(format!("{marker} {name}"))).style(if index == state.selected {
                 theme::accent_block()
             } else {
                 Style::default().fg(theme::TEXT)
             })
         });
     frame.render_widget(List::new(items).highlight_symbol("›"), rows[1]);
+    if entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No matching files or folders").style(Style::default().fg(theme::MUTED)),
+            rows[1],
+        );
+    }
 
     let input = if state.path_input.is_empty() {
         if state.allow_new_files {
-            "Type or paste a path, or a new .pptx name to create it...".to_owned()
+            "Filter, paste a path, or type a new .pptx name...".to_owned()
         } else {
-            "Type or paste a path...".to_owned()
+            "Type to filter or paste a path...".to_owned()
         }
     } else {
         state.path_input.clone()
@@ -271,7 +316,11 @@ pub fn render_titled(frame: &mut Frame<'_>, state: &FileSystemPickerState, title
             } else {
                 theme::TEXT
             }))
-            .block(Block::default().borders(Borders::ALL).title(" Path ")),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Filter / path "),
+            ),
         rows[2],
     );
     if let Some(error) = &state.error {
