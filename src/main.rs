@@ -99,17 +99,35 @@ async fn run_app() -> Result<()> {
             return Ok(());
         }
     };
-    let engine = if deck.exists() {
-        DeckEngine::new(&deck)?
-    } else {
-        DeckEngine::create(&deck, None).await?
-    };
-    if !io::stdout().is_terminal() {
-        engine.snapshot().await?;
-        println!("Deck loaded successfully.");
-        return Ok(());
+    let mut deck = deck;
+    loop {
+        let engine = open_engine(&deck).await?;
+        if !io::stdout().is_terminal() {
+            engine.snapshot().await?;
+            println!("Deck loaded successfully.");
+            return Ok(());
+        }
+        match run_tui(engine).await? {
+            SessionOutcome::Exit => return Ok(()),
+            SessionOutcome::Reopen(next) => deck = next,
+        }
     }
-    run_tui(engine).await
+}
+
+/// Opens `deck`, creating an empty one if the file does not exist yet.
+async fn open_engine(deck: &Path) -> Result<DeckEngine> {
+    if deck.exists() {
+        DeckEngine::new(deck)
+    } else {
+        DeckEngine::create(deck, None).await
+    }
+}
+
+/// How an interactive session ended.
+enum SessionOutcome {
+    Exit,
+    /// The user chose another deck via `/open`; start a fresh session on it.
+    Reopen(PathBuf),
 }
 
 /// Shows a filesystem picker rooted at the current directory so the user can
@@ -168,7 +186,7 @@ fn missing_provider_credential(error: &anyhow::Error) -> bool {
     )
 }
 
-async fn run_tui(engine: DeckEngine) -> Result<()> {
+async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
     let paths = AppPaths::discover()?;
     let config_exists = paths.config_file().exists();
     let mut config = Config::load()?;
@@ -328,7 +346,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                 input = input.next() => match input {
                     Some(Ok(event)) => Some(TuiLoopEvent::App(AppEvent::Input(event))),
                     Some(Err(error)) => return Err(error.into()),
-                    None => return Ok(()),
+                    None => return Ok(SessionOutcome::Exit),
                 },
                 event = event_rx.recv() => event.map(TuiLoopEvent::App),
                 imported = import_rx.recv() => imported
@@ -339,7 +357,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                     Some(TuiLoopEvent::App(AppEvent::Tick(std::time::Instant::now())))
                 }
             };
-            let Some(event) = event else { return Ok(()) };
+            let Some(event) = event else { return Ok(SessionOutcome::Exit) };
             let event = match event {
                 TuiLoopEvent::Tool(UiToolCommand::Render { response }) => {
                     if let Some(service) = &render_service {
@@ -395,7 +413,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
             }
             for action in actions {
                 match action {
-                    AppAction::Quit => return Ok(()),
+                    AppAction::Quit => return Ok(SessionOutcome::Exit),
                     AppAction::SendMessage {
                         text,
                         attach_active_slide,
@@ -482,6 +500,30 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                                     format!("Could not load design package: {error:#}"),
                                 ),
                             }
+                        }
+                    }
+                    AppAction::OpenDeckPicker => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before opening another deck.".into(),
+                            );
+                        } else {
+                            let _ = event_tx.send(AppEvent::DeckPickerOpened {
+                                start_directory: deck_parent.to_path_buf(),
+                            });
+                        }
+                    }
+                    AppAction::OpenDeck(path) => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before opening another deck.".into(),
+                            );
+                        } else if path == engine.path() {
+                            push_system_message(&mut app, "That deck is already open.".into());
+                        } else {
+                            return Ok(SessionOutcome::Reopen(path));
                         }
                     }
                     AppAction::OpenImportDesignPicker => {
@@ -643,9 +685,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                         write!(terminal.backend_mut(), "\x1b]52;c;{encoded}\x07")?;
                         terminal.backend_mut().flush()?;
                     }
-                    AppAction::None
-                    | AppAction::OpenDeckPicker
-                    | AppAction::SetActiveSlide(_) => {}
+                    AppAction::None | AppAction::SetActiveSlide(_) => {}
                 }
             }
         }

@@ -8,7 +8,7 @@ use super::event::{
     AgentEvent, AppAction, AppEvent, ApprovalDecision, ImportDesignStage, RenderManifest,
 };
 use super::modal::{
-    exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
+    deck_picker, exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
     CommandPaletteState, ConfigurationEvent, ConfigurationState, FileSystemPickerEvent,
     FileSystemPickerState, ModalState, ModelPickerEvent, ModelPickerState, SlashCommand,
     SlashCommandAction,
@@ -353,6 +353,10 @@ impl App {
                 self.mark_preview_stale();
                 vec![AppAction::RequestRender]
             }
+            AppEvent::DeckPickerOpened { start_directory } => {
+                self.modal = ModalState::DeckPicker(deck_picker(start_directory));
+                vec![]
+            }
             AppEvent::ImportDesignPickerOpened { start_directory } => {
                 self.modal =
                     ModalState::ImportDesignPicker(FileSystemPickerState::new(start_directory));
@@ -429,7 +433,9 @@ impl App {
                 vec![]
             }
             AppEvent::Input(crossterm::event::Event::Paste(text)) => {
-                if let ModalState::ImportDesignPicker(state) = &mut self.modal {
+                if let ModalState::ImportDesignPicker(state) | ModalState::DeckPicker(state) =
+                    &mut self.modal
+                {
                     state.paste(&text);
                 }
                 vec![]
@@ -515,10 +521,7 @@ impl App {
                     self.modal = ModalState::DesignPicker(Default::default());
                     vec![AppAction::OpenDesignPicker]
                 }
-                KeyCode::Char('o') => {
-                    self.modal = ModalState::DeckPicker(Default::default());
-                    vec![AppAction::OpenDeckPicker]
-                }
+                KeyCode::Char('o') if !self.run_active => vec![AppAction::OpenDeckPicker],
                 KeyCode::Char('r') => vec![AppAction::RequestRender],
                 KeyCode::Char('v') => {
                     self.input.attach_active_slide = !self.input.attach_active_slide;
@@ -645,6 +648,19 @@ impl App {
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        if let ModalState::DeckPicker(state) = &mut self.modal {
+            return match state.handle_key(key) {
+                FileSystemPickerEvent::None => vec![],
+                FileSystemPickerEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                FileSystemPickerEvent::Selected(path) => {
+                    self.modal = ModalState::None;
+                    vec![AppAction::OpenDeck(path)]
+                }
+            };
+        }
         if let ModalState::ImportDesignPicker(state) = &mut self.modal {
             return match state.handle_key(key) {
                 FileSystemPickerEvent::None => vec![],
@@ -760,10 +776,8 @@ impl App {
 
     fn run_command(&mut self, command: Command) -> Vec<AppAction> {
         match command {
-            Command::OpenDeck => {
-                self.modal = ModalState::DeckPicker(Default::default());
-                vec![AppAction::OpenDeckPicker]
-            }
+            Command::OpenDeck if !self.run_active => vec![AppAction::OpenDeckPicker],
+            Command::OpenDeck => vec![],
             Command::ChangeDesign if !self.run_active => {
                 self.modal = ModalState::DesignPicker(Default::default());
                 vec![AppAction::OpenDesignPicker]

@@ -62,7 +62,42 @@ fn slash_command_selection_can_be_navigated_and_run() {
         app.handle_key(shortcut(KeyCode::Enter, KeyModifiers::NONE)),
         vec![AppAction::OpenDeckPicker]
     );
+    assert!(matches!(app.modal, ModalState::None));
+}
+
+#[test]
+fn deck_picker_selection_requests_opening_that_deck() {
+    let root = tempfile::tempdir().unwrap();
+    let deck = root.path().join("other.pptx");
+    std::fs::write(&deck, []).unwrap();
+    let mut app = App::default();
+    app.apply(AppEvent::DeckPickerOpened {
+        start_directory: root.path().to_path_buf(),
+    });
     assert!(matches!(app.modal, ModalState::DeckPicker(_)));
+
+    app.apply(AppEvent::Input(crossterm::event::Event::Paste(
+        "other.pptx".into(),
+    )));
+    assert_eq!(
+        app.handle_key(shortcut(KeyCode::Enter, KeyModifiers::NONE)),
+        vec![AppAction::OpenDeck(deck)]
+    );
+    assert!(matches!(app.modal, ModalState::None));
+}
+
+#[test]
+fn open_deck_is_ignored_while_a_run_is_active() {
+    let mut app = App {
+        run_active: true,
+        ..App::default()
+    };
+    app.input.text = "/open".into();
+    app.input.cursor = app.input.text.len();
+    assert_eq!(
+        app.handle_key(shortcut(KeyCode::Enter, KeyModifiers::NONE)),
+        vec![]
+    );
 }
 
 #[test]

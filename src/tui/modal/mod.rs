@@ -17,7 +17,7 @@ pub use command_palette::{
     CommandPaletteState, SlashCommand, SlashCommandAction,
 };
 pub use configuration::{ConfigurationEvent, ConfigurationState};
-pub use deck_picker::DeckPickerState;
+pub use deck_picker::deck_picker;
 pub use design_picker::DesignPickerState;
 pub use filesystem_picker::{FileSystemPickerEvent, FileSystemPickerState};
 pub use model_picker::{ModelPickerEvent, ModelPickerState};
@@ -39,7 +39,7 @@ pub enum ModalState {
     None,
     Approval(ApprovalRequest),
     Questionnaire(QuestionnaireState),
-    DeckPicker(DeckPickerState),
+    DeckPicker(FileSystemPickerState),
     TemplatePicker(TemplatePickerState),
     DesignPicker(DesignPickerState),
     ImportDesignPicker(FileSystemPickerState),
@@ -72,16 +72,7 @@ pub fn render(frame: &mut Frame<'_>, state: &ModalState) {
     match state {
         ModalState::None => {}
         ModalState::Approval(request) => render_approval(frame, request),
-        ModalState::DeckPicker(state) => render_list(
-            frame,
-            "Open deck",
-            state
-                .entries
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect(),
-            state.selected,
-        ),
+        ModalState::DeckPicker(state) => deck_picker::render(frame, state),
         ModalState::TemplatePicker(state) => render_list(
             frame,
             "Choose template",

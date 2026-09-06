@@ -86,6 +86,9 @@ pub enum AppEvent {
     },
     RendererUnavailable(String),
     DeckFileChanged,
+    DeckPickerOpened {
+        start_directory: PathBuf,
+    },
     ImportDesignPickerOpened {
         start_directory: PathBuf,
     },
@@ -134,6 +137,7 @@ pub enum AppAction {
     CancelRun,
     RequestRender,
     OpenDeckPicker,
+    OpenDeck(PathBuf),
     OpenDesignPicker,
     SelectDesign(PathBuf),
     OpenImportDesignPicker,
