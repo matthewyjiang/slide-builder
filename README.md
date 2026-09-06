@@ -40,10 +40,16 @@ On smaller terminals, all three status surfaces stack vertically above the promp
 
 The configuration can also be edited without leaving the TUI: press `Ctrl+,` or
 type `/config` in the message input and press Enter. The responsive configuration
-popup groups provider, permissions, preview, renderer, and compatibility settings. Use arrow
+popup groups model, permissions, preview, renderer, and compatibility settings. Use arrow
 keys (or `j`/`k`) to navigate, Left/Right to change choices, Enter to edit text,
 `Ctrl+S` to save, and Escape to close without saving. Changes are written to the
-configuration file immediately and take effect after restarting the application.
+configuration file immediately. Model changes apply to the running session; other
+changes take effect after restarting the application.
+
+To switch models quickly, type `/model` for a filterable picker. Both `/model` and
+the Model choice in `/config` list only models from providers you have signed in
+to (via rho's catalog and the slide-builder keyring); the switch is applied live and
+saved to the configuration file.
 
 API-key providers show a masked key prompt. OAuth and device-login providers
 show the authorization URL and code, then store the resulting tokens in

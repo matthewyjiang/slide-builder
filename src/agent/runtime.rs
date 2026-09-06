@@ -115,7 +115,37 @@ impl AgentHandle {
     pub fn snapshot(&self) -> rho_sdk::SessionSnapshot {
         self.session.snapshot()
     }
+
+    /// Swaps the session onto another provider/model without losing history.
+    /// Fails if a run is active; callers should check `is_active` first.
+    pub fn replace_provider(&self, provider: &str, auth: &str, model: &str) -> Result<()> {
+        let provider = build_provider(provider, auth, model)?;
+        self.session.replace_provider(provider)?;
+        Ok(())
+    }
 }
+
+/// Builds the rho model provider using slide-builder's own credential store.
+fn build_provider(
+    provider: &str,
+    auth: &str,
+    model: &str,
+) -> Result<std::sync::Arc<dyn rho_sdk::provider::ModelProvider>> {
+    let options = rho_providers::ProviderBuildOptions::new(provider, model, DEFAULT_REASONING)
+        .map_err(anyhow::Error::new)
+        .context("provider configuration failed")?
+        .with_auth(auth)
+        .map_err(anyhow::Error::new)
+        .context("provider authentication mode failed")?;
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+        std::sync::Arc::new(crate::credentials::SlideCredentialStore),
+    );
+    rho_providers::build_sdk_provider_with_source(options, &credentials)
+        .map_err(anyhow::Error::new)
+        .context("provider setup failed; log in from slide-builder setup")
+}
+
+const DEFAULT_REASONING: rho_sdk::ReasoningLevel = rho_sdk::ReasoningLevel::Medium;
 
 /// Translate SDK values at the integration boundary so the TUI remains
 /// independent of rho-sdk.
@@ -182,19 +212,7 @@ pub fn build_rho(
     engine: DeckEngine,
     policy: crate::agent::policy::SlidePolicy,
 ) -> Result<(Rho, ApprovalRequestReceiver)> {
-    let reasoning = rho_sdk::ReasoningLevel::Medium;
-    let options = rho_providers::ProviderBuildOptions::new(provider, model, reasoning)
-        .map_err(anyhow::Error::new)
-        .context("provider configuration failed")?
-        .with_auth(auth)
-        .map_err(anyhow::Error::new)
-        .context("provider authentication mode failed")?;
-    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        std::sync::Arc::new(crate::credentials::SlideCredentialStore),
-    );
-    let provider = rho_providers::build_sdk_provider_with_source(options, &credentials)
-        .map_err(anyhow::Error::new)
-        .context("provider setup failed; log in from slide-builder setup")?;
+    let provider = build_provider(provider, auth, model)?;
     let mut workspace = Workspace::new(repo)?.with_granted_root(decks)?;
     if let Some(path) = design {
         workspace = workspace.with_granted_root(path)?;
@@ -206,7 +224,7 @@ pub fn build_rho(
         .workspace(workspace)
         .workspace_policy(policy)
         .approval_handler(approvals)
-        .reasoning_level(reasoning)
+        .reasoning_level(DEFAULT_REASONING)
         .max_steps(run_step_limit());
     for tool in rho_agent_tools::coding_tools(rho_agent_tools::CodingToolOptions::new()) {
         builder = builder.tool_shared(tool)

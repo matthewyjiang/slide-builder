@@ -10,9 +10,10 @@ use super::event::{
 use super::modal::{
     exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
     CommandPaletteState, ConfigurationEvent, ConfigurationState, FileSystemPickerEvent,
-    FileSystemPickerState, ModalState, SlashCommand, SlashCommandAction,
+    FileSystemPickerState, ModalState, ModelPickerEvent, ModelPickerState, SlashCommand,
+    SlashCommandAction,
 };
-use crate::config::Config;
+use crate::{config::Config, models::AvailableModel};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -270,6 +271,8 @@ pub struct App {
     pub conversation_scroll_offset: u16,
     pub mouse: super::mouse::MouseState,
     pub config: Config,
+    /// Logged-in models discovered by main; feeds the config menu's model choice.
+    pub available_models: Vec<AvailableModel>,
 }
 
 impl Default for App {
@@ -293,6 +296,7 @@ impl Default for App {
             conversation_scroll_offset: 0,
             mouse: super::mouse::MouseState::default(),
             config: Config::default(),
+            available_models: vec![],
         }
     }
 }
@@ -412,6 +416,18 @@ impl App {
                 vec![]
             }
             AppEvent::DesignPickerOpened { .. } => vec![],
+            AppEvent::ModelPickerOpened { models, current } => {
+                self.available_models = models.clone();
+                self.modal = ModalState::ModelPicker(ModelPickerState::new(models, current));
+                vec![]
+            }
+            AppEvent::ModelChanged(model) => {
+                self.config.provider = model.provider.clone();
+                self.config.auth = model.auth.clone();
+                self.config.model = model.model.clone();
+                self.model = model.reference();
+                vec![]
+            }
             AppEvent::Input(crossterm::event::Event::Paste(text)) => {
                 if let ModalState::ImportDesignPicker(state) = &mut self.modal {
                     state.paste(&text);
@@ -489,8 +505,10 @@ impl App {
                     vec![]
                 }
                 KeyCode::Char(',') => {
-                    self.modal =
-                        ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
+                    self.modal = ModalState::Configuration(Box::new(ConfigurationState::new(
+                        &self.config,
+                        self.available_models.clone(),
+                    )));
                     vec![]
                 }
                 KeyCode::Char('p') if !self.run_active => {
@@ -640,6 +658,19 @@ impl App {
                 }
             };
         }
+        if let ModalState::ModelPicker(state) = &mut self.modal {
+            return match state.handle_key(key) {
+                ModelPickerEvent::None => vec![],
+                ModelPickerEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                ModelPickerEvent::Selected(model) => {
+                    self.modal = ModalState::None;
+                    vec![AppAction::SelectModel(model)]
+                }
+            };
+        }
         if let ModalState::DesignPicker(state) = &mut self.modal {
             return match key.code {
                 KeyCode::Esc => {
@@ -741,10 +772,13 @@ impl App {
             Command::ImportDesign => vec![AppAction::OpenImportDesignPicker],
             Command::RenderPreview => vec![AppAction::RequestRender],
             Command::Configure => {
-                self.modal =
-                    ModalState::Configuration(Box::new(ConfigurationState::new(&self.config)));
+                self.modal = ModalState::Configuration(Box::new(ConfigurationState::new(
+                    &self.config,
+                    self.available_models.clone(),
+                )));
                 vec![]
             }
+            Command::ChangeModel => vec![AppAction::OpenModelPicker],
             Command::ToggleAttachment => {
                 self.input.attach_active_slide = !self.input.attach_active_slide;
                 vec![]
@@ -1037,7 +1071,8 @@ mod tests {
     #[test]
     fn configuration_save_emits_persistence_action() {
         let mut app = App::default();
-        app.modal = ModalState::Configuration(Box::new(ConfigurationState::new(&app.config)));
+        app.modal =
+            ModalState::Configuration(Box::new(ConfigurationState::new(&app.config, vec![])));
         let actions = app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
         assert_eq!(actions, vec![AppAction::SaveConfiguration(Box::default())]);
         assert_eq!(app.modal, ModalState::None);

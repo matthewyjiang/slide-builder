@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use crossterm::event::KeyEvent;
 
-use crate::config::{Config, PermissionMode, RenderEngine};
+use crate::{
+    config::{Config, PermissionMode, RenderEngine},
+    models::AvailableModel,
+};
 
 use super::menu::{MenuEvent, MenuGroup, MenuItem, MenuState, MenuValue};
 
@@ -10,14 +13,18 @@ use super::menu::{MenuEvent, MenuGroup, MenuItem, MenuState, MenuValue};
 pub struct ConfigurationState {
     pub menu: MenuState,
     original: Config,
+    /// Models offered by the `model` choice; the configured model is appended
+    /// when it is not among them so saving never silently changes it.
+    models: Vec<AvailableModel>,
 }
 
 impl ConfigurationState {
-    pub fn new(config: &Config) -> Self {
-        let providers = rho_providers::provider::providers()
-            .iter()
-            .map(|p| p.name.to_owned())
-            .collect::<Vec<_>>();
+    /// `models` are the logged-in models from `models::discover_available_models`.
+    pub fn new(config: &Config, mut models: Vec<AvailableModel>) -> Self {
+        if !models.iter().any(|model| model.matches_config(config)) {
+            models.push(AvailableModel::from_config(config));
+        }
+        let model_options = models.iter().map(AvailableModel::reference).collect();
         let permission = ["auto", "plan", "supervised"];
         Self {
             original: config.clone(),
@@ -28,8 +35,7 @@ impl ConfigurationState {
                 status: None,
                 groups: vec![
                     MenuGroup { title: "AI provider".into(), items: vec![
-                        choice("provider", "Provider", "Changing provider or model takes effect after restart.", providers, &config.provider),
-                        text("model", "Model", "Exact provider model ID. Restart required after changing it.", &config.model),
+                        choice("model", "Model", "Models from providers you are logged in to. Applied on save.", model_options, &AvailableModel::from_config(config).reference()),
                         choice("reasoning", "Reasoning", "Reasoning effort used for new agent runs.", vec!["low".into(), "medium".into(), "high".into()], &config.reasoning),
                     ]},
                     MenuGroup { title: "Permissions & files".into(), items: vec![
@@ -56,6 +62,7 @@ impl ConfigurationState {
                     ]},
                 ],
             },
+            models,
         }
     }
 
@@ -75,13 +82,17 @@ impl ConfigurationState {
 
     fn to_config(&self) -> Result<Config, String> {
         let mut config = self.original.clone();
-        config.provider = self.string("provider")?;
-        if config.provider != self.original.provider {
-            config.auth = Config::resolve_auth_mode(&config.provider, "")
-                .map_err(|error| error.to_string())?
-                .to_owned();
+        let reference = self.string("model")?;
+        let model = self
+            .models
+            .iter()
+            .find(|model| model.reference() == reference)
+            .ok_or_else(|| format!("unknown model {reference}"))?;
+        if !model.matches_config(&self.original) {
+            config.provider = model.provider.clone();
+            config.auth = model.auth.clone();
+            config.model = model.model.clone();
         }
-        config.model = self.string("model")?;
         config.reasoning = self.string("reasoning")?;
         config.permission_mode = match self.string("permission")?.as_str() {
             "auto" => PermissionMode::Auto,

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::config::Config;
+use crate::models::AvailableModel;
 use crossterm::event::Event as TerminalEvent;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,6 +106,13 @@ pub enum AppEvent {
     DesignPickerOpened {
         entries: Vec<(String, PathBuf)>,
     },
+    /// Keyring-discovered models; `current` indexes the active one if listed.
+    ModelPickerOpened {
+        models: Vec<AvailableModel>,
+        current: Option<usize>,
+    },
+    /// The live agent now runs on this model; status line and config follow.
+    ModelChanged(AvailableModel),
     Tick(Instant),
 }
 
@@ -131,6 +139,8 @@ pub enum AppAction {
     OpenImportDesignPicker,
     ImportDesign(PathBuf),
     SaveConfiguration(Box<Config>),
+    OpenModelPicker,
+    SelectModel(AvailableModel),
     RespondApproval {
         id: String,
         decision: ApprovalDecision,

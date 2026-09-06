@@ -16,6 +16,7 @@ pub enum Command {
     ImportDesign,
     RenderPreview,
     Configure,
+    ChangeModel,
     ToggleAttachment,
     Present,
     ShowHelp,
@@ -44,7 +45,7 @@ pub struct SlashCommand {
     pub detail: &'static str,
 }
 
-const COMMANDS: [CommandItem; 9] = [
+const COMMANDS: [CommandItem; 10] = [
     CommandItem {
         command: Command::OpenDeck,
         slash_name: "/open",
@@ -79,6 +80,13 @@ const COMMANDS: [CommandItem; 9] = [
         label: "Settings",
         detail: "Provider, permissions, preview, and renderer",
         shortcut: "Ctrl+,",
+    },
+    CommandItem {
+        command: Command::ChangeModel,
+        slash_name: "/model",
+        label: "Change model",
+        detail: "Switch to another logged-in provider model",
+        shortcut: "",
     },
     CommandItem {
         command: Command::ToggleAttachment,

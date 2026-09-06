@@ -241,6 +241,7 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
         },
         mode: format!("{:?}", config.permission_mode).to_lowercase(),
         config: config.clone(),
+        available_models: slide_builder::models::discover_available_models(&config),
         ..App::default()
     };
     app.mouse.viewport = terminal.size()?.into();
@@ -477,9 +478,70 @@ async fn run_tui(engine: DeckEngine) -> Result<()> {
                             }
                         }
                     }
+                    AppAction::OpenModelPicker => {
+                        let models = slide_builder::models::discover_available_models(&config);
+                        let current = models
+                            .iter()
+                            .position(|model| model.matches_config(&config));
+                        let _ = event_tx.send(AppEvent::ModelPickerOpened { models, current });
+                    }
+                    AppAction::SelectModel(model) => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before changing models.".into(),
+                            );
+                        } else if !model.matches_config(&config) {
+                            let mut next = config.clone();
+                            next.provider = model.provider.clone();
+                            next.auth = model.auth.clone();
+                            next.model = model.model.clone();
+                            match switch_model(&agent, &mut app, &next) {
+                                Ok(()) => {
+                                    config = next;
+                                    let note = match config.save() {
+                                        Ok(()) => format!("Switched to {}.", model.reference()),
+                                        Err(error) => format!(
+                                            "Switched to {} for this session, but could not save configuration: {error:#}",
+                                            model.reference()
+                                        ),
+                                    };
+                                    push_system_message(&mut app, note);
+                                }
+                                Err(error) => push_system_message(
+                                    &mut app,
+                                    format!("Could not switch to {}: {error:#}", model.reference()),
+                                ),
+                            }
+                        }
+                    }
                     AppAction::SaveConfiguration(next) => {
                         let next = *next;
-                        let restart_required = next != config;
+                        let model_changed = (&next.provider, &next.auth, &next.model)
+                            != (&config.provider, &config.auth, &config.model);
+                        if model_changed && (app.run_active || design_import.is_active()) {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before changing models.".into(),
+                            );
+                            continue;
+                        }
+                        if model_changed {
+                            if let Err(error) = switch_model(&agent, &mut app, &next) {
+                                push_system_message(
+                                    &mut app,
+                                    format!("Could not switch model: {error:#}"),
+                                );
+                                continue;
+                            }
+                        }
+                        let restart_required = {
+                            let mut compare = next.clone();
+                            compare.provider = config.provider.clone();
+                            compare.auth = config.auth.clone();
+                            compare.model = config.model.clone();
+                            compare != config
+                        };
                         match next.save() {
                             Ok(()) => {
                                 config = next;
@@ -582,6 +644,22 @@ fn import_workflow_app_event(event: DesignImportWorkflowEvent) -> AppEvent {
         DesignImportWorkflowEvent::Failed(error) => AppEvent::ImportDesignFailed { error },
         DesignImportWorkflowEvent::Cancelled => AppEvent::ImportDesignCancelled,
     }
+}
+
+/// Hot-swaps the live agent onto `next`'s provider/model and mirrors the
+/// change into the TUI. The caller persists `next` afterwards.
+fn switch_model(agent: &AgentHandle, app: &mut App, next: &Config) -> Result<()> {
+    let auth = next.auth_mode()?.to_owned();
+    agent.replace_provider(&next.provider, &auth, &next.model)?;
+    app.apply(AppEvent::ModelChanged(
+        slide_builder::models::AvailableModel {
+            provider: next.provider.clone(),
+            model: next.model.clone(),
+            display_name: next.model.clone(),
+            auth,
+        },
+    ));
+    Ok(())
 }
 
 fn push_system_message(app: &mut App, text: String) {
