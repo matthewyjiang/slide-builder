@@ -21,7 +21,7 @@ than one authentication mode open a nested connection picker. The resulting
 to open this flow even when that config already exists.
 
 The workspace keeps the active deck, preview state, and contextual controls visible.
-Keyboard input stays in the prompt editor. Click a slide in the slide list to make it
+Keyboard input stays in the prompt editor unless tool inspection is active. Click a slide in the slide list to make it
 active. Use the mouse wheel over the conversation to scroll through its history. Drag
 across visible conversation text and release to copy it; a brief popup
 confirms how many characters were copied. Use the tmux-style `Ctrl+B` slide prefix,
@@ -37,6 +37,19 @@ Type `/` in the prompt editor to browse slash commands, use Up/Down to choose on
 Tab to complete it, and Enter to run it. Available commands cover the action menu,
 decks, designs, preview rendering, settings, attachments, presentation, help, and quit.
 On smaller terminals, all three status surfaces stack vertically above the prompt.
+
+Consecutive tool calls appear in an expandable **Tool activity** group. Running
+groups stay open; successful groups collapse when the agent moves on or finishes.
+Failures stay expanded with their error messages. Groups do not span assistant
+messages or separate runs, and slide/task relationships are not inferred.
+
+Press `Ctrl+B`, then `t` to inspect the latest tool group. Up/Down or `j`/`k`
+move between group headers and visible calls. Enter toggles a group or a call's
+details; Right opens a group and selects its first call. Details include the raw
+tool name, arguments, and recorded output. Page Up/Down scroll long details.
+Escape closes details, then returns to the group, then returns to the prompt;
+it does not cancel the run while inspection is active. Groups opened manually
+stay open after completion. Mouse-wheel scrolling leaves tool inspection.
 
 The configuration can also be edited without leaving the TUI: press `Ctrl+,` or
 type `/config` in the message input and press Enter. The responsive configuration

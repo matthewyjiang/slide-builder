@@ -14,6 +14,7 @@ fn shape_card(status: ToolStatus) -> ToolCard {
         id: "call-1".into(),
         name: "shape_add".into(),
         summary: "rectangle to slide 3".into(),
+        arguments: String::new(),
         detail: String::new(),
         status,
     }
@@ -68,23 +69,22 @@ fn wrapping_preserves_whitespace_and_unicode_graphemes() {
 }
 
 #[test]
-fn tool_outputs_use_full_width_status_backgrounds() {
+fn tool_headings_wrap_with_a_semantic_status_glyph() {
     let mut card = shape_card(ToolStatus::Succeeded);
     card.detail = "updated the shape geometry".into();
 
     let lines = render_tool(&card, 18);
 
-    assert!(lines.iter().all(|line| line.width() == 18));
-    let background = theme::tool_succeeded().bg;
-    assert!(lines
-        .iter()
-        .all(|line| { line.spans.iter().all(|span| span.style.bg == background) }));
+    assert!(lines.iter().all(|line| line.width() <= 18));
+    assert_eq!(
+        lines[0].spans[0],
+        Span::styled("✓", Style::default().fg(theme::SUCCESS))
+    );
     let compact = line_content(&lines)
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
     assert!(compact.contains("Addedrectangletoslide3"));
-    assert!(compact.contains("updatedtheshapegeometry"));
 }
 
 #[test]
@@ -113,6 +113,7 @@ fn successful_file_tools_use_plain_language() {
         id: "call-2".into(),
         name: "write_file".into(),
         summary: "chart.svg".into(),
+        arguments: String::new(),
         detail: String::new(),
         status: ToolStatus::Succeeded,
     };

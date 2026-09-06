@@ -15,6 +15,9 @@ use super::modal::{
 };
 use crate::{config::Config, models::AvailableModel};
 
+#[path = "app_agent_events.rs"]
+mod agent_events;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     User,
@@ -42,6 +45,7 @@ pub struct ToolCard {
     pub id: String,
     pub name: String,
     pub summary: String,
+    pub arguments: String,
     pub detail: String,
     pub status: ToolStatus,
 }
@@ -255,6 +259,7 @@ const IMPORT_INDICATOR_FRAMES: usize = 6;
 pub struct App {
     pub transcript: Vec<TranscriptItem>,
     pub tool_cards: HashMap<String, usize>,
+    pub tool_activity: super::tool_activity::ToolActivityState,
     pub preview: PreviewState,
     pub input: InputState,
     pub modal: ModalState,
@@ -280,6 +285,7 @@ impl Default for App {
         Self {
             transcript: vec![],
             tool_cards: HashMap::new(),
+            tool_activity: Default::default(),
             preview: PreviewState::default(),
             input: InputState::default(),
             modal: ModalState::None,
@@ -483,6 +489,10 @@ impl App {
                 KeyCode::Home | KeyCode::Char('g') => self.navigate_first(),
                 KeyCode::End | KeyCode::Char('G') => self.navigate_last(),
                 KeyCode::Char('r') => vec![AppAction::RequestRender],
+                KeyCode::Char('t') => {
+                    self.tool_activity.enter(&self.transcript);
+                    vec![]
+                }
                 KeyCode::Enter | KeyCode::Char('f') => {
                     if self.preview.slide_count() > 0 {
                         self.fullscreen = true;
@@ -538,6 +548,10 @@ impl App {
                 }
                 _ => vec![],
             };
+        }
+        if self.tool_activity.focus.is_some() {
+            super::chat::handle_activity_key(self, key.code);
+            return vec![];
         }
         match key.code {
             KeyCode::Esc if self.run_active => vec![AppAction::CancelRun],
@@ -866,69 +880,6 @@ impl App {
         };
         self.preview.status = PreviewStatus::Stale { generation };
     }
-
-    fn apply_agent_event(&mut self, event: AgentEvent) {
-        match event {
-            AgentEvent::TextDelta(delta) => match self.transcript.last_mut() {
-                Some(TranscriptItem::Message(Message {
-                    role: Role::Assistant,
-                    text,
-                    complete: false,
-                })) => text.push_str(&delta),
-                _ => self.transcript.push(TranscriptItem::Message(Message {
-                    role: Role::Assistant,
-                    text: delta,
-                    complete: false,
-                })),
-            },
-            AgentEvent::MessageFinished => {
-                if let Some(TranscriptItem::Message(message)) = self.transcript.last_mut() {
-                    message.complete = true;
-                }
-            }
-            AgentEvent::ToolProposed { id, name, summary } => {
-                let index = self.transcript.len();
-                self.tool_cards.insert(id.clone(), index);
-                self.transcript.push(TranscriptItem::Tool(ToolCard {
-                    id,
-                    name,
-                    summary,
-                    detail: String::new(),
-                    status: ToolStatus::Proposed,
-                }));
-            }
-            AgentEvent::ToolStarted { id } => self.update_tool(&id, ToolStatus::Running, None),
-            AgentEvent::ToolUpdated { id, .. } => {
-                // Progress payloads are often raw JSON or streamed command output. The
-                // conversation only needs to show that the action is still running.
-                self.update_tool(&id, ToolStatus::Running, None)
-            }
-            AgentEvent::ToolFinished { id, result } => match result {
-                Ok(()) => self.update_tool(&id, ToolStatus::Succeeded, Some(String::new())),
-                Err(detail) => self.update_tool(&id, ToolStatus::Failed, Some(detail)),
-            },
-            AgentEvent::RunFinished | AgentEvent::RunCancelled => self.run_active = false,
-            AgentEvent::RunFailed(error) => {
-                self.run_active = false;
-                self.transcript.push(TranscriptItem::Message(Message {
-                    role: Role::System,
-                    text: error,
-                    complete: true,
-                }));
-            }
-        }
-    }
-    fn update_tool(&mut self, id: &str, status: ToolStatus, detail: Option<String>) {
-        let Some(index) = self.tool_cards.get(id).copied() else {
-            return;
-        };
-        if let Some(TranscriptItem::Tool(card)) = self.transcript.get_mut(index) {
-            card.status = status;
-            if let Some(detail) = detail {
-                card.detail = detail;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1006,12 +957,13 @@ mod tests {
         assert_eq!(input.cursor, 0);
     }
     #[test]
-    fn successful_tool_events_hide_raw_progress_and_output() {
+    fn successful_tool_events_retain_inspectable_output() {
         let mut app = App::default();
         app.apply_agent_event(AgentEvent::ToolProposed {
             id: "1".into(),
             name: "shape_add".into(),
             summary: "rectangle to slide 2".into(),
+            arguments: "{}".into(),
         });
         app.apply_agent_event(AgentEvent::ToolUpdated {
             id: "1".into(),
@@ -1019,7 +971,7 @@ mod tests {
         });
         app.apply_agent_event(AgentEvent::ToolFinished {
             id: "1".into(),
-            result: Ok(()),
+            result: Ok("shape:42".into()),
         });
         assert_eq!(app.transcript.len(), 1);
         let TranscriptItem::Tool(card) = &app.transcript[0] else {
@@ -1027,7 +979,7 @@ mod tests {
         };
         assert_eq!(card.status, ToolStatus::Succeeded);
         assert_eq!(card.summary, "rectangle to slide 2");
-        assert!(card.detail.is_empty());
+        assert_eq!(card.detail, "shape:42");
     }
 
     #[test]
@@ -1037,6 +989,7 @@ mod tests {
             id: "1".into(),
             name: "shape_add".into(),
             summary: "rectangle to slide 2".into(),
+            arguments: "{}".into(),
         });
         app.apply_agent_event(AgentEvent::ToolFinished {
             id: "1".into(),

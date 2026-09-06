@@ -27,27 +27,25 @@ pub(crate) fn render_message(message: &Message, width: usize) -> Vec<Line<'stati
 
 pub(crate) fn render_tool(card: &ToolCard, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
-    let inner_width = padded_inner_width(width);
-    let (glyph, heading_style) = match card.status {
-        ToolStatus::Proposed => ("○", theme::tool_proposed()),
-        ToolStatus::Running => ("◌", theme::tool_running()),
-        ToolStatus::Succeeded => ("✓", theme::tool_succeeded()),
-        ToolStatus::Failed => ("✗", theme::tool_failed()),
+    let (glyph, color) = match card.status {
+        ToolStatus::Proposed => ("○", theme::MUTED),
+        ToolStatus::Running => ("◌", theme::WARNING),
+        ToolStatus::Succeeded => ("✓", theme::SUCCESS),
+        ToolStatus::Failed => ("✗", theme::DANGER),
     };
-    let block_style = heading_style.remove_modifier(Modifier::BOLD);
-    let mut rows = wrapped_rows(
+    let mut rows = plain_rows(
         &format!("{glyph} {}", tool_status_text(card)),
-        inner_width,
-        heading_style,
+        width,
+        Style::default(),
     );
-    if !card.detail.is_empty() {
-        rows.extend(wrapped_rows(
-            &format!("  {}", card.detail),
-            inner_width,
-            block_style.add_modifier(Modifier::DIM),
-        ));
+    if let Some(first) = rows.first_mut() {
+        let text = first.to_string();
+        *first = Line::from(vec![
+            Span::styled(glyph, Style::default().fg(color)),
+            Span::raw(text[glyph.len()..].to_owned()),
+        ]);
     }
-    render_block(rows, width, block_style)
+    rows
 }
 
 pub(crate) fn render_empty_state(width: usize) -> Vec<Line<'static>> {
@@ -118,7 +116,7 @@ fn wrapped_rows(text: &str, width: usize, style: Style) -> Vec<(String, Style)> 
     rows
 }
 
-fn plain_rows(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+pub(crate) fn plain_rows(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     wrapped_rows(text, width, style)
         .into_iter()
         .map(|(text, style)| Line::styled(text, style))

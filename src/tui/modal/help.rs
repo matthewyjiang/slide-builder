@@ -45,7 +45,7 @@ pub fn render(frame: &mut Frame<'_>) {
     render_section(
         frame,
         columns[1],
-        "Slide prefix (Ctrl+B, then key)",
+        "Slide prefix (Ctrl+B) / tools",
         &[
             ("h / k", "Previous slide"),
             ("j / l", "Next slide"),
@@ -54,6 +54,11 @@ pub fn render(frame: &mut Frame<'_>) {
             ("Enter / f", "Present active slide"),
             ("Esc", "Cancel prefix"),
             ("Ctrl+R", "Refresh without prefix"),
+            ("t after Ctrl+B", "Inspect tool activity"),
+            ("Tools: ↑↓ / j k", "Move between groups and calls"),
+            ("Tools: Enter / Right", "Toggle details / open group"),
+            ("Tools: PgUp / PgDn", "Scroll arguments and output"),
+            ("Tools: Esc", "Details → group → prompt"),
         ],
     );
 }
@@ -77,7 +82,6 @@ fn render_section(frame: &mut Frame<'_>, area: Rect, title: &str, shortcuts: &[(
             *description,
             Style::default().fg(theme::MUTED),
         ));
-        lines.push(Line::from(""));
     }
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),

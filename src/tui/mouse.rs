@@ -130,7 +130,7 @@ pub(crate) fn handle(app: &mut App, event: MouseEvent) -> Vec<AppAction> {
         }
         MouseEventKind::ScrollDown if contains(regions.chat, point) => {
             app.mouse.selection = None;
-            chat::scroll_down(app, WHEEL_SCROLL_LINES);
+            chat::scroll_down(app, chat_body, WHEEL_SCROLL_LINES);
             vec![]
         }
         MouseEventKind::Moved => {

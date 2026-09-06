@@ -17,6 +17,8 @@ pub mod preview_image;
 pub mod slideshow;
 pub mod statusline;
 pub mod theme;
+mod tool_activity;
+mod tool_activity_render;
 
 pub use app::{
     App, ImportDesignStatus, ImportProgress, InputState, Message, PreviewState, PreviewStatus,

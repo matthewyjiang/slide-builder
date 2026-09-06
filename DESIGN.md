@@ -47,29 +47,29 @@ components:
     rounded: "{rounded.none}"
     padding: "1lh 1ch"
   tool-proposed:
-    backgroundColor: "{colors.neutral-soft}"
+    backgroundColor: "{colors.terminal-background}"
     textColor: "{colors.terminal-foreground}"
     typography: "{typography.label}"
     rounded: "{rounded.none}"
-    padding: "1lh 1ch"
+    padding: "0 1ch"
   tool-running:
-    backgroundColor: "{colors.warning-soft}"
+    backgroundColor: "{colors.terminal-background}"
     textColor: "{colors.terminal-foreground}"
     typography: "{typography.label}"
     rounded: "{rounded.none}"
-    padding: "1lh 1ch"
+    padding: "0 1ch"
   tool-succeeded:
-    backgroundColor: "{colors.success-soft}"
+    backgroundColor: "{colors.terminal-background}"
     textColor: "{colors.terminal-foreground}"
     typography: "{typography.label}"
     rounded: "{rounded.none}"
-    padding: "1lh 1ch"
+    padding: "0 1ch"
   tool-failed:
-    backgroundColor: "{colors.danger-soft}"
+    backgroundColor: "{colors.terminal-background}"
     textColor: "{colors.terminal-foreground}"
     typography: "{typography.label}"
     rounded: "{rounded.none}"
-    padding: "1lh 1ch"
+    padding: "0 1ch"
   slide-active:
     backgroundColor: "{colors.signal-soft}"
     textColor: "{colors.terminal-foreground}"
@@ -149,7 +149,7 @@ The Focused Studio palette inherits the terminal's foreground, background, and A
 
 The system is flat with restrained tonal layers. It does not use shadows. Depth comes from the base surface, raised neutral blocks, semantic soft backgrounds, one-cell separators, and bordered overlays. Full borders are reserved for modals, presentation frames, copy feedback, and other genuinely overlaid surfaces.
 
-Persistent workspace panels use separator lines rather than card containers. Conversation and tool blocks use full-width backgrounds because their grouping is semantic, not decorative. Modal overlays may clear the content beneath them and use a square one-cell border to establish temporary focus.
+Persistent workspace panels use separator lines rather than card containers. User and system messages use full-width backgrounds for semantic grouping. Tool activity uses compact expandable rows on the terminal background. Modal overlays may clear the content beneath them and use a square one-cell border to establish temporary focus.
 
 **The Flat Studio Rule.** Prefer spacing, separators, and tonal contrast over nested borders or decorative containers.
 
@@ -165,7 +165,23 @@ Every message is width-aware and padded by one terminal column and one row. User
 
 ### Tool Activity
 
-Tool entries use the same full-width padded block structure as messages. Proposed, running, succeeded, and failed states each combine a semantic background, contrasting foreground, distinct glyph, and plain-language verb. Detail text remains secondary but must retain accessible contrast on the block surface.
+Consecutive tool calls form an expandable activity group inside the conversation.
+Messages and run boundaries separate groups. Without explicit task metadata, the
+group is labeled "Tool activity" rather than guessing its relationship to a slide.
+Running groups remain open, completed groups collapse by default, and failed groups
+stay open with readable error text. Manual expansion persists after completion.
+
+Groups and calls use compact rows on the terminal background, not filled status
+cards. A disclosure glyph marks expansion; status glyphs use the semantic ANSI
+colors alongside plain-language action text. Cyan focus is separate from execution
+status. Expanded call details show the tool name, arguments, and recorded output.
+Text wraps with hanging indentation in narrow terminals; details use normal
+foreground contrast rather than dim output text.
+
+`Ctrl+B`, then `t` enters tool inspection. Up/Down navigates visible headers and
+calls, Enter toggles expansion, and Right enters a group. Page Up/Down scrolls long
+details. Escape closes details, returns to the group, then returns to the prompt.
+Inspection never sends the prompt or cancels a run through Enter or Escape.
 
 ### Slide List
 

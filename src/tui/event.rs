@@ -30,6 +30,8 @@ pub enum AgentEvent {
         id: String,
         name: String,
         summary: String,
+        /// Complete tool arguments serialized as pretty-printed JSON.
+        arguments: String,
     },
     ToolStarted {
         id: String,
@@ -40,9 +42,8 @@ pub enum AgentEvent {
     },
     ToolFinished {
         id: String,
-        /// Successful output remains in the agent session and is intentionally
-        /// omitted from the user-facing transcript event.
-        result: Result<(), String>,
+        /// Complete successful text output or the tool's failure message.
+        result: Result<String, String>,
     },
     RunFinished,
     RunCancelled,

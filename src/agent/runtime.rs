@@ -158,10 +158,13 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
         RunEvent::AssistantTextDelta { text } => AppEvent::Run(AgentEvent::TextDelta(text)),
         RunEvent::ToolProposed { call } => {
             let summary = tool_summary::target(&call.name, &call.arguments);
+            let arguments = serde_json::to_string_pretty(&call.arguments)
+                .expect("tool argument JSON values are serializable");
             AppEvent::Run(AgentEvent::ToolProposed {
                 id: call.id,
                 name: call.name,
                 summary,
+                arguments,
             })
         }
         RunEvent::ToolStarted { call_id, .. } => AppEvent::Run(AgentEvent::ToolStarted {
@@ -175,7 +178,7 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
         }),
         RunEvent::ToolFinished { call_id, result } => {
             let result = match result {
-                ToolCompletion::Success(_) => Ok(()),
+                ToolCompletion::Success(output) => Ok(output.content().to_owned()),
                 ToolCompletion::Failure(error) => Err(error.message().to_owned()),
                 ToolCompletion::Unavailable => Err("tool unavailable".into()),
                 _ => Err("unknown tool completion".into()),
@@ -249,3 +252,7 @@ pub fn register_deck_tools(
     }
     builder
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;
