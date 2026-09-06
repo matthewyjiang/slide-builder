@@ -10,6 +10,8 @@ Run `/import-design` and pick a `.pptx`. Slide-builder copies the template and g
 
 ## Install
 
+Early preview. No binary releases yet, so you'll need to build from source.
+
 You need Rust 1.92+, Kitty or Ghostty for inline previews, and Bubblewrap (`bwrap`) with user namespaces enabled.
 
 From the repository root:
