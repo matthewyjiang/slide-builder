@@ -2,6 +2,12 @@
 
 AI-assisted PowerPoint authoring in your terminal. Linux only.
 
+## Your decks, your design
+
+Design packages pair PowerPoint templates with a `DESIGN.md` that tells the agent how to use them. Start from a deck you already like, so new slides follow your design instead of a generic theme.
+
+Run `/import-design` and pick a `.pptx`. Slide-builder copies the template and generates its design guide. Use `/design` to select the package, then describe the deck you want. Reuse the same package across decks.
+
 ## Install
 
 You need Rust 1.92+, Kitty or Ghostty for inline previews, and Bubblewrap (`bwrap`) with user namespaces enabled.
