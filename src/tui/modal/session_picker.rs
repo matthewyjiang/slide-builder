@@ -13,6 +13,15 @@ use unicode_width::UnicodeWidthStr;
 use super::popup;
 use crate::tui::theme;
 
+mod manager;
+pub use manager::{SessionAction, SessionView};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionPickerMode {
+    Resume,
+    Manage,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionPickerEntry {
     pub id: String,
@@ -24,6 +33,8 @@ pub struct SessionPickerEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionPickerState {
+    pub mode: SessionPickerMode,
+    pub view: SessionView,
     pub entries: Vec<SessionPickerEntry>,
     pub filter: String,
     /// Index in the filtered list.
@@ -36,11 +47,15 @@ pub enum SessionPickerEvent {
     None,
     Cancel,
     Selected(String),
+    Rename { id: String, name: String },
+    Delete(String),
 }
 
 impl SessionPickerState {
     pub fn new(entries: Vec<SessionPickerEntry>) -> Self {
         Self {
+            mode: SessionPickerMode::Resume,
+            view: SessionView::List,
             entries,
             filter: String::new(),
             selected: 0,
@@ -60,7 +75,23 @@ impl SessionPickerState {
             .collect()
     }
 
+    pub fn paste(&mut self, text: &str) {
+        let target = match &mut self.view {
+            SessionView::List => {
+                self.selected = 0;
+                &mut self.filter
+            }
+            SessionView::Rename { name, .. } => name,
+            SessionView::Actions { .. } | SessionView::ConfirmDelete { .. } => return,
+        };
+        target.extend(text.chars().filter(|c| !c.is_control()));
+        self.error = None;
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> SessionPickerEvent {
+        if self.view != SessionView::List {
+            return self.handle_manager_key(key);
+        }
         match key.code {
             KeyCode::Esc => return SessionPickerEvent::Cancel,
             KeyCode::Up => self.selected = self.selected.saturating_sub(1),
@@ -74,7 +105,17 @@ impl SessionPickerState {
             KeyCode::End => self.selected = self.visible().len().saturating_sub(1),
             KeyCode::Enter => {
                 if let Some(entry) = self.visible().get(self.selected) {
-                    return SessionPickerEvent::Selected(entry.id.clone());
+                    let entry = (*entry).clone();
+                    match self.mode {
+                        SessionPickerMode::Resume => return SessionPickerEvent::Selected(entry.id),
+                        SessionPickerMode::Manage => {
+                            self.error = None;
+                            self.view = SessionView::Actions {
+                                entry,
+                                selected: SessionAction::Resume,
+                            };
+                        }
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -97,16 +138,31 @@ impl SessionPickerState {
 }
 
 pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
+    if state.view != SessionView::List {
+        manager::render(frame, state);
+        return;
+    }
     // Match the existing model picker's dimensions; the terminal remains the bound.
     let area = popup(frame, 76, 20);
-    let full_help = "type to filter  ↑↓ choose  Enter resume  Esc close";
+    let (title, full_help, short_help) = match state.mode {
+        SessionPickerMode::Resume => (
+            " Resume session ",
+            "type to filter  ↑↓ choose  Enter resume  Esc close",
+            "↑↓  Enter resume  Esc close",
+        ),
+        SessionPickerMode::Manage => (
+            " Saved sessions ",
+            "type to filter  ↑↓ choose  Enter manage  Esc close",
+            "↑↓  Enter manage  Esc close",
+        ),
+    };
     let help = if full_help.width() <= usize::from(area.width.saturating_sub(2)) {
         full_help
     } else {
-        "↑↓  Enter resume  Esc close"
+        short_help
     };
     let block = Block::default()
-        .title(" Saved sessions ")
+        .title(title)
         .title_style(
             Style::default()
                 .fg(theme::TEXT)

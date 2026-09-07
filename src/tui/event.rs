@@ -121,6 +121,12 @@ pub enum AppEvent {
     SessionPickerOpened {
         entries: Vec<super::modal::session_picker::SessionPickerEntry>,
     },
+    SessionManagerOpened {
+        entries: Vec<super::modal::session_picker::SessionPickerEntry>,
+    },
+    SessionManagementSucceeded {
+        entries: Vec<super::modal::session_picker::SessionPickerEntry>,
+    },
     /// A resume failure or notice, shown without dismissing the picker.
     SessionResumeFailed(String),
     Tick(Instant),
@@ -153,6 +159,12 @@ pub enum AppAction {
     SaveConfiguration(Box<Config>),
     OpenModelPicker,
     OpenSessionPicker,
+    OpenSessionManager,
+    RenameSession {
+        id: String,
+        name: String,
+    },
+    DeleteSession(String),
     ResumeSession(String),
     SelectModel(AvailableModel),
     RespondApproval {

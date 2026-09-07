@@ -600,7 +600,8 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             }
                         }
                     }
-                    AppAction::OpenSessionPicker => {
+                    AppAction::OpenSessionPicker | AppAction::OpenSessionManager => {
+                        let manage = action == AppAction::OpenSessionManager;
                         if app.run_active || agent.is_active() || design_import.is_active() {
                             push_system_message(
                                 &mut app,
@@ -608,11 +609,33 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             );
                         } else {
                             match sessions::picker_entries(&store, &session_id) {
-                                Ok(entries) => { app.apply(AppEvent::SessionPickerOpened { entries }); }
+                                Ok(entries) => { app.apply(if manage { AppEvent::SessionManagerOpened { entries } } else { AppEvent::SessionPickerOpened { entries } }); }
                                 Err(error) => push_system_message(
                                     &mut app, format!("Could not list saved sessions: {error:#}"),
                                 ),
                             }
+                        }
+                    }
+                    AppAction::RenameSession { id, name } => {
+                        let result = if app.run_active || agent.is_active() || design_import.is_active() {
+                            Err(anyhow::anyhow!("Finish the current operation before managing sessions."))
+                        } else {
+                            sessions::manage(&store, &session_id, sessions::SessionManagement::Rename { id, name })
+                        };
+                        match result {
+                            Ok(entries) => { app.apply(AppEvent::SessionManagementSucceeded { entries }); }
+                            Err(error) => { app.apply(AppEvent::SessionResumeFailed(format!("Could not update session: {error:#}"))); }
+                        }
+                    }
+                    AppAction::DeleteSession(id) => {
+                        let result = if app.run_active || agent.is_active() || design_import.is_active() {
+                            Err(anyhow::anyhow!("Finish the current operation before managing sessions."))
+                        } else {
+                            sessions::manage(&store, &session_id, sessions::SessionManagement::Delete(id))
+                        };
+                        match result {
+                            Ok(entries) => { app.apply(AppEvent::SessionManagementSucceeded { entries }); }
+                            Err(error) => { app.apply(AppEvent::SessionResumeFailed(format!("Could not update session: {error:#}"))); }
                         }
                     }
                     AppAction::ResumeSession(id) => {

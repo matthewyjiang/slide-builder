@@ -95,7 +95,7 @@ const COMMANDS: [CommandItem; 13] = [
         command: Command::Sessions,
         slash_name: "/sessions",
         label: "Saved sessions",
-        detail: "Browse and resume a saved conversation",
+        detail: "Resume, rename, or delete saved conversations",
         shortcut: "",
     },
     CommandItem {

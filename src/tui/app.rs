@@ -457,6 +457,16 @@ impl App {
                 self.modal = ModalState::SessionPicker(SessionPickerState::new(entries));
                 vec![]
             }
+            AppEvent::SessionManagerOpened { entries } => {
+                self.modal = ModalState::SessionPicker(SessionPickerState::manager(entries));
+                vec![]
+            }
+            AppEvent::SessionManagementSucceeded { entries } => {
+                if let ModalState::SessionPicker(state) = &mut self.modal {
+                    state.management_succeeded(entries);
+                }
+                vec![]
+            }
             AppEvent::SessionResumeFailed(error) => {
                 if let ModalState::SessionPicker(state) = &mut self.modal {
                     state.error = Some(error);
@@ -467,6 +477,8 @@ impl App {
                 if let ModalState::ImportDesignPicker(state) | ModalState::DeckPicker(state) =
                     &mut self.modal
                 {
+                    state.paste(&text);
+                } else if let ModalState::SessionPicker(state) = &mut self.modal {
                     state.paste(&text);
                 }
                 vec![]
@@ -703,6 +715,10 @@ impl App {
                     vec![]
                 }
                 SessionPickerEvent::Selected(id) => vec![AppAction::ResumeSession(id)],
+                SessionPickerEvent::Rename { id, name } => {
+                    vec![AppAction::RenameSession { id, name }]
+                }
+                SessionPickerEvent::Delete(id) => vec![AppAction::DeleteSession(id)],
             };
         }
         if let ModalState::DeckPicker(state) = &mut self.modal {
@@ -851,7 +867,8 @@ impl App {
                 vec![]
             }
             Command::ChangeModel => vec![AppAction::OpenModelPicker],
-            Command::Sessions | Command::ResumeSession => vec![AppAction::OpenSessionPicker],
+            Command::Sessions => vec![AppAction::OpenSessionManager],
+            Command::ResumeSession => vec![AppAction::OpenSessionPicker],
             Command::ToggleAttachment => {
                 self.input.attach_active_slide = !self.input.attach_active_slide;
                 vec![]

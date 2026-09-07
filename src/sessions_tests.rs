@@ -11,6 +11,73 @@ use slide_builder::{
 use tokio::sync::mpsc;
 
 #[tokio::test]
+async fn session_manager_persists_rename_delete_and_protects_current_checkpoint() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(&directory.path().join("sessions.sqlite3")).unwrap();
+    let agent = AgentHandle::new(Rho::builder().provider(provider("unused")).build().unwrap())
+        .await
+        .unwrap();
+    let mut current = store
+        .create(
+            agent.snapshot(),
+            initial_state(
+                &directory.path().join("deck.pptx"),
+                directory.path(),
+                &Config::default(),
+            ),
+        )
+        .unwrap();
+    let entries = manage(
+        &store,
+        &current.id,
+        SessionManagement::Rename {
+            id: current.id.clone(),
+            name: " Current renamed ".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(entries[0].name, "Current renamed");
+    assert!(manage(
+        &store,
+        &current.id,
+        SessionManagement::Delete(current.id.clone())
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("Switch to another session"));
+    store.save(&mut current).unwrap();
+    assert_eq!(store.list().unwrap()[0].name, "Current renamed");
+    assert!(manage(
+        &store,
+        &current.id,
+        SessionManagement::Rename {
+            id: current.id.clone(),
+            name: " ".into()
+        }
+    )
+    .is_err());
+    assert!(manage(
+        &store,
+        &current.id,
+        SessionManagement::Delete("missing".into())
+    )
+    .is_err());
+    std::fs::write(directory.path().join("deck.pptx"), "deck contents").unwrap();
+    assert!(manage(
+        &store,
+        "another-current-session",
+        SessionManagement::Delete(current.id.clone())
+    )
+    .unwrap()
+    .is_empty());
+    assert!(store.load(&current.id).is_err());
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("deck.pptx")).unwrap(),
+        "deck contents"
+    );
+}
+
+#[tokio::test]
 async fn session_picker_preserves_database_order_and_marks_current_session() {
     let directory = tempfile::tempdir().unwrap();
     let store = SessionStore::open(&directory.path().join("sessions.sqlite3")).unwrap();

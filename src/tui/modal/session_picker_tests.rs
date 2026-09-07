@@ -130,3 +130,148 @@ fn shortened_details_respect_cell_width_and_grapheme_boundaries() {
         assert_eq!(detail_suffix(text, width), expected);
     }
 }
+
+#[test]
+fn manager_errors_do_not_hide_selected_controls() {
+    let mut state = SessionPickerState::manager(entries());
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    state.error = Some("Could not update session: database is locked by another process. Close the other process and try again.".into());
+    let screen = capture(&state, 32, 10);
+    assert!(screen.contains("› Cancel"), "{screen}");
+    assert!(screen.contains("Notice:"), "{screen}");
+    state.handle_key(key(KeyCode::Down));
+    let screen = capture(&state, 32, 10);
+    assert!(screen.contains("› Delete session"), "{screen}");
+    state.handle_key(key(KeyCode::Esc));
+    state.handle_key(key(KeyCode::Up));
+    state.handle_key(key(KeyCode::Enter));
+    state.error = Some("Could not update session: database is locked by another process. Close the other process and try again.".into());
+    let screen = capture(&state, 32, 10);
+    assert!(screen.contains("Name:"), "{screen}");
+    assert!(screen.contains("Notice:"), "{screen}");
+}
+
+#[test]
+fn manager_nested_escape_and_delete_confirmation_are_safe() {
+    let mut state = SessionPickerState::manager(entries());
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    assert!(matches!(
+        state.view,
+        SessionView::ConfirmDelete {
+            delete_selected: false,
+            ..
+        }
+    ));
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        SessionPickerEvent::None
+    );
+    assert!(matches!(state.view, SessionView::Actions { .. }));
+    state.handle_key(key(KeyCode::Enter));
+    state.handle_key(key(KeyCode::Down));
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        SessionPickerEvent::Delete("id-1".into())
+    );
+    assert!(matches!(
+        state.view,
+        SessionView::ConfirmDelete {
+            delete_selected: false,
+            ..
+        }
+    ));
+    state.handle_key(key(KeyCode::Esc));
+    state.handle_key(key(KeyCode::Esc));
+    assert_eq!(state.view, SessionView::List);
+    assert_eq!(state.selected, 1);
+    assert_eq!(
+        state.handle_key(key(KeyCode::Esc)),
+        SessionPickerEvent::Cancel
+    );
+}
+
+#[test]
+fn manager_current_delete_is_blocked_and_rename_validates_then_dispatches() {
+    let mut state = SessionPickerState::manager(entries());
+    state.handle_key(key(KeyCode::Enter));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Down));
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        SessionPickerEvent::None
+    );
+    assert!(state
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("Switch to another session"));
+    state.handle_key(key(KeyCode::Up));
+    state.handle_key(key(KeyCode::Enter));
+    state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        SessionPickerEvent::None
+    );
+    assert_eq!(state.error.as_deref(), Some("Enter a session name."));
+    for c in " New name ".chars() {
+        state.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        SessionPickerEvent::Rename {
+            id: "id-0".into(),
+            name: "New name".into()
+        }
+    );
+    state.handle_key(key(KeyCode::Esc));
+    assert!(matches!(
+        state.view,
+        SessionView::Actions {
+            selected: SessionAction::Rename,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn manager_views_render_controls_at_narrow_and_wide_sizes() {
+    let mut state = SessionPickerState::manager(entries());
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    for (width, height) in [(32, 10), (80, 24)] {
+        let screen = capture(&state, width, height);
+        for text in ["Resume", "Rename", "Delete", "Esc back"] {
+            assert!(screen.contains(text), "{screen}");
+        }
+    }
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    for (width, height) in [(32, 10), (80, 24)] {
+        let screen = capture(&state, width, height);
+        for text in ["Name:", "Enter save", "Ctrl+U clear"] {
+            assert!(screen.contains(text), "{screen}");
+        }
+    }
+    state.handle_key(key(KeyCode::Esc));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Enter));
+    for (width, height) in [(32, 10), (80, 24)] {
+        let screen = capture(&state, width, height);
+        for text in ["› Cancel", "Delete session", "kept.", "Esc back"] {
+            assert!(screen.contains(text), "{screen}");
+        }
+    }
+    state.error = Some("Database is busy. Try again.".into());
+    assert!(capture(&state, 32, 14).contains("Database is busy."));
+    for (width, height) in [(1, 1), (12, 4), (20, 6)] {
+        capture(&state, width, height);
+    }
+}

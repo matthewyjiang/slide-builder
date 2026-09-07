@@ -30,6 +30,29 @@ pub enum Launch {
     Continue(Box<StoredSession>),
 }
 
+/// Apply manager actions without allowing deletion of the live checkpoint record.
+pub enum SessionManagement {
+    Rename { id: String, name: String },
+    Delete(String),
+}
+
+pub fn manage(
+    store: &SessionStore,
+    current_id: &str,
+    action: SessionManagement,
+) -> Result<Vec<slide_builder::tui::modal::session_picker::SessionPickerEntry>> {
+    match action {
+        SessionManagement::Rename { id, name } => store.rename(&id, &name)?,
+        SessionManagement::Delete(id) => {
+            if id == current_id {
+                bail!("Switch to another session before deleting the current session.");
+            }
+            store.delete(&id)?;
+        }
+    }
+    picker_entries(store, current_id)
+}
+
 pub async fn run(command: Command) -> Result<Launch> {
     let store = SessionStore::open(&AppPaths::discover()?.database_file())?;
     match command {

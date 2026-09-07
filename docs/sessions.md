@@ -6,7 +6,7 @@ or browsing settings does not create a saved session.
 
 ## Resume inside the TUI
 
-Use `/sessions` or `/resume` to browse saved sessions, most recently updated first.
+Use `/resume` for a quick picker of saved sessions, most recently updated first.
 Type to filter, use Up/Down to choose, and press Enter to resume. Escape closes
 the picker without leaving your current session. The current session is marked.
 Deck paths and models appear on separate rows. Long details use a leading
@@ -17,6 +17,26 @@ Switching saves an already saved session before restoring the selected
 conversation and deck. Finish any active run or design import before switching. Missing or
 invalid saved decks show an error in the picker and leave your current session
 open.
+
+## Manage sessions inside the TUI
+
+Use `/sessions` to filter the same list, then press Enter to open the selected
+session's actions. Choose Resume, Rename, or Delete with Up/Down and Enter.
+Rename starts with the existing name; Backspace edits it and Ctrl+U clears it.
+You can paste text into the filter or name field. Enter saves a nonempty name.
+Renaming the current session is supported and later
+checkpoints preserve the new name.
+
+Delete opens a confirmation with Cancel selected. Move Down to Delete session
+and press Enter to permanently remove the conversation. Deck files are kept.
+The current session cannot be deleted from the manager: switch to another
+session first so subsequent checkpoints still have a record to save to.
+
+Escape from rename or confirmation returns to the action menu. Escape from the
+action menu returns to the filtered list, and Escape from the list closes the
+manager. Successful changes refresh the list in storage order and preserve the
+filter. Errors stay in the current view so you can retry or go back. Finish any
+active run or design import before managing sessions.
 
 ## CLI commands
 
