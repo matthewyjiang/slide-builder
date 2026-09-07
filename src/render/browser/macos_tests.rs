@@ -1,4 +1,5 @@
 use super::*;
+use crate::render::browser::CaptureOptions;
 use std::io::{ErrorKind, Write};
 
 #[path = "macos_procargs_tests.rs"]

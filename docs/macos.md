@@ -100,6 +100,13 @@ text, and portrait PDF export using Poppler. macOS CI excludes the two existing
 optional Chromium runtime tests; those tests remain available for manual
 qualification and are unchanged on Linux.
 
+Sandbox backends return a command and the input/output paths visible inside
+their isolation boundary. Both platforms use the same private worker argument
+protocol; only sandbox construction and policy are platform-specific. CI failure
+diagnostics are best-effort: unavailable sandbox logs or malformed crash reports
+do not prevent collecting the remaining reports. Their regression tests run in
+Linux CI.
+
 The complete native checks passed in GitHub Actions run `34081510067` on
 macOS 15.7.9, build `24G830`, ARM64, using Rust 1.92.0. The process-argument
 sentinel probe failed on the preceding profile and passed with the explicit

@@ -1,7 +1,7 @@
 //! Experimental pre-exec Seatbelt isolation for the embedded Obscura worker.
 //! SBPL is undocumented by Apple. Keep permissions explicit and qualify each
 //! supported macOS release; never broaden policy just to make a capture succeed.
-use super::{validate_executable, CaptureOptions};
+use super::{validate_executable, Launch};
 use anyhow::{Context, Result};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -12,12 +12,6 @@ const PROFILE: &str = include_str!("macos.sb");
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Sandbox {
     pub executable: PathBuf,
-}
-
-pub(super) struct Launch {
-    pub command: Command,
-    pub input: PathBuf,
-    pub output: PathBuf,
 }
 
 impl Sandbox {
@@ -64,28 +58,6 @@ impl Sandbox {
             output,
         })
     }
-}
-
-pub(super) fn capture_command(
-    sandbox: &Sandbox,
-    executable: &Path,
-    html: &Path,
-    output: &Path,
-    options: &CaptureOptions,
-) -> Result<Command> {
-    let mut launch = sandbox.command(executable, html, output)?;
-    launch
-        .command
-        .args([
-            super::super::worker::WORKER_ARGUMENT,
-            &options.width.to_string(),
-            &options.height.to_string(),
-            &options.scale.to_string(),
-            &options.timeout.as_millis().to_string(),
-        ])
-        .arg(launch.input)
-        .arg(launch.output);
-    Ok(launch.command)
 }
 
 #[cfg(test)]
