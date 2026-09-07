@@ -319,16 +319,11 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         None => AgentHandle::new(rho).await?,
     };
     let store = SessionStore::open(&paths.database_file())?;
-    let mut saved_session = match restored {
-        Some(session) => {
-            store.check_revision(&session)?;
-            session
-        }
-        None => store.create(
-            agent.snapshot(),
-            sessions::initial_state(engine.path(), &cwd, &config),
-        )?,
-    };
+    if let Some(session) = &restored {
+        store.check_revision(session)?;
+    }
+    let session_id = agent.snapshot().session_id().to_string();
+    let mut saved_session = restored;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let design_import = DesignImportWorkflow::default();
@@ -373,14 +368,16 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         available_models: slide_builder::models::discover_available_models(&config),
         ..App::default()
     };
-    sessions::restore_app(&mut app, &saved_session.state, slide_count);
+    if let Some(session) = &saved_session {
+        sessions::restore_app(&mut app, &session.state, slide_count);
+    }
     app.mouse.viewport = terminal.size()?.into();
     if app.transcript.is_empty() {
         app.transcript
         .push(slide_builder::tui::TranscriptItem::Message(
             slide_builder::tui::Message {
                 role: slide_builder::tui::Role::System,
-                text: format!("Session {}. Use `slide-builder sessions continue {}` to return. Saved history never replays tools; the deck is read from disk.", saved_session.id, saved_session.id),
+                text: format!("Session {session_id}. Saved after you send a message. Use `slide-builder sessions continue {session_id}` to return. Saved history never replays tools; the deck is read from disk."),
                 complete: true,
             },
         ));
@@ -396,7 +393,9 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         app.apply(AppEvent::RendererUnavailable(notice));
     }
 
-    let mut pending_design_context = saved_session.state.pending_design_context.clone();
+    let mut pending_design_context = saved_session
+        .as_ref()
+        .and_then(|session| session.state.pending_design_context.clone());
     let mut import_picker_directory = cwd.clone();
     let mut run_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut export_task: Option<tokio::task::JoinHandle<()>> = None;
@@ -481,7 +480,9 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
             let actions = app.apply(event);
             if turn_ended {
                 if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
-                sessions::checkpoint(&store, &mut saved_session, &agent, &app, &config, &pending_design_context)?;
+                if let Some(session) = &mut saved_session {
+                    sessions::checkpoint(&store, session, &agent, &app, &config, &pending_design_context)?;
+                }
             }
             if let Some(paths) = preload_paths {
                 preview_image.preload_deck(paths);
@@ -493,8 +494,18 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                         text,
                         attach_active_slide,
                     } => {
-                        store.check_revision(&saved_session)?;
+                        if let Some(session) = &saved_session {
+                            store.check_revision(session)?;
+                        }
                         if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
+                        if saved_session.is_none() {
+                            let mut session = store.create(
+                                agent.snapshot(),
+                                sessions::initial_state(engine.path(), &cwd, &config),
+                            )?;
+                            sessions::checkpoint(&store, &mut session, &agent, &app, &config, &pending_design_context)?;
+                            saved_session = Some(session);
+                        }
                         let text = match pending_design_context.take() {
                             Some(context) => format!("{context}{text}"),
                             None => text,
@@ -596,7 +607,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                                 "Finish the current operation before resuming another session.".into(),
                             );
                         } else {
-                            match sessions::picker_entries(&store, &saved_session.id) {
+                            match sessions::picker_entries(&store, &session_id) {
                                 Ok(entries) => { app.apply(AppEvent::SessionPickerOpened { entries }); }
                                 Err(error) => push_system_message(
                                     &mut app, format!("Could not list saved sessions: {error:#}"),
@@ -609,7 +620,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             app.apply(AppEvent::SessionResumeFailed(
                                 "Finish the current operation before resuming another session.".into(),
                             ));
-                        } else if id == saved_session.id {
+                        } else if id == session_id {
                             app.apply(AppEvent::SessionResumeFailed("This session is already open.".into()));
                         } else {
                             match sessions::prepare_resume(&store, &id).await {
@@ -839,9 +850,12 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         app.apply(event);
     }
     let checkpoint_result = shutdown_result.and_then(|()| {
+        let Some(session) = &mut saved_session else {
+            return Ok(());
+        };
         sessions::checkpoint(
             &store,
-            &mut saved_session,
+            session,
             &agent,
             &app,
             &config,

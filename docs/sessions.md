@@ -1,6 +1,8 @@
 # Saved sessions
 
-Each interactive deck opening starts a fresh conversation.
+Each interactive deck opening starts a fresh conversation. It appears in saved
+sessions only after you send a message. Opening a deck, typing an unsent draft,
+or browsing settings does not create a saved session.
 
 ## Resume inside the TUI
 
@@ -11,8 +13,8 @@ Deck paths and models appear on separate rows. Long details use a leading
 ellipsis to keep the filename or model identifier visible; filtering still
 matches the full values. Keyboard hints sit inside the picker's bottom border.
 
-Switching saves the current session before restoring the selected conversation
-and deck. Finish any active run or design import before switching. Missing or
+Switching saves an already saved session before restoring the selected
+conversation and deck. Finish any active run or design import before switching. Missing or
 invalid saved decks show an error in the picker and leave your current session
 open.
 
@@ -31,8 +33,9 @@ slide-builder sessions delete SESSION_ID
 provider/model, Unix timestamps, and checkpoint revisions. `continue` accepts an
 exact ID and requires an interactive terminal. Without an ID it chooses the most
 recently updated session across all workspaces, including renames. `sessions new`
-opens or creates the deck and records a new conversation. Outside a terminal it
-prints the new ID without authenticating or starting a model request. The existing
+opens or creates the deck; the interactive conversation saves on the first
+message. Outside a terminal it explicitly creates a saved session and prints the
+new ID without authenticating or starting a model request. The existing
 `slide-builder new DECK.pptx` command only creates a deck.
 
 ## What resume restores
@@ -63,11 +66,13 @@ Deleting a session removes its database record, not the deck or other files, and
 is not a secure-erasure guarantee. The old, unwired per-project JSON stub has no
 automatic migration.
 
-Checkpoints commit snapshot and UI state together after completed, failed, or
+The first message submission creates the saved session. Subsequent checkpoints
+commit snapshot and UI state together after completed, failed, or
 cooperatively cancelled turns, and on graceful exit or a deck/session switch.
 Graceful shutdown cancels and waits for an active run before saving. A crash or
 forced kill can lose work since the last checkpoint; tools may already have
-changed the deck on disk. Draft/UI-only changes save on graceful exit or a switch.
+changed the deck on disk. Draft/UI-only changes to an already saved session save
+on graceful exit or a switch. Unsent drafts in fresh conversations are discarded.
 Save errors stop the session and are reported after returning to the terminal.
 
 Revision checks reject competing history saves and saves after another process
