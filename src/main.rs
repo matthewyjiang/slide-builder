@@ -20,6 +20,7 @@ use slide_builder::{
         DesignImportRequest, DesignImportWorkflow, DesignImportWorkflowEvent,
         DesignImportWorkflowStage,
     },
+    integrations::herdr::{HerdrClient, HerdrState},
     paths::AppPaths,
     prompt::{self, PromptContext},
     render::{
@@ -42,6 +43,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod herdr_status;
 mod onboarding;
 mod sessions;
 
@@ -344,13 +346,18 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         pump_render_events(service, event_tx.clone());
     }
 
+    let herdr = HerdrClient::from_env();
+    let graphics = herdr.graphics_capability().await;
     enable_raw_mode()?;
     let mut out = io::stdout();
     execute!(out, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = ratatui::backend::CrosstermBackend::new(out);
     let mut terminal = ratatui::Terminal::new(backend)?;
     slide_builder::tui::theme::initialize_from_terminal();
-    let mut preview_image = PreviewImage::detect(&config.preview.protocol);
+    let mut preview_image = match herdr_status::preview_picker(graphics) {
+        Some(picker) => PreviewImage::with_picker(&config.preview.protocol, picker),
+        None => PreviewImage::detect(&config.preview.protocol),
+    };
     let mut app = App {
         deck_name: engine
             .path()
@@ -389,11 +396,15 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
     let mut import_picker_directory = cwd.clone();
     let mut run_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut export_task: Option<tokio::task::JoinHandle<()>> = None;
+    let herdr_reporter = herdr.start_reporting(&session_id);
+    let mut herdr_status = herdr_status::Status::default();
     let result = async {
         let mut input = EventStream::new();
         let mut ui_tool_rx = ui_tool_rx;
         let mut pending_render_tools = Vec::new();
         loop {
+            let (state, message) = herdr_status.current(&app);
+            herdr_reporter.report(state, Some(message));
             terminal.draw(|frame| {
                 slide_builder::tui::render_with_preview(frame, &app, Some(&mut preview_image))
             })?;
@@ -467,6 +478,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                 | slide_builder::tui::AgentEvent::RunCancelled
                 | slide_builder::tui::AgentEvent::RunFailed(_)
             ));
+            herdr_status.observe(&event);
             let actions = app.apply(event);
             if turn_ended {
                 if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
@@ -838,6 +850,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         }
     }
     .await;
+    herdr_reporter.report(HerdrState::Working, Some("Closing deck"));
     // An export owns its temporary files and finishes before deck/session teardown.
     if let Some(task) = export_task {
         if let Err(error) = task.await {
@@ -878,6 +891,8 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
     if let Some(service) = &render_service {
         service.shutdown().await;
     }
+    // Reporting is optional; a disconnected Herdr must not prevent terminal cleanup.
+    let herdr_result = herdr_reporter.shutdown().await;
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -885,6 +900,9 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         LeaveAlternateScreen
     )?;
     terminal.show_cursor()?;
+    if let Err(error) = herdr_result {
+        eprintln!("Herdr integration: {error}");
+    }
     if let Err(error) = std::fs::remove_dir_all(&render_cache_dir) {
         if error.kind() != io::ErrorKind::NotFound {
             return Err(error).context("remove temporary preview cache");

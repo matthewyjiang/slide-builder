@@ -2,6 +2,38 @@ use super::*;
 use std::time::{Duration, Instant};
 
 #[test]
+fn supplied_host_picker_respects_auto_and_explicit_protocols() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("slide.png");
+    write_test_image(&path);
+    let key = CacheKey {
+        path: path.clone(),
+        cells: Size::new(40, 20),
+    };
+    for (configured, host_protocol, expected_kitty) in [
+        ("auto", ProtocolType::Halfblocks, false),
+        ("auto", ProtocolType::Kitty, true),
+        ("halfblocks", ProtocolType::Kitty, false),
+        ("kitty", ProtocolType::Halfblocks, true),
+    ] {
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(host_protocol);
+        let mut preview = PreviewImage::with_picker(configured, picker);
+        preview.preload_deck(vec![path.clone()]);
+        preview.warm_for_sizes(&path, &[key.cells]);
+        wait_until_idle(&mut preview);
+        assert_eq!(
+            matches!(
+                preview.protocols[&key].protocol.protocol_type(),
+                StatefulProtocolType::Kitty(_)
+            ),
+            expected_kitty,
+            "configured={configured}, host={host_protocol:?}",
+        );
+    }
+}
+
+#[test]
 fn configured_protocol_names_are_case_insensitive() {
     assert_eq!(configured_protocol_type("Kitty"), Some(ProtocolType::Kitty));
     assert_eq!(configured_protocol_type("sixel"), Some(ProtocolType::Sixel));
