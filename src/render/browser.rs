@@ -1,6 +1,8 @@
 //! Renderer discovery and constrained HTML-to-PNG capture.
+pub use super::process::CaptureDiagnostics;
 use super::{
     executable::{executable_path, validate_executable},
+    process,
     sandbox::{Request, Sandbox},
 };
 use crate::config::{RenderConfig, RenderEngine};
@@ -15,7 +17,6 @@ use std::time::Duration;
 use tokio::process::Command;
 
 mod chromium;
-pub(super) mod process;
 
 fn capture_command(
     sandbox: &Sandbox,
@@ -73,12 +74,6 @@ impl Default for CaptureOptions {
             timeout: Duration::from_secs(60),
         }
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct CaptureDiagnostics {
-    pub stderr: String,
-    pub stdout: String,
 }
 
 impl Browser {

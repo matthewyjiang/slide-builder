@@ -23,20 +23,22 @@ explicit alternative, with no automatic fallback.
 ### Implementation ownership
 
 `src/render/sandbox.rs` selects the platform launcher behind a concrete `Sandbox`.
-Its `Request` contains only the host worker executable, input file, and output
-file. The returned `Launch` contains a command and the paths visible to the
-worker. Linux setup lives in `sandbox/linux.rs` and uses bubblewrap; macOS setup
-lives in `sandbox/macos.rs` with its unchanged `macos.sb` sandbox-exec profile.
-Unsupported platforms still fail closed. Platform policy tests live beside
-these implementations, including the native macOS child-process probes.
+Its `Request` holds the host worker executable, input file, and output file, then
+resolves those host paths and creates the output without replacing it. Platforms
+only build the isolated command. The returned `Launch` contains that command and
+the paths visible to the worker. Linux setup lives in `sandbox/linux.rs` and uses
+bubblewrap; macOS setup lives in `sandbox/macos.rs` with its unchanged `macos.sb`
+sandbox-exec profile. Unsupported platforms still fail closed. Platform policy
+tests live beside these implementations, including the native macOS
+child-process probes.
 
 `src/render/executable.rs` shares executable discovery and validation between
 the browser and sandbox without making sandbox setup depend on the browser.
-`browser.rs` still owns engine selection, capture validation, worker arguments,
-and renderer cache identity. Its shared process runner owns capture deadlines,
-diagnostics, and process-group cleanup for both engines. Extracting sandbox
-setup does not change launcher discovery, permissions, environment handling,
-process behavior, or the cache identity format.
+`src/render/process.rs` owns capture deadlines, diagnostics, and process-group
+cleanup for both engines and isolation tests. `browser.rs` still owns engine
+selection, capture validation, worker arguments, and renderer cache identity.
+Extracting sandbox setup does not change launcher discovery, permissions,
+environment handling, process behavior, or the cache identity format.
 
 ## Scaled captures
 

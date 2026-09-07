@@ -1,5 +1,4 @@
-//! Bounded subprocess execution shared by renderer adapters.
-use super::CaptureDiagnostics;
+//! Bounded subprocess execution for renderer captures and isolation probes.
 use anyhow::{bail, Context, Result};
 use std::process::Stdio;
 use std::time::Duration;
@@ -8,12 +7,15 @@ use tokio::process::Command;
 
 const DIAGNOSTIC_LIMIT: usize = 64 * 1024;
 
+#[derive(Clone, Debug)]
+pub struct CaptureDiagnostics {
+    pub stderr: String,
+    pub stdout: String,
+}
+
 /// Kill the whole process group on cancellation as well as wall-clock timeout.
 /// Bubblewrap additionally ties its isolated PID namespace to its parent's life.
-pub(in crate::render) async fn run(
-    mut command: Command,
-    timeout: Duration,
-) -> Result<CaptureDiagnostics> {
+pub(super) async fn run(mut command: Command, timeout: Duration) -> Result<CaptureDiagnostics> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

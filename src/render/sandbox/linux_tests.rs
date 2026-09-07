@@ -1,6 +1,8 @@
 use super::*;
-use crate::render::browser::{process, CaptureOptions};
+use crate::render::process;
+use std::fs;
 use std::os::unix::fs::symlink;
+use std::time::Duration;
 
 #[test]
 fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
@@ -87,7 +89,7 @@ pathlib.Path('/output/extra').write_text('private tmpfs only')
         .command
         .env("SLIDE_BUILDER_TEST_SECRET", "must-not-reach-renderer")
         .args(["-c", &script]);
-    process::run(launch.command, CaptureOptions::default().timeout)
+    process::run(launch.command, Duration::from_secs(60))
         .await
         .unwrap();
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");

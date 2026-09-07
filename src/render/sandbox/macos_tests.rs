@@ -1,6 +1,8 @@
 use super::*;
-use crate::render::browser::CaptureOptions;
+use crate::render::process;
+use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
+use std::time::Duration;
 
 #[path = "macos_procargs_tests.rs"]
 mod procargs;
@@ -99,7 +101,7 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
             output: &directory.path().join("true-output"),
         })
         .unwrap();
-    crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
+    process::run(launch.command, Duration::from_secs(60))
         .await
         .expect("minimal executable failed under sandbox profile");
     let executable = std::env::current_exe().unwrap();
@@ -127,7 +129,7 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
         .env("SLIDE_BUILDER_TEST_FIXTURE_PID", host.pid.to_string())
         .env("SLIDE_BUILDER_TEST_ARGUMENT_SENTINEL", &host.argument)
         .env("SLIDE_BUILDER_TEST_ENVIRONMENT_SENTINEL", &host.environment);
-    crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
+    process::run(launch.command, Duration::from_secs(60))
         .await
         .unwrap();
     host.finish().await;

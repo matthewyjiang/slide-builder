@@ -1,5 +1,6 @@
 use super::*;
 use crate::render::cache::CacheKey;
+use crate::render::process;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
