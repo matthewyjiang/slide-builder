@@ -1,6 +1,7 @@
 //! A host process containing only nonsecret sentinels for kernel-read probes.
 use std::io::Read;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 use tokio::process::{Child, Command};
 
@@ -36,7 +37,7 @@ impl HostFixture {
             .unwrap();
         let pid = child.id().unwrap();
         let mut lines = tokio::io::BufReader::new(child.stdout.as_mut().unwrap()).lines();
-        tokio::time::timeout(super::CaptureOptions::default().timeout, async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 let line = lines
                     .next_line()
