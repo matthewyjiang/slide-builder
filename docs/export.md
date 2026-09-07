@@ -50,10 +50,12 @@ configured Chromium PNG backend. It works when live preview is disabled, but a
 working renderer is still required. It never invokes LibreOffice or browser PDF
 printing.
 
-Capture width and scale follow the preview configuration; capture height follows
-the deck's actual aspect ratio instead of assuming 16:9. Existing renderer size
-and timeout checks also apply to export. The export owns a separate temporary
-render cache and removes it after completion or failure.
+Slides are captured at 300 pixels per inch of their physical page size, independent
+of preview width and scale. A 5 × 8 inch slide produces a 1500 × 2400 pixel image.
+Both dimensions follow the deck's actual size instead of assuming 16:9. Existing
+renderer size and timeout checks also apply to export; oversized captures fail
+with an error rather than silently reducing quality. The export owns a separate
+temporary render cache and removes it after completion or failure.
 
 The PDF embeds losslessly compressed slide images using `pdf-writer`. Text is
 rasterized, not selectable or searchable. Links, animations, speaker notes, and
@@ -77,5 +79,6 @@ cargo test -j 8 --test export_pdf -- --ignored
 ```
 
 It exports a two-slide portrait snapshot after changing the source deck, checks
-page count and physical dimensions with `pdfinfo`, and rasterizes the PDF to
-check slide order and full-bleed pixels.
+page count and physical dimensions with `pdfinfo`, checks embedded image dimensions
+at 300 dpi despite low preview settings, and rasterizes the PDF to check slide
+order and full-bleed pixels.

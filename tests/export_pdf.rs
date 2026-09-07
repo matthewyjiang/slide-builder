@@ -98,6 +98,11 @@ async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
         "{info}"
     );
     assert!(info.contains("360 x 576 pts"), "{info}");
+    // Five by eight inches at 300 dpi, regardless of preview quality settings.
+    let bytes = std::fs::read(&output).unwrap();
+    let pdf = String::from_utf8_lossy(&bytes);
+    assert_eq!(pdf.matches("/Width 1500").count(), 2);
+    assert_eq!(pdf.matches("/Height 2400").count(), 2);
     let raster = directory.path().join("page");
     let result = Command::new("pdftoppm")
         .args(["-png", "-r", "72"])
@@ -136,10 +141,12 @@ async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
             }
         }
         for point in [(1, 1), (358, 1), (1, 574), (358, 574), (180, 288)] {
-            assert_eq!(
-                image.get_pixel(point.0, point.1).0,
-                expected,
-                "page {page} at {point:?}"
+            let actual = image.get_pixel(point.0, point.1).0;
+            // Measured with pdftoppm downsampling 300 dpi to 72 dpi: solid
+            // red can become [254, 0, 0], so allow one level of rounding.
+            assert!(
+                actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
+                "page {page} at {point:?}: {actual:?}, expected {expected:?}"
             );
         }
     }
