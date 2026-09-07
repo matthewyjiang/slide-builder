@@ -95,15 +95,18 @@ impl Browser {
     }
 
     pub fn probe_chromium(configured: Option<&Path>) -> Result<Self> {
-        let executable = chromium::discover(configured.unwrap_or(Path::new("auto")))
-            .context("no Chromium-family browser found; install Google Chrome, Chromium, Brave, or Microsoft Edge, or set render.browser_path to its absolute executable path (inside Contents/MacOS on macOS)")?;
+        let executable = executable_path(
+            configured.unwrap_or(Path::new("auto")),
+            chromium::CANDIDATES,
+        )
+        .context("no Chromium-family browser found; configure render.browser_path")?;
         Self::from_path(&executable)
     }
 
     /// Explicit Chromium constructor, also useful with test capture executables.
     pub fn from_path(path: &Path) -> Result<Self> {
         let executable = validate_executable(path)?;
-        let cache_identity = format!("chromium-v2-{}", executable_identity(&executable)?).into();
+        let cache_identity = format!("chromium-v1-{}", executable_identity(&executable)?).into();
         Ok(Self {
             executable,
             engine: Engine::Chromium,

@@ -576,8 +576,7 @@ mod tests {
             width: 960,
             height: 720,
             scale: 1.0,
-            // Native macOS CI exceeded the old test-only 20-second deadline.
-            timeout: CaptureOptions::default().timeout,
+            timeout: std::time::Duration::from_secs(20),
         };
         let html = build_capture_html(&snapshot.html, 1, &options).unwrap();
         let html_path = directory.path().join("capture.html");
@@ -589,12 +588,6 @@ mod tests {
         browser
             .capture(&html_path, &png_path, &profile, &options)
             .await
-            .with_context(|| {
-                format!(
-                    "screenshot dimensions after failed capture: {:?}",
-                    image::image_dimensions(&png_path)
-                )
-            })
             .unwrap();
         let image = image::open(png_path).unwrap();
         assert_eq!((image.width(), image.height()), (960, 720));

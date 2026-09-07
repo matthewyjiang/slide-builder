@@ -14,16 +14,6 @@ async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
         Path::new("auto"),
     )
     .unwrap();
-    exports_portrait_snapshot_as_full_bleed_pdf(browser).await;
-}
-
-#[tokio::test]
-#[ignore = "requires Chromium, pdfinfo and pdftoppm"]
-async fn chromium_exports_portrait_snapshot_as_full_bleed_pdf() {
-    exports_portrait_snapshot_as_full_bleed_pdf(Browser::probe_chromium(None).unwrap()).await;
-}
-
-async fn exports_portrait_snapshot_as_full_bleed_pdf(browser: Browser) {
     let directory = tempfile::tempdir().unwrap();
     let engine = DeckEngine::create(directory.path().join("portrait.pptx"), None)
         .await

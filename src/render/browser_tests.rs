@@ -280,31 +280,3 @@ fn process_is_running(pid: u32) -> bool {
     let status = std::str::from_utf8(&output.stdout).unwrap().trim();
     !status.is_empty() && !status.starts_with(['Z', 'X'])
 }
-
-#[test]
-fn app_bundle_discovery_skips_invalid_files_and_preserves_explicit_paths() {
-    let directory = tempfile::tempdir().unwrap();
-    let system = directory.path().join("Applications");
-    let user = directory.path().join("home/Applications");
-    let chrome = system.join("Google Chrome.app/Contents/MacOS/Google Chrome");
-    let brave = user.join("Brave Browser.app/Contents/MacOS/Brave Browser");
-    for path in [&chrome, &brave] {
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, "browser").unwrap();
-    }
-    fs::set_permissions(&brave, fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(
-        chromium::discover_bundles([system.clone(), user.clone()]),
-        Some(fs::canonicalize(&brave).unwrap())
-    );
-    fs::set_permissions(&chrome, fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(
-        chromium::discover_bundles([system, user]),
-        Some(fs::canonicalize(&chrome).unwrap())
-    );
-    assert_eq!(
-        Browser::probe_chromium(Some(&brave)).unwrap().executable(),
-        fs::canonicalize(&brave).unwrap()
-    );
-    assert!(Browser::probe_chromium(Some(&directory.path().join("missing"))).is_err());
-}

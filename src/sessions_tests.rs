@@ -141,7 +141,7 @@ async fn picker_resume_validates_destination_without_mutating_saved_state_or_fil
         .unwrap();
     let (restored, engine) = prepare_resume(&store, &record.id).await.unwrap();
     assert_eq!(restored.snapshot, record.snapshot);
-    assert_eq!(engine.path(), path);
+    assert_eq!(engine.path(), std::fs::canonicalize(&path).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), original_deck);
     assert_eq!(store.load(&record.id).unwrap().revision, record.revision);
 

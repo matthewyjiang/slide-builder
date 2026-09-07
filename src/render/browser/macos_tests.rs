@@ -1,6 +1,9 @@
 use super::*;
 use std::io::{ErrorKind, Write};
 
+#[path = "macos_procargs_tests.rs"]
+mod procargs;
+
 #[test]
 fn sandbox_parameters_are_not_profile_source_and_output_cannot_be_redirected() {
     let directory = tempfile::Builder::new()
@@ -75,10 +78,7 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
         launch_services_available(),
         "host LaunchServices positive control failed"
     );
-    assert!(
-        process_arguments_readable(std::process::id()),
-        "host process-argument positive control failed"
-    );
+    let host = procargs::HostFixture::start().await;
     let sandbox = Sandbox::probe(Path::new("auto")).unwrap();
     // Distinguish a launcher/profile failure from native initialization failures.
     let launch = sandbox
@@ -107,13 +107,13 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
             fs::canonicalize(&secret).unwrap(),
         )
         .env("SLIDE_BUILDER_TEST_ADDRESS", address.to_string())
-        .env(
-            "SLIDE_BUILDER_TEST_PARENT_PID",
-            std::process::id().to_string(),
-        );
+        .env("SLIDE_BUILDER_TEST_PARENT_PID", host.pid.to_string())
+        .env("SLIDE_BUILDER_TEST_ARGUMENT_SENTINEL", &host.argument)
+        .env("SLIDE_BUILDER_TEST_ENVIRONMENT_SENTINEL", &host.environment);
     crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
         .await
         .unwrap();
+    host.finish().await;
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");
     assert_eq!(
         fs::read_to_string(secret).unwrap(),
@@ -187,14 +187,13 @@ fn macos_sandbox_probe_child() {
         !launch_services_available(),
         "sandbox unexpectedly obtained a LaunchServices port"
     );
-    assert!(
-        !process_arguments_readable(
-            std::env::var("SLIDE_BUILDER_TEST_PARENT_PID")
-                .unwrap()
-                .parse()
-                .unwrap()
-        ),
-        "sandbox unexpectedly allowed process-argument sysctl"
+    procargs::assert_denied(
+        std::env::var("SLIDE_BUILDER_TEST_PARENT_PID")
+            .unwrap()
+            .parse()
+            .unwrap(),
+        &std::env::var("SLIDE_BUILDER_TEST_ARGUMENT_SENTINEL").unwrap(),
+        &std::env::var("SLIDE_BUILDER_TEST_ENVIRONMENT_SENTINEL").unwrap(),
     );
     OpenOptions::new()
         .write(true)
@@ -247,36 +246,5 @@ fn fork_once() -> std::io::Result<()> {
         if error.kind() != ErrorKind::Interrupted {
             return Err(error);
         }
-    }
-}
-
-fn process_arguments_readable(pid: u32) -> bool {
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
-    let mut size = 0;
-    let sizing = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as u32,
-            std::ptr::null_mut(),
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if sizing != 0 {
-        return false;
-    }
-    // Darwin may permit the size-only query. The security boundary is whether
-    // the actual argument/environment bytes can be copied from the host process.
-    let mut bytes = vec![0_u8; size];
-    unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as u32,
-            bytes.as_mut_ptr().cast(),
-            &mut size,
-            std::ptr::null_mut(),
-            0,
-        ) == 0
     }
 }

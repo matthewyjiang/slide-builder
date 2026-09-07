@@ -34,8 +34,8 @@ jobs:
       - run: rustup component add rustfmt
       - run: cargo fmt --all -- --check
 
-  test:
-    name: Rust lint and tests
+  linux:
+    name: Linux CI
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,7 +52,7 @@ jobs:
         run: cargo test --locked --all-features
 
   macos:
-    name: macOS Obscura lint and isolation
+    name: macOS CI
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,17 +65,22 @@ jobs:
           # PR caches are scoped to the PR merge ref. Keep native dependencies
           # after a failed qualification run so policy fixes do not rebuild V8.
           cache-on-failure: true
-      - name: Native tool and browser versions
+      - name: Platform tools
         run: |
           sw_vers
           uname -m
           rustc -Vv
-          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --version
           brew install poppler
+          pdfinfo -v
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --locked --all-features --no-fail-fast
+        # These existing optional browser checks remain runnable manually;
+        # Chromium runtime qualification is not part of native macOS support.
+        run: |
+          cargo test --locked --all-features --no-fail-fast -- \
+            --skip chromium_captures_pinned_handler_slide_when_available \
+            --skip chromium_captures_deck_pptx_content_when_available
       - name: Obscura isolation
         if: ${{ !cancelled() }}
         run: |
@@ -90,30 +95,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           cargo test --locked --test export_pdf obscura_exports -- --ignored
-      - name: Explicit Chromium compatibility
-        if: ${{ !cancelled() }}
-        run: |
-          cargo test --locked --test chromium_render -- --ignored
-          cargo test --locked --test export_pdf chromium_exports -- --ignored
-      - name: Sandbox denial diagnostics
+      - name: Native failure diagnostics
         if: failure() && env.SANDBOX_STARTED_AT != ''
-        run: |
-          sudo log show --info --debug --style compact --start "$SANDBOX_STARTED_AT" --predicate 'process == "sandboxd" OR eventMessage CONTAINS "deny"'
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          for root in [Path.home() / 'Library/Logs/DiagnosticReports', Path('/Library/Logs/DiagnosticReports')]:
-              for path in root.glob('*.ips'):
-                  if not path.name.startswith(('slide', 'true', 'sandbox-exec')):
-                      continue
-                  print(path)
-                  text = path.read_text()
-                  _, end = json.JSONDecoder().raw_decode(text)
-                  report = json.loads(text[end:])
-                  print('exception:', report.get('exception'))
-                  print('termination:', report.get('termination'))
-                  print('application information:', report.get('asi'))
-                  for thread in report.get('threads', []):
-                      if thread.get('triggered'):
-                          print('faulting frames:', thread.get('frames'))
-          PY
+        run: python3 scripts/macos_ci_diagnostics.py

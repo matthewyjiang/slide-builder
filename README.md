@@ -51,8 +51,9 @@ cargo test --locked --all-features -j 8
 A separate workflow runs Actionlint when `.github/workflows/` changes. Both
 workflows can also be started manually from GitHub's Actions tab.
 
-CI runs the ordinary test suite on Linux and macOS, including the direct-worker rejection check.
-The macOS job also runs real Obscura isolation, capture, and PDF export checks,
-plus explicitly selected Chromium compatibility checks. The ignored Linux
+The Linux CI and macOS CI checks build and lint all Rust targets and run the
+ordinary test suite, including CLI sessions and direct-worker rejection.
+macOS CI also runs real Obscura isolation, capture, and PDF export checks.
+Optional Chromium runtime checks are not part of macOS qualification. The ignored Linux
 namespace tests require a qualified Bubblewrap host and are not run in CI.
 See `INSTALL.md` for the commands to run those checks.

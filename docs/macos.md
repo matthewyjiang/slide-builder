@@ -5,9 +5,11 @@ macOS backend launches the embedded worker through `/usr/bin/sandbox-exec`.
 Chromium is available only when explicitly selected; failures never change
 engines or run Obscura without isolation.
 
-macOS support is experimental pending native CI and manual qualification. The
-implementation host was Linux. Do not treat a successful build as evidence that
-the sandbox or renderer works on a particular macOS release.
+This backend is not ready for use. Native capture works, but host-process
+confidentiality is still failing qualification. This branch remains a draft
+pending a fix; the current policy is not an approved security boundary.
+The implementation host was Linux. macOS support remains experimental even
+after automated qualification, pending the manual checks below.
 
 ## Setup
 
@@ -61,24 +63,13 @@ and security tradeoff and the lack of official SBPL documentation:
 
 - `https://raw.githubusercontent.com/chromium/chromium/main/sandbox/mac/seatbelt_sandbox_design.md`
 
-## Explicit Chromium compatibility path
+## Existing Chromium option
 
-To use an installed Chromium-family browser instead of Obscura:
-
-```toml
-[render]
-engine = "chromium"
-browser_path = "auto"
-```
-
-Discovery checks PATH first, then `/Applications`, then `~/Applications`. In each
-app folder it checks Google Chrome, Chromium, Brave Browser, then Microsoft Edge.
-Safari is not a supported capture backend. An explicit path must name the
-executable inside the app bundle, for example
-`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`, not the `.app`
-directory. Invalid explicit paths are errors, not permission to choose another
-installation. Chromium keeps its own sandbox and isolated capture profiles.
-The HTML pipeline rejects remote resources and applies offline CSP.
+Explicit Chromium settings remain supported by the existing adapter; Obscura
+never switches to Chromium automatically. Chromium runtime behavior is not
+qualified on macOS by this change. Chrome 152 produced PNGs but failed to exit on
+the headless macOS CI host, including with GPU rendering disabled. Native macOS
+support does not depend on installing a Chromium browser.
 
 ## Application files
 
@@ -94,10 +85,13 @@ on macOS so concurrent imports cannot overwrite a package.
 
 ## Qualification
 
-The native `macos-15` CI job records OS, architecture, Rust, and Chrome versions.
-It runs Clippy and ordinary tests, host-file/network/Mach-service denial checks,
-real Obscura captures, and portrait PDF export checks using Poppler. Explicit
-Chromium capture and export remain compatibility checks, not the primary path.
+CI has separate Linux CI and macOS CI jobs for project-wide compilation, Clippy,
+and tests. Rust formatting runs separately. The macOS CI job uses `macos-15` and
+records OS, architecture, Rust, and Poppler versions. Its additional integration
+steps check host-file/network/Mach-service denial, real Obscura captures, styled
+text, and portrait PDF export using Poppler. macOS CI excludes the two existing
+optional Chromium runtime tests; those tests remain available for manual
+qualification and are unchanged on Linux.
 
 To repeat the Obscura checks on a Mac with Poppler installed:
 
