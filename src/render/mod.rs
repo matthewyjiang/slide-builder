@@ -11,6 +11,7 @@ mod executable;
 pub mod pipeline;
 mod process;
 mod sandbox;
+pub(crate) mod svg;
 #[doc(hidden)]
 pub mod worker;
 

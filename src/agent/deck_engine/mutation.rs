@@ -6,6 +6,7 @@ use super::{
     BoundsCheck, DeckMutation,
 };
 use crate::agent::inspection_geometry;
+use crate::render::svg::ValidatedSvg;
 use anyhow::{anyhow, bail, Context, Result};
 use handler_common::{
     output_format::{RawOptions, ViewOptions},
@@ -18,6 +19,9 @@ use std::{collections::HashMap, path::Path};
 #[path = "text_format.rs"]
 mod text_format;
 
+#[path = "svg_picture.rs"]
+mod svg_picture;
+
 pub(super) struct TransactionResult {
     pub(super) affected: Vec<String>,
     pub(super) post_state: serde_json::Value,
@@ -27,7 +31,11 @@ pub(super) fn transact(
     path: &Path,
     ops: Vec<DeckMutation>,
     bounds: BoundsCheck,
+    svg: Option<&ValidatedSvg>,
 ) -> Result<TransactionResult> {
+    if svg.is_some() && (ops.len() != 1 || !mutation_adds_picture(&ops[0])) {
+        bail!("SVG attachment requires exactly one image addition");
+    }
     if !path.exists() {
         bail!("deck does not exist: {}", path.display());
     }
@@ -60,7 +68,7 @@ pub(super) fn transact(
                     | DeckMutation::Swap { .. }
             );
             let stable_before = stable_ids_for_mutation(&current_state, &op);
-            let handler_affected = apply(&handler, op)?;
+            let handler_affected = apply(&handler, op, svg)?;
             let errors = handler.validate()?;
             if !errors.is_empty() {
                 bail!(
@@ -163,7 +171,11 @@ fn state_contains_pictures(state: &serde_json::Value) -> bool {
         })
 }
 
-fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
+fn apply(
+    handler: &PptxHandler,
+    op: DeckMutation,
+    svg: Option<&ValidatedSvg>,
+) -> Result<Vec<String>> {
     Ok(match op {
         DeckMutation::Add {
             parent,
@@ -176,6 +188,15 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
                 ensure_drawing_namespace(handler, &parent)?;
                 physical_slide_path(handler, &parent)?
             };
+            if mutation_element_is_picture(&element_type) {
+                // The pinned picture adder interpolates these XML attributes
+                // verbatim. Callers provide plain text, never pre-escaped XML.
+                for key in ["name", "alt", "description"] {
+                    if let Some(value) = properties.get_mut(key) {
+                        *value = quick_xml::escape::escape(value.as_str()).into_owned();
+                    }
+                }
+            }
             let reported = handler.add(
                 &handler_parent,
                 &element_type,
@@ -187,6 +208,9 @@ fn apply(handler: &PptxHandler, op: DeckMutation) -> Result<Vec<String>> {
             // as line color. Preserve the original payload during construction.
             let formatting = text_format::take(&mut properties);
             if mutation_element_is_picture(&element_type) {
+                if let Some(svg) = svg {
+                    svg_picture::attach(handler, &handler_parent, svg)?;
+                }
                 // Pictures are absent from the pinned handler's outline, and its
                 // reported shape path can point past the inserted element. The
                 // transaction derives the authoritative picture ID from its state
