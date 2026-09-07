@@ -12,6 +12,7 @@ use slide_builder::{
         deck_engine::DeckEngine,
         policy::{PermissionMode, SlidePolicy},
         runtime::{build_rho, AgentHandle},
+        session_store::{SessionStore, StoredSession},
         tools::UiToolCommand,
     },
     config::{Config, PermissionMode as ConfigPermissionMode},
@@ -42,6 +43,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 mod onboarding;
+mod sessions;
 
 const FORCE_FIRST_RUN_ENV: &str = "SLIDE_BUILDER_FORCE_FIRST_RUN";
 
@@ -88,6 +90,20 @@ async fn run_app() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&e.inspect(None).await?)?);
         return Ok(());
     }
+    let mut restored = None;
+    let first = if first.as_deref() == Some(Path::new("sessions")) {
+        match sessions::run(sessions::Command::parse(args)?).await? {
+            sessions::Launch::Exit => return Ok(()),
+            sessions::Launch::Fresh(deck) => Some(deck),
+            sessions::Launch::Continue(session) => {
+                let deck = session.state.deck.clone();
+                restored = Some(*session);
+                Some(deck)
+            }
+        }
+    } else {
+        first
+    };
     let deck = match first {
         Some(deck) => deck,
         None if io::stdout().is_terminal() => match choose_deck_interactively()? {
@@ -99,17 +115,27 @@ async fn run_app() -> Result<()> {
             return Ok(());
         }
     };
-    let mut deck = deck;
+    let mut engine = if restored.is_some() {
+        DeckEngine::new(&deck)?
+    } else {
+        open_engine(&deck).await?
+    };
     loop {
-        let engine = open_engine(&deck).await?;
         if !io::stdout().is_terminal() {
             engine.snapshot().await?;
             println!("Deck loaded successfully.");
             return Ok(());
         }
-        match run_tui(engine).await? {
+        match run_tui(engine, restored.take()).await? {
             SessionOutcome::Exit => return Ok(()),
-            SessionOutcome::Reopen(next) => deck = next,
+            SessionOutcome::Reopen(next) => engine = open_engine(&next).await?,
+            SessionOutcome::Resume {
+                session,
+                engine: next,
+            } => {
+                restored = Some(*session);
+                engine = next;
+            }
         }
     }
 }
@@ -128,6 +154,11 @@ enum SessionOutcome {
     Exit,
     /// The user chose another deck via `/open`; start a fresh session on it.
     Reopen(PathBuf),
+    /// The destination has been validated; the current session saves before handoff.
+    Resume {
+        session: Box<StoredSession>,
+        engine: DeckEngine,
+    },
 }
 
 /// Shows a filesystem picker rooted at the current directory so the user can
@@ -174,7 +205,7 @@ fn choose_deck_interactively() -> Result<Option<PathBuf>> {
 }
 
 fn print_help() {
-    println!("slide-builder\n\nUSAGE:\n  slide-builder              open a picker for .pptx files in the current directory\n  slide-builder DECK.pptx    open (or create) a deck\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n\nThe interactive UI requires Kitty or Ghostty. Embedded Obscura previews require Linux and bubblewrap; Chromium is opt-in.")
+    println!("slide-builder\n\nUSAGE:\n  slide-builder              open a picker for .pptx files in the current directory\n  slide-builder DECK.pptx    start a fresh session on a deck\n  slide-builder new DECK.pptx\n  slide-builder inspect DECK.pptx\n  slide-builder sessions list                 list saved sessions as JSON\n  slide-builder sessions continue [ID]        resume ID, or the most recently saved session\n  slide-builder sessions new DECK.pptx        create a session; print ID when noninteractive\n  slide-builder sessions rename ID NAME       rename a saved session\n  slide-builder sessions delete ID            delete history, not the deck\n\nSessions save after turns and on graceful exit. Use quotes around names with spaces.\nThe interactive UI requires Kitty or Ghostty. Embedded Obscura previews require Linux and bubblewrap; Chromium is opt-in.")
 }
 
 fn missing_provider_credential(error: &anyhow::Error) -> bool {
@@ -186,17 +217,27 @@ fn missing_provider_credential(error: &anyhow::Error) -> bool {
     )
 }
 
-async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
+async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<SessionOutcome> {
     let paths = AppPaths::discover()?;
     let config_exists = paths.config_file().exists();
     let mut config = Config::load()?;
+    let mut global_config = config.clone();
+    if let Some(session) = &restored {
+        config.provider = session.state.provider.clone();
+        config.auth = session.state.auth.clone();
+        config.model = session.state.model.clone();
+    }
     if std::env::var_os(FORCE_FIRST_RUN_ENV).as_deref() == Some(std::ffi::OsStr::new("1"))
         || !config_exists
         || config.model.trim().is_empty()
     {
         onboarding::run(&mut config).await?;
+        global_config = config.clone();
     }
-    let cwd = std::env::current_dir()?;
+    let cwd = match &restored {
+        Some(session) => session.state.cwd.clone(),
+        None => std::env::current_dir()?,
+    };
     paths.create_app_dirs()?;
     let managed_design_packages = paths.design_packages_dir();
     std::fs::create_dir_all(&managed_design_packages)?;
@@ -216,7 +257,13 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
         app_data_dir: &paths.data_dir,
         design: None,
         skills: &skills,
-        slide_index: 1,
+        slide_index: restored.as_ref().map_or(1, |session| {
+            session
+                .state
+                .active_slide
+                .min(slide_count.saturating_sub(1))
+                + 1
+        }),
         slide_count,
         deck_generation: snapshot.generation,
     })?;
@@ -255,7 +302,7 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                 &config.provider,
                 &auth,
                 &config.model,
-                prompt,
+                prompt.clone(),
                 &cwd,
                 deck_parent,
                 Some(&managed_design_packages),
@@ -267,7 +314,21 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
         }
         Err(error) => return Err(error),
     };
-    let agent = AgentHandle::new(rho).await?;
+    let agent = match &restored {
+        Some(session) => AgentHandle::restore(rho, session.snapshot.clone(), prompt).await?,
+        None => AgentHandle::new(rho).await?,
+    };
+    let store = SessionStore::open(&paths.database_file())?;
+    let mut saved_session = match restored {
+        Some(session) => {
+            store.check_revision(&session)?;
+            session
+        }
+        None => store.create(
+            agent.snapshot(),
+            sessions::initial_state(engine.path(), &cwd, &config),
+        )?,
+    };
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let design_import = DesignImportWorkflow::default();
@@ -312,15 +373,18 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
         available_models: slide_builder::models::discover_available_models(&config),
         ..App::default()
     };
+    sessions::restore_app(&mut app, &saved_session.state, slide_count);
     app.mouse.viewport = terminal.size()?.into();
-    app.transcript
+    if app.transcript.is_empty() {
+        app.transcript
         .push(slide_builder::tui::TranscriptItem::Message(
             slide_builder::tui::Message {
                 role: slide_builder::tui::Role::System,
-                text: "Deck loaded successfully.".into(),
+                text: format!("Session {}. Use `slide-builder sessions continue {}` to return. Saved history never replays tools; the deck is read from disk.", saved_session.id, saved_session.id),
                 complete: true,
             },
         ));
+    }
     if render_service.is_some() {
         queue_render(
             render_service.clone().unwrap(),
@@ -332,8 +396,9 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
         app.apply(AppEvent::RendererUnavailable(notice));
     }
 
-    let mut pending_design_context: Option<String> = None;
+    let mut pending_design_context = saved_session.state.pending_design_context.clone();
     let mut import_picker_directory = cwd.clone();
+    let mut run_task: Option<tokio::task::JoinHandle<()>> = None;
     let result = async {
         let mut input = EventStream::new();
         let mut ui_tool_rx = ui_tool_rx;
@@ -407,7 +472,16 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                 ),
                 _ => None,
             };
+            let turn_ended = matches!(&event, AppEvent::Run(
+                slide_builder::tui::AgentEvent::RunFinished
+                | slide_builder::tui::AgentEvent::RunCancelled
+                | slide_builder::tui::AgentEvent::RunFailed(_)
+            ));
             let actions = app.apply(event);
+            if turn_ended {
+                if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
+                sessions::checkpoint(&store, &mut saved_session, &agent, &app, &config, &pending_design_context)?;
+            }
             if let Some(paths) = preload_paths {
                 preview_image.preload_deck(paths);
             }
@@ -418,6 +492,8 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                         text,
                         attach_active_slide,
                     } => {
+                        store.check_revision(&saved_session)?;
+                        if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
                         let text = match pending_design_context.take() {
                             Some(context) => format!("{context}{text}"),
                             None => text,
@@ -428,13 +504,13 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                             .and_then(|slide| slide.image_path.clone());
                         let handle = agent.clone();
                         let tx = event_tx.clone();
-                        tokio::spawn(async move {
+                        run_task = Some(tokio::spawn(async move {
                             if let Err(error) = handle.send(text, image_path, tx.clone()).await {
                                 let _ = tx.send(AppEvent::Run(
                                     slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
                                 ));
                             }
-                        });
+                        }));
                     }
                     AppAction::CancelRun => {
                         if !design_import.cancel() {
@@ -499,6 +575,37 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                                     &mut app,
                                     format!("Could not load design package: {error:#}"),
                                 ),
+                            }
+                        }
+                    }
+                    AppAction::OpenSessionPicker => {
+                        if app.run_active || agent.is_active() || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before resuming another session.".into(),
+                            );
+                        } else {
+                            match sessions::picker_entries(&store, &saved_session.id) {
+                                Ok(entries) => { app.apply(AppEvent::SessionPickerOpened { entries }); }
+                                Err(error) => push_system_message(
+                                    &mut app, format!("Could not list saved sessions: {error:#}"),
+                                ),
+                            }
+                        }
+                    }
+                    AppAction::ResumeSession(id) => {
+                        if app.run_active || agent.is_active() || design_import.is_active() {
+                            app.apply(AppEvent::SessionResumeFailed(
+                                "Finish the current operation before resuming another session.".into(),
+                            ));
+                        } else if id == saved_session.id {
+                            app.apply(AppEvent::SessionResumeFailed("This session is already open.".into()));
+                        } else {
+                            match sessions::prepare_resume(&store, &id).await {
+                                Ok((session, engine)) => return Ok(SessionOutcome::Resume {
+                                    session: Box::new(session), engine,
+                                }),
+                                Err(error) => { app.apply(AppEvent::SessionResumeFailed(format!("Could not resume session: {error:#}"))); }
                             }
                         }
                     }
@@ -592,7 +699,10 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                                 Ok(()) => {
                                     config = next;
                                     let note = match config.save() {
-                                        Ok(()) => format!("Switched to {}.", model.reference()),
+                                        Ok(()) => {
+                                            global_config = config.clone();
+                                            format!("Switched to {}.", model.reference())
+                                        }
                                         Err(error) => format!(
                                             "Switched to {} for this session, but could not save configuration: {error:#}",
                                             model.reference()
@@ -634,8 +744,10 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
                             compare.model = config.model.clone();
                             compare != config
                         };
-                        match next.save() {
+                        let to_save = sessions::configuration_for_save(&next, &config, &global_config);
+                        match to_save.save() {
                             Ok(()) => {
+                                global_config = to_save;
                                 config = next;
                                 app.config = config.clone();
                                 app.transcript.push(slide_builder::tui::TranscriptItem::Message(
@@ -692,7 +804,31 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
     }
     .await;
     design_import.shutdown().await;
-    agent.cancel();
+    // Keep the runtime alive until cooperative cancellation has settled. UI tool
+    // responders have been dropped with the loop, so no approval/render can hang it.
+    agent.request_shutdown();
+    let mut shutdown_result = Ok(());
+    if let Some(mut task) = run_task.take() {
+        loop {
+            tokio::select! {
+                joined = &mut task => { shutdown_result = joined.context("agent task failed during shutdown"); break; }
+                Some(event) = event_rx.recv() => { app.apply(event); }
+            }
+        }
+    }
+    while let Ok(event) = event_rx.try_recv() {
+        app.apply(event);
+    }
+    let checkpoint_result = shutdown_result.and_then(|()| {
+        sessions::checkpoint(
+            &store,
+            &mut saved_session,
+            &agent,
+            &app,
+            &config,
+            &pending_design_context,
+        )
+    });
     if let Some(service) = &render_service {
         service.shutdown().await;
     }
@@ -708,7 +844,13 @@ async fn run_tui(engine: DeckEngine) -> Result<SessionOutcome> {
             return Err(error).context("remove temporary preview cache");
         }
     }
-    result
+    match (result, checkpoint_result) {
+        (Ok(outcome), Ok(())) => Ok(outcome),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(save_error)) => {
+            Err(error.context(format!("session checkpoint also failed: {save_error:#}")))
+        }
+    }
 }
 
 fn import_workflow_app_event(event: DesignImportWorkflowEvent) -> AppEvent {

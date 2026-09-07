@@ -32,20 +32,54 @@ fn run_step_limit() -> NonZeroUsize {
 pub struct AgentHandle {
     session: Session,
     active: Arc<AtomicBool>,
+    closing: Arc<AtomicBool>,
+    cancel_requested: Arc<AtomicBool>,
     cancellation: Arc<Mutex<Option<rho_sdk::CancellationToken>>>,
 }
 impl AgentHandle {
     pub async fn new(rho: Rho) -> Result<Self> {
+        Self::with_options(rho, SessionOptions::default()).await
+    }
+
+    /// Restore history without starting a run or replaying any tool. Replace the
+    /// saved system prompt with current deck/workspace context before rebinding.
+    pub async fn restore(
+        rho: Rho,
+        snapshot: rho_sdk::SessionSnapshot,
+        prompt: String,
+    ) -> Result<Self> {
+        let mut history = snapshot.history().to_vec();
+        match history.first_mut() {
+            Some(rho_sdk::model::Message::System(saved)) => *saved = prompt,
+            _ => history.insert(0, rho_sdk::model::Message::System(prompt)),
+        }
+        Self::with_options(
+            rho,
+            SessionOptions::from_snapshot(snapshot).history(history),
+        )
+        .await
+    }
+
+    async fn with_options(rho: Rho, options: SessionOptions) -> Result<Self> {
         Ok(Self {
-            session: rho.session(SessionOptions::default()).await?,
+            session: rho.session(options).await?,
             active: Arc::new(AtomicBool::new(false)),
+            closing: Arc::new(AtomicBool::new(false)),
+            cancel_requested: Arc::new(AtomicBool::new(false)),
             cancellation: Arc::new(Mutex::new(None)),
         })
     }
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::Acquire)
     }
+    /// Reject future turns and cancel even if the current task is still starting.
+    pub fn request_shutdown(&self) {
+        self.closing.store(true, Ordering::Release);
+        self.cancel();
+    }
     pub fn cancel(&self) -> bool {
+        // Escape may arrive between spawning send() and installing the SDK token.
+        self.cancel_requested.store(true, Ordering::Release);
         let cancellation = self
             .cancellation
             .lock()
@@ -64,6 +98,9 @@ impl AgentHandle {
         image_path: Option<PathBuf>,
         events: mpsc::UnboundedSender<AppEvent>,
     ) -> Result<()> {
+        if self.closing.load(Ordering::Acquire) {
+            anyhow::bail!("session is shutting down");
+        }
         if self
             .active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -76,6 +113,7 @@ impl AgentHandle {
             .cancellation
             .lock()
             .expect("agent cancellation mutex poisoned") = None;
+        self.cancel_requested.store(false, Ordering::Release);
         self.active.store(false, Ordering::Release);
         result
     }
@@ -108,7 +146,11 @@ impl AgentHandle {
             .cancellation
             .lock()
             .expect("agent cancellation mutex poisoned") = Some(run.cancellation_handle());
+        if self.closing.load(Ordering::Acquire) || self.cancel_requested.load(Ordering::Acquire) {
+            self.cancel();
+        }
         let mut pending = Vec::new();
+        let mut terminal_events = Vec::new();
         loop {
             tokio::select! {
                 // ToolFinished events precede the boundary request. Drain them
@@ -116,6 +158,13 @@ impl AgentHandle {
                 biased;
                 event = run.next_event() => {
                     let Some(event) = event else { break };
+                    // Publish the terminal transition only after the worker has
+                    // settled. Failure then has one source, never a second event
+                    // queued behind the next user turn.
+                    if matches!(&event, rho_sdk::RunEvent::Completed { .. } | rho_sdk::RunEvent::Cancelled { .. } | rho_sdk::RunEvent::Failed { .. }) {
+                        terminal_events = adapt_run_event(event);
+                        continue;
+                    }
                     if let rho_sdk::RunEvent::ToolFinished {
                         call_id,
                         result: rho_sdk::ToolCompletion::Success(output),
@@ -145,6 +194,16 @@ impl AgentHandle {
                     request.respond(input).await;
                 }
             }
+        }
+        match run.outcome().await {
+            Ok(_) => {}
+            Err(rho_sdk::Error::Cancelled) => {
+                terminal_events = vec![AppEvent::Run(AgentEvent::RunCancelled)];
+            }
+            Err(error) => return Err(error.into()),
+        }
+        for event in terminal_events {
+            let _ = events.send(event);
         }
         Ok(())
     }

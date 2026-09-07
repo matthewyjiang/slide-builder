@@ -10,22 +10,22 @@ use super::event::{
 use super::modal::{
     deck_picker, exact_slash_command, matching_slash_commands, Command, CommandPaletteEvent,
     CommandPaletteState, ConfigurationEvent, ConfigurationState, FileSystemPickerEvent,
-    FileSystemPickerState, ModalState, ModelPickerEvent, ModelPickerState, SlashCommand,
-    SlashCommandAction,
+    FileSystemPickerState, ModalState, ModelPickerEvent, ModelPickerState, SessionPickerEvent,
+    SessionPickerState, SlashCommand, SlashCommandAction,
 };
 use crate::{config::Config, models::AvailableModel};
 
 #[path = "app_agent_events.rs"]
 mod agent_events;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Role {
     User,
     Assistant,
     System,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ToolStatus {
     Proposed,
     Running,
@@ -33,14 +33,14 @@ pub enum ToolStatus {
     Failed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Message {
     pub role: Role,
     pub text: String,
     pub complete: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ToolCard {
     pub id: String,
     pub name: String,
@@ -50,7 +50,7 @@ pub struct ToolCard {
     pub status: ToolStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TranscriptItem {
     Message(Message),
     Tool(ToolCard),
@@ -438,6 +438,16 @@ impl App {
                 self.model = model.reference();
                 vec![]
             }
+            AppEvent::SessionPickerOpened { entries } => {
+                self.modal = ModalState::SessionPicker(SessionPickerState::new(entries));
+                vec![]
+            }
+            AppEvent::SessionResumeFailed(error) => {
+                if let ModalState::SessionPicker(state) = &mut self.modal {
+                    state.error = Some(error);
+                }
+                vec![]
+            }
             AppEvent::Input(crossterm::event::Event::Paste(text)) => {
                 if let ModalState::ImportDesignPicker(state) | ModalState::DeckPicker(state) =
                     &mut self.modal
@@ -662,6 +672,16 @@ impl App {
     }
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Vec<AppAction> {
+        if let ModalState::SessionPicker(state) = &mut self.modal {
+            return match state.handle_key(key) {
+                SessionPickerEvent::None => vec![],
+                SessionPickerEvent::Cancel => {
+                    self.modal = ModalState::None;
+                    vec![]
+                }
+                SessionPickerEvent::Selected(id) => vec![AppAction::ResumeSession(id)],
+            };
+        }
         if let ModalState::DeckPicker(state) = &mut self.modal {
             return match state.handle_key(key) {
                 FileSystemPickerEvent::None => vec![],
@@ -807,6 +827,7 @@ impl App {
                 vec![]
             }
             Command::ChangeModel => vec![AppAction::OpenModelPicker],
+            Command::Sessions | Command::ResumeSession => vec![AppAction::OpenSessionPicker],
             Command::ToggleAttachment => {
                 self.input.attach_active_slide = !self.input.attach_active_slide;
                 vec![]
@@ -1074,3 +1095,7 @@ mod controls_tests;
 #[cfg(test)]
 #[path = "app_import_design_tests.rs"]
 mod import_design_tests;
+
+#[cfg(test)]
+#[path = "app_session_tests.rs"]
+mod session_tests;

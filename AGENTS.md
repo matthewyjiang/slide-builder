@@ -2,6 +2,12 @@
 
 To test first-run onboarding with an existing config, run with `SLIDE_BUILDER_FORCE_FIRST_RUN=1`.
 
+## Documentation
+
+- Add and update feature documentation, usage guides, and implementation details in `docs/`, not `README.md`.
+- Keep `README.md` focused on the project overview and quick start. Do not grow it with feature-specific sections unless explicitly requested.
+- Update the relevant document in `docs/` when user-visible behavior changes.
+
 ## Commits and pull requests
 
 Use Conventional Commits for commit messages and PR titles:

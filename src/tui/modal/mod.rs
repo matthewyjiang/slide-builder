@@ -8,6 +8,7 @@ pub mod help;
 pub mod menu;
 pub mod model_picker;
 pub mod questionnaire;
+pub mod session_picker;
 pub mod setup;
 pub mod template_picker;
 
@@ -22,6 +23,7 @@ pub use design_picker::DesignPickerState;
 pub use filesystem_picker::{FileSystemPickerEvent, FileSystemPickerState};
 pub use model_picker::{ModelPickerEvent, ModelPickerState};
 pub use questionnaire::{Question, QuestionnaireState};
+pub use session_picker::{SessionPickerEvent, SessionPickerState};
 pub use setup::SetupState;
 pub use template_picker::TemplatePickerState;
 
@@ -44,6 +46,7 @@ pub enum ModalState {
     DesignPicker(DesignPickerState),
     ImportDesignPicker(FileSystemPickerState),
     ModelPicker(ModelPickerState),
+    SessionPicker(SessionPickerState),
     Setup(SetupState),
     Configuration(Box<ConfigurationState>),
     CommandPalette(CommandPaletteState),
@@ -91,6 +94,7 @@ pub fn render(frame: &mut Frame<'_>, state: &ModalState) {
         ),
         ModalState::ImportDesignPicker(state) => filesystem_picker::render(frame, state),
         ModalState::ModelPicker(state) => model_picker::render(frame, state),
+        ModalState::SessionPicker(state) => session_picker::render(frame, state),
         ModalState::Questionnaire(state) => {
             let question = state
                 .questions

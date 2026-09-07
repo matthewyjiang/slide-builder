@@ -117,6 +117,11 @@ pub enum AppEvent {
     },
     /// The live agent now runs on this model; status line and config follow.
     ModelChanged(AvailableModel),
+    SessionPickerOpened {
+        entries: Vec<super::modal::session_picker::SessionPickerEntry>,
+    },
+    /// A resume failure or notice, shown without dismissing the picker.
+    SessionResumeFailed(String),
     Tick(Instant),
 }
 
@@ -145,6 +150,8 @@ pub enum AppAction {
     ImportDesign(PathBuf),
     SaveConfiguration(Box<Config>),
     OpenModelPicker,
+    OpenSessionPicker,
+    ResumeSession(String),
     SelectModel(AvailableModel),
     RespondApproval {
         id: String,

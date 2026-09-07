@@ -38,6 +38,9 @@ impl AppPaths {
     pub fn config_file(&self) -> PathBuf {
         self.config_dir.join("config.toml")
     }
+    pub fn database_file(&self) -> PathBuf {
+        self.data_dir.join("slide-builder.sqlite3")
+    }
     pub fn projects_dir(&self) -> PathBuf {
         self.data_dir.join("projects")
     }

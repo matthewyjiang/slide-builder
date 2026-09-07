@@ -17,6 +17,8 @@ pub enum Command {
     RenderPreview,
     Configure,
     ChangeModel,
+    Sessions,
+    ResumeSession,
     ToggleAttachment,
     Present,
     ShowHelp,
@@ -45,7 +47,7 @@ pub struct SlashCommand {
     pub detail: &'static str,
 }
 
-const COMMANDS: [CommandItem; 10] = [
+const COMMANDS: [CommandItem; 12] = [
     CommandItem {
         command: Command::OpenDeck,
         slash_name: "/open",
@@ -86,6 +88,20 @@ const COMMANDS: [CommandItem; 10] = [
         slash_name: "/model",
         label: "Change model",
         detail: "Switch to another logged-in provider model",
+        shortcut: "",
+    },
+    CommandItem {
+        command: Command::Sessions,
+        slash_name: "/sessions",
+        label: "Saved sessions",
+        detail: "Browse and resume a saved conversation",
+        shortcut: "",
+    },
+    CommandItem {
+        command: Command::ResumeSession,
+        slash_name: "/resume",
+        label: "Resume session",
+        detail: "Choose a saved conversation to continue",
         shortcut: "",
     },
     CommandItem {
