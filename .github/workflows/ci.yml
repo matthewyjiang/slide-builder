@@ -76,13 +76,19 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --all-features
-      - name: Obscura isolation and native capture
+      - name: Obscura isolation
         if: ${{ !cancelled() }}
         run: |
           echo "SANDBOX_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_ENV"
           cargo test --locked --lib macos_sandbox_blocks_host_files_network_and_services -- --ignored
+      - name: Obscura native capture
+        if: ${{ !cancelled() }}
+        run: |
           cargo test --locked --test embedded_render -- --include-ignored
           cargo test --locked --test styled_text_render -- --ignored
+      - name: Obscura PDF export
+        if: ${{ !cancelled() }}
+        run: |
           cargo test --locked --test export_pdf obscura_exports -- --ignored
       - name: Explicit Chromium compatibility
         run: |
@@ -96,7 +102,9 @@ jobs:
           import json
           from pathlib import Path
           for root in [Path.home() / 'Library/Logs/DiagnosticReports', Path('/Library/Logs/DiagnosticReports')]:
-              for path in root.glob('slide*.ips'):
+              for path in root.glob('*.ips'):
+                  if not path.name.startswith(('slide', 'true', 'sandbox-exec')):
+                      continue
                   print(path)
                   text = path.read_text()
                   _, end = json.JSONDecoder().raw_decode(text)
