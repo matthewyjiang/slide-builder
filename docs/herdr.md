@@ -19,7 +19,7 @@ Slide Builder reports as `slide-builder`, with the source `herdr:slide-builder`.
 
 A preview refresh alone does not make the agent busy. Messages describe the operation and its outcome without sending prompt text, tool arguments, provider errors, or deck contents. Herdr decides whether an idle agent represents unseen completion and should appear as `done`.
 
-Reports run sequentially in a background task. Pending state updates coalesce to the latest state when the host is slow, so this is a current-status integration, not a lossless event log. Unchanged reports are suppressed, including after failures: the next state or message change retries reporting rather than every UI tick. Socket failures do not stop deck editing. If reporting failed during the session, the latest error is printed after the terminal is restored on exit, even if a later retry succeeded.
+Reports run sequentially in a background task. Pending state updates coalesce to the latest state when the host is slow, so this is a current-status integration, not a lossless event log. Unchanged reports are suppressed, including after failures: the next state or message change retries reporting rather than every UI tick. Socket failures do not stop deck editing. Release waits until after the terminal is restored, so a silent host cannot freeze the alternate screen. If reporting failed during the session, the latest error is printed on exit, even if a later retry succeeded. Dropping the reporter still requests release without waiting.
 
 ## Slide previews
 
@@ -40,8 +40,8 @@ This integration does not add `herdr agent start --kind slide-builder`, automati
 ## Implementation
 
 - `src/integrations/herdr.rs` owns environment discovery, newline-delimited JSON socket transport, graphics probing, and the reporting worker.
-- `src/herdr_status.rs` maps application state to reports and host graphics capabilities to a terminal image picker.
-- `src/main.rs` connects the adapter to the workspace lifetime and event loop.
+- `src/herdr_status.rs` owns the workspace lifetime: graphics discovery, preview selection, attach, sync, close, and shutdown. It also maps application state to reports.
+- `src/main.rs` holds a workspace handle. It does not construct Herdr types or choose a preview picker.
 - `PreviewImage::with_picker` consumes a generic terminal image picker without knowing about Herdr.
 
 The transport follows Rho's native Herdr adapter. Request deadlines and the response-size tripwire reuse Rho's existing budgets rather than introducing a deck-specific limit. Unit tests use isolated Unix sockets; application-state tests drive the same events and keyboard actions as the TUI.

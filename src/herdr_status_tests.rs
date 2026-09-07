@@ -5,17 +5,14 @@ use slide_builder::tui::{AppAction, ApprovalRequest};
 fn apply(status: &mut Status, app: &mut App, event: AppEvent) -> (HerdrState, &'static str) {
     status.observe(&event);
     app.apply(event);
-    status.current(app)
+    status.sync(app)
 }
 
 #[test]
 fn prompt_approval_and_completion_follow_app_input_ownership() {
     let mut app = App::default();
     let mut status = Status::default();
-    assert_eq!(
-        status.current(&app),
-        (HerdrState::Idle, "Ready for a prompt")
-    );
+    assert_eq!(status.sync(&app), (HerdrState::Idle, "Ready for a prompt"));
     app.input.text = "Create a slide".into();
     let actions = app.apply(AppEvent::Input(Event::Key(KeyEvent::new(
         KeyCode::Enter,
@@ -25,7 +22,7 @@ fn prompt_approval_and_completion_follow_app_input_ownership() {
         actions.as_slice(),
         [AppAction::SendMessage { .. }]
     ));
-    assert_eq!(status.current(&app), (HerdrState::Working, "Editing deck"));
+    assert_eq!(status.sync(&app), (HerdrState::Working, "Editing deck"));
     assert_eq!(
         apply(
             &mut status,
@@ -47,7 +44,7 @@ fn prompt_approval_and_completion_follow_app_input_ownership() {
         actions.as_slice(),
         [AppAction::RespondApproval { .. }]
     ));
-    assert_eq!(status.current(&app), (HerdrState::Working, "Editing deck"));
+    assert_eq!(status.sync(&app), (HerdrState::Working, "Editing deck"));
     assert_eq!(
         apply(
             &mut status,
@@ -85,7 +82,7 @@ fn failures_and_cancellation_return_to_ready_without_leaking_details() {
             (HerdrState::Idle, message)
         );
         app.run_active = true;
-        assert_eq!(status.current(&app), (HerdrState::Working, "Editing deck"));
+        assert_eq!(status.sync(&app), (HerdrState::Working, "Editing deck"));
     }
 }
 
@@ -96,7 +93,7 @@ fn export_import_and_dialogs_take_precedence_over_idle() {
         ..App::default()
     };
     let mut status = Status::default();
-    assert_eq!(status.current(&app), (HerdrState::Working, "Exporting PDF"));
+    assert_eq!(status.sync(&app), (HerdrState::Working, "Exporting PDF"));
     assert_eq!(
         apply(
             &mut status,
@@ -128,14 +125,14 @@ fn export_import_and_dialogs_take_precedence_over_idle() {
         (HerdrState::Idle, "Design import cancelled")
     );
     app.modal = ModalState::Help;
-    assert_eq!(status.current(&app).0, HerdrState::Blocked);
+    assert_eq!(status.sync(&app).0, HerdrState::Blocked);
     app.apply(AppEvent::Input(Event::Key(KeyEvent::new(
         KeyCode::Esc,
         KeyModifiers::NONE,
     ))));
-    assert_eq!(status.current(&app).0, HerdrState::Idle);
+    assert_eq!(status.sync(&app).0, HerdrState::Idle);
     app.fullscreen = true;
-    assert_eq!(status.current(&app).0, HerdrState::Blocked);
+    assert_eq!(status.sync(&app).0, HerdrState::Blocked);
 }
 
 #[test]

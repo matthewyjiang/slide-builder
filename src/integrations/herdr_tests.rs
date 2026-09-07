@@ -224,6 +224,21 @@ mod unix {
     }
 
     #[tokio::test]
+    async fn drop_still_releases_without_waiting() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("herdr.sock");
+        let mut server = Server::bind(&socket);
+        let reporter = client_for_socket(&socket).start_reporting("session");
+        reporter.report(HerdrState::Working, None);
+        server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await;
+        drop(reporter);
+        assert_eq!(
+            server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await["method"],
+            "pane.release_agent"
+        );
+    }
+
+    #[tokio::test]
     async fn successful_identical_reports_are_skipped() {
         let temp = tempfile::tempdir().unwrap();
         let socket = temp.path().join("herdr.sock");

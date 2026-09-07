@@ -56,7 +56,8 @@ struct Report {
 /// Pending updates coalesce to the latest state; an in-flight update completes
 /// before that latest state is sent. Successful identical updates are skipped;
 /// failed updates retry on the next state or message change, not on UI ticks.
-/// Dropping also closes the queue; `shutdown` additionally waits for release.
+/// Drop closes the queue and detaches the worker so it can still send release.
+/// `shutdown` waits for that release.
 #[derive(Debug)]
 pub struct HerdrReporter {
     updates: Option<watch::Sender<Option<Report>>>,
@@ -182,6 +183,15 @@ impl HerdrReporter {
             Some(error) => Err(io::Error::other(error)),
             None => Ok(()),
         }
+    }
+}
+
+impl Drop for HerdrReporter {
+    fn drop(&mut self) {
+        // Close the watch so the worker proceeds to release_agent.
+        // Detach the task; aborting here would skip release.
+        self.updates.take();
+        let _ = self.worker.take();
     }
 }
 

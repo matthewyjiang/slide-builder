@@ -4,17 +4,76 @@ use ratatui_image::{
     FontSize,
 };
 use slide_builder::{
-    integrations::herdr::{HerdrGraphicsCapability, HerdrState},
-    tui::{modal::ModalState, AgentEvent, App, AppEvent, ImportDesignStatus},
+    integrations::herdr::{HerdrClient, HerdrGraphicsCapability, HerdrReporter, HerdrState},
+    tui::{modal::ModalState, AgentEvent, App, AppEvent, ImportDesignStatus, PreviewImage},
 };
+use std::io;
+
+/// One workspace handle owns graphics discovery, reporting, and release.
+/// Probe before raw mode, attach after the session exists, and shut down after
+/// the terminal is restored so a hung host cannot freeze the alternate screen.
+pub(crate) struct Workspace {
+    client: HerdrClient,
+    graphics: HerdrGraphicsCapability,
+    reporter: Option<HerdrReporter>,
+    status: Status,
+}
+
+impl Workspace {
+    pub(crate) async fn discover() -> Self {
+        let client = HerdrClient::from_env();
+        let graphics = client.graphics_capability().await;
+        Self {
+            client,
+            graphics,
+            reporter: None,
+            status: Status::default(),
+        }
+    }
+
+    pub(crate) fn preview_image(&self, protocol: &str) -> PreviewImage {
+        match preview_picker(self.graphics) {
+            Some(picker) => PreviewImage::with_picker(protocol, picker),
+            None => PreviewImage::detect(protocol),
+        }
+    }
+
+    pub(crate) fn attach(&mut self, session_id: &str) {
+        self.reporter = Some(self.client.start_reporting(session_id));
+    }
+
+    pub(crate) fn observe(&mut self, event: &AppEvent) {
+        self.status.observe(event);
+    }
+
+    pub(crate) fn sync(&mut self, app: &App) {
+        let (state, message) = self.status.sync(app);
+        if let Some(reporter) = &self.reporter {
+            reporter.report(state, Some(message));
+        }
+    }
+
+    pub(crate) fn closing(&self) {
+        if let Some(reporter) = &self.reporter {
+            reporter.report(HerdrState::Working, Some("Closing deck"));
+        }
+    }
+
+    pub(crate) async fn shutdown(mut self) -> io::Result<()> {
+        match self.reporter.take() {
+            Some(reporter) => reporter.shutdown().await,
+            None => Ok(()),
+        }
+    }
+}
 
 #[derive(Default)]
-pub(crate) struct Status {
+struct Status {
     outcome: Option<&'static str>,
 }
 
 impl Status {
-    pub(crate) fn observe(&mut self, event: &AppEvent) {
+    fn observe(&mut self, event: &AppEvent) {
         let outcome = match event {
             AppEvent::Run(AgentEvent::RunFinished) => Some("Deck editing finished"),
             AppEvent::Run(AgentEvent::RunCancelled) => Some("Deck editing cancelled"),
@@ -35,7 +94,8 @@ impl Status {
 
     /// Match input ownership before activity: a visible dialog can require attention
     /// even while a run is active. Preview refreshes never make the composer busy.
-    pub(crate) fn current(&mut self, app: &App) -> (HerdrState, &'static str) {
+    /// Clears a finished-work outcome once the composer is busy again.
+    fn sync(&mut self, app: &App) -> (HerdrState, &'static str) {
         let wait = match &app.modal {
             ModalState::Approval(_) => Some("Waiting for tool approval"),
             ModalState::Questionnaire(_) => Some("Waiting for an answer"),
@@ -86,7 +146,7 @@ impl Status {
 
 /// Herdr owns host graphics discovery. Do not send terminal probes through its PTY
 /// when its socket has already determined whether images can be painted.
-pub(crate) fn preview_picker(capability: HerdrGraphicsCapability) -> Option<Picker> {
+fn preview_picker(capability: HerdrGraphicsCapability) -> Option<Picker> {
     match capability {
         HerdrGraphicsCapability::NotHerdr => None,
         HerdrGraphicsCapability::Unpaintable => Some(Picker::halfblocks()),
