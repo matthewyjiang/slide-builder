@@ -21,6 +21,8 @@ notify = "8"
 pdf-writer = "0.15"
 miniz_oxide = "0.8"
 tempfile = "3"
+obscura-browser = { git = "https://github.com/h4ckf0r0day/obscura", rev = "a1e09de68c7617b8079fbb1661b0548c501971c1", features = ["render"] }
+obscura-js = { git = "https://github.com/h4ckf0r0day/obscura", rev = "a1e09de68c7617b8079fbb1661b0548c501971c1", features = ["render"] }
 pptx-handler = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 pulldown-cmark = "0.13"
 quick-xml = "0.37.5"
@@ -42,9 +44,6 @@ unicode-width = "0.2"
 uuid = { version = "1", features = ["v4", "serde"] }
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 zeroize = "1"
-
-obscura-browser = { git = "https://github.com/h4ckf0r0day/obscura", rev = "a1e09de68c7617b8079fbb1661b0548c501971c1", features = ["render"] }
-obscura-js = { git = "https://github.com/h4ckf0r0day/obscura", rev = "a1e09de68c7617b8079fbb1661b0548c501971c1", features = ["render"] }
 
 # Preserve the rendering fixes used by the tested Obscura v0.2.2 release.
 [patch.crates-io]

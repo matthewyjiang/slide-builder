@@ -8,7 +8,7 @@ use slide_builder::{
 use std::{fs, path::Path, process::Command};
 
 #[tokio::test]
-#[ignore = "requires Linux user namespaces and bubblewrap"]
+#[ignore = "requires a qualified native Obscura sandbox"]
 async fn embedded_scale_preserves_layout_and_paints_crisp_shapes() {
     let browser = Browser::with_embedded_worker(
         Path::new(env!("CARGO_BIN_EXE_slide-builder")),
@@ -62,7 +62,7 @@ fn direct_worker_invocation_fails_before_loading_configuration() {
 }
 
 #[tokio::test]
-#[ignore = "requires Linux user namespaces and bubblewrap"]
+#[ignore = "requires a qualified native Obscura sandbox"]
 async fn embedded_worker_captures_handler_html_and_blocks_host_styles() {
     let browser = Browser::with_embedded_worker(
         Path::new(env!("CARGO_BIN_EXE_slide-builder")),

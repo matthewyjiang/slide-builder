@@ -62,7 +62,9 @@ jobs:
       - run: rustup component add clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # PR caches are scoped to the PR merge ref. Keep native dependencies
+          # after a failed qualification run so policy fixes do not rebuild V8.
+          cache-on-failure: true
       - name: Native tool and browser versions
         run: |
           sw_vers
@@ -80,6 +82,7 @@ jobs:
           echo "SANDBOX_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_ENV"
           cargo test --locked --lib macos_sandbox_blocks_host_files_network_and_services -- --ignored
           cargo test --locked --test embedded_render -- --include-ignored
+          cargo test --locked --test styled_text_render -- --ignored
           cargo test --locked --test export_pdf obscura_exports -- --ignored
       - name: Explicit Chromium compatibility
         run: |
@@ -87,4 +90,21 @@ jobs:
           cargo test --locked --test export_pdf chromium_exports -- --ignored
       - name: Sandbox denial diagnostics
         if: failure() && env.SANDBOX_STARTED_AT != ''
-        run: sudo log show --style compact --start "$SANDBOX_STARTED_AT" --predicate 'eventMessage CONTAINS "Sandbox:"'
+        run: |
+          sudo log show --info --debug --style compact --start "$SANDBOX_STARTED_AT" --predicate 'process == "sandboxd" OR eventMessage CONTAINS "deny"'
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for root in [Path.home() / 'Library/Logs/DiagnosticReports', Path('/Library/Logs/DiagnosticReports')]:
+              for path in root.glob('slide*.ips'):
+                  print(path)
+                  text = path.read_text()
+                  _, end = json.JSONDecoder().raw_decode(text)
+                  report = json.loads(text[end:])
+                  print('exception:', report.get('exception'))
+                  print('termination:', report.get('termination'))
+                  print('application information:', report.get('asi'))
+                  for thread in report.get('threads', []):
+                      if thread.get('triggered'):
+                          print('faulting frames:', thread.get('frames'))
+          PY

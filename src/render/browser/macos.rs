@@ -14,6 +14,12 @@ pub(super) struct Sandbox {
     pub executable: PathBuf,
 }
 
+pub(super) struct Launch {
+    pub command: Command,
+    pub input: PathBuf,
+    pub output: PathBuf,
+}
+
 impl Sandbox {
     pub fn probe(configured: &Path) -> Result<Self> {
         let path = if configured == Path::new("auto") {
@@ -25,7 +31,7 @@ impl Sandbox {
         Ok(Self { executable })
     }
 
-    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Command> {
+    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Launch> {
         let executable = validate_executable(executable)?;
         let html = fs::canonicalize(html).context("resolve private capture HTML")?;
         OpenOptions::new()
@@ -52,7 +58,11 @@ impl Sandbox {
             command.arg("-D").arg(parameter);
         }
         command.arg("-p").arg(PROFILE).arg(executable);
-        Ok(command)
+        Ok(Launch {
+            command,
+            input: html,
+            output,
+        })
     }
 }
 
@@ -63,8 +73,9 @@ pub(super) fn capture_command(
     output: &Path,
     options: &CaptureOptions,
 ) -> Result<Command> {
-    let mut command = sandbox.command(executable, html, output)?;
-    command
+    let mut launch = sandbox.command(executable, html, output)?;
+    launch
+        .command
         .args([
             super::super::worker::WORKER_ARGUMENT,
             &options.width.to_string(),
@@ -72,9 +83,9 @@ pub(super) fn capture_command(
             &options.scale.to_string(),
             &options.timeout.as_millis().to_string(),
         ])
-        .arg(fs::canonicalize(html)?)
-        .arg(fs::canonicalize(output)?);
-    Ok(command)
+        .arg(launch.input)
+        .arg(launch.output);
+    Ok(launch.command)
 }
 
 #[cfg(test)]

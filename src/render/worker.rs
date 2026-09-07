@@ -7,7 +7,7 @@ pub use native::run_if_requested;
 pub(crate) use native::WORKER_ARGUMENT;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) const UNSUPPORTED: &str = "Obscura is supported only on Linux with bubblewrap; set render.engine = \"chromium\" and install Google Chrome, Chromium, Brave, or Microsoft Edge";
+pub(crate) const UNSUPPORTED: &str = "Obscura requires Linux with bubblewrap or experimental macOS sandbox-exec isolation; this platform has no supported native sandbox";
 
 /// Reject worker requests on platforms without the embedded sandbox backend.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

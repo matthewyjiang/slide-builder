@@ -7,7 +7,7 @@ use slide_builder::{
 use std::{collections::HashMap, path::Path, process::Command};
 
 #[tokio::test]
-#[ignore = "requires Linux user namespaces, bubblewrap, pdfinfo and pdftoppm"]
+#[ignore = "requires a qualified native Obscura sandbox and Poppler"]
 async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
     let browser = Browser::with_embedded_worker(
         Path::new(env!("CARGO_BIN_EXE_slide-builder")),

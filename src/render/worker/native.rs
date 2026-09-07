@@ -5,6 +5,7 @@
 //! sandbox process group on cancellation, including synchronous native hangs.
 use anyhow::{bail, Context, Result};
 use obscura_browser::{BrowserContext, Page, WaitUntil};
+use std::io::Write;
 use std::{ffi::OsStr, path::Path, sync::Arc, time::Duration};
 
 pub(crate) const WORKER_ARGUMENT: &str = "--slide-builder-render-worker";
@@ -111,5 +112,11 @@ async fn capture(
         page.screenshot_region(options.capture_region())
             .map_err(|error| anyhow::anyhow!("Obscura scaled screenshot failed: {error:?}"))?
     };
-    std::fs::write(output, png).context("write private screenshot")
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(output)
+        .context("open pre-created private screenshot")?
+        .write_all(&png)
+        .context("write private screenshot")
 }

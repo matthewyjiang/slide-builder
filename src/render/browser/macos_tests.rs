@@ -1,4 +1,5 @@
 use super::*;
+use std::io::{ErrorKind, Write};
 
 #[test]
 fn sandbox_parameters_are_not_profile_source_and_output_cannot_be_redirected() {
@@ -10,12 +11,33 @@ fn sandbox_parameters_are_not_profile_source_and_output_cannot_be_redirected() {
     let output = directory.path().join("output.png");
     fs::write(&html, "input").unwrap();
     let sandbox = Sandbox::probe(Path::new("/usr/bin/sandbox-exec")).unwrap();
-    let command = sandbox
-        .command(Path::new("/usr/bin/true"), &html, &output)
-        .unwrap();
-    let args: Vec<_> = command.as_std().get_args().collect();
-    assert!(args.contains(&std::ffi::OsStr::new(PROFILE)));
-    assert!(!PROFILE.contains(&directory.path().to_string_lossy().to_string()));
+    let executable = fs::canonicalize("/usr/bin/true").unwrap();
+    let launch = sandbox.command(&executable, &html, &output).unwrap();
+    let args: Vec<_> = launch
+        .command
+        .as_std()
+        .get_args()
+        .map(std::ffi::OsStr::to_owned)
+        .collect();
+    let parameter = |name: &str, path: &Path| {
+        let mut value = std::ffi::OsString::from(format!("{name}="));
+        value.push(path);
+        value
+    };
+    assert_eq!(
+        args,
+        vec![
+            "-D".into(),
+            parameter("EXECUTABLE", &executable),
+            "-D".into(),
+            parameter("INPUT", &launch.input),
+            "-D".into(),
+            parameter("OUTPUT", &launch.output),
+            "-p".into(),
+            PROFILE.into(),
+            executable.into_os_string(),
+        ]
+    );
     fs::remove_file(&output).unwrap();
     std::os::unix::fs::symlink(&html, &output).unwrap();
     assert!(sandbox
@@ -36,6 +58,15 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
     let secret = directory.path().join("credentials");
     fs::write(&html, "permitted input").unwrap();
     fs::write(&secret, "host credential sentinel").unwrap();
+    fs::read("/etc/passwd").unwrap();
+    fs::read_dir(directory.path()).unwrap();
+    fs::write(directory.path().join("extra"), "host write control").unwrap();
+    fs::remove_file(directory.path().join("extra")).unwrap();
+    assert!(std::process::Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .status()
+        .unwrap()
+        .success());
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let _connection = std::net::TcpStream::connect(address).unwrap();
@@ -48,25 +79,34 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
         "host process-argument positive control failed"
     );
     let sandbox = Sandbox::probe(Path::new("auto")).unwrap();
+    // Distinguish a launcher/profile failure from native initialization failures.
+    let launch = sandbox
+        .command(
+            Path::new("/usr/bin/true"),
+            &html,
+            &directory.path().join("true-output"),
+        )
+        .unwrap();
+    crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
+        .await
+        .expect("minimal executable failed under sandbox profile");
     let executable = std::env::current_exe().unwrap();
-    let mut command = sandbox.command(&executable, &html, &output).unwrap();
-    command
+    let mut launch = sandbox.command(&executable, &html, &output).unwrap();
+    launch
+        .command
         .args([
             "--exact",
             "render::browser::obscura::tests::macos_sandbox_probe_child",
             "--nocapture",
         ])
-        .env("SLIDE_BUILDER_TEST_INPUT", fs::canonicalize(&html).unwrap())
-        .env(
-            "SLIDE_BUILDER_TEST_OUTPUT",
-            fs::canonicalize(&output).unwrap(),
-        )
+        .env("SLIDE_BUILDER_TEST_INPUT", &launch.input)
+        .env("SLIDE_BUILDER_TEST_OUTPUT", &launch.output)
         .env(
             "SLIDE_BUILDER_TEST_SECRET_PATH",
             fs::canonicalize(&secret).unwrap(),
         )
         .env("SLIDE_BUILDER_TEST_ADDRESS", address.to_string());
-    crate::render::browser::process::run(command, CaptureOptions::default().timeout)
+    crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
         .await
         .unwrap();
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");
@@ -84,18 +124,42 @@ fn macos_sandbox_probe_child() {
     let output = PathBuf::from(std::env::var_os("SLIDE_BUILDER_TEST_OUTPUT").unwrap());
     let secret = PathBuf::from(std::env::var_os("SLIDE_BUILDER_TEST_SECRET_PATH").unwrap());
     assert_eq!(fs::read_to_string(input).unwrap(), "permitted input");
-    assert!(fs::read(&secret).is_err());
-    assert!(fs::read("/etc/passwd").is_err());
-    assert!(fs::read_dir(secret.parent().unwrap()).is_err());
-    assert!(fs::write(&secret, "overwrite").is_err());
-    assert!(fs::write(output.with_file_name("extra"), "escape").is_err());
-    assert!(
-        std::net::TcpStream::connect(std::env::var("SLIDE_BUILDER_TEST_ADDRESS").unwrap()).is_err()
+    assert_eq!(
+        fs::read(&secret).unwrap_err().kind(),
+        ErrorKind::PermissionDenied
     );
-    assert!(std::process::Command::new("/bin/sh")
-        .args(["-c", "exit 0"])
-        .status()
-        .is_err());
+    assert_eq!(
+        fs::read("/etc/passwd").unwrap_err().kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        fs::read_dir(secret.parent().unwrap()).unwrap_err().kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        fs::write(&secret, "overwrite").unwrap_err().kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        fs::write(output.with_file_name("extra"), "escape")
+            .unwrap_err()
+            .kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        std::net::TcpStream::connect(std::env::var("SLIDE_BUILDER_TEST_ADDRESS").unwrap())
+            .unwrap_err()
+            .kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .status()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::PermissionDenied
+    );
     assert!(std::env::var_os("HOME").is_none());
     assert!(std::env::var_os("PATH").is_none());
     assert!(
@@ -106,7 +170,13 @@ fn macos_sandbox_probe_child() {
         !process_arguments_readable(),
         "sandbox unexpectedly allowed process-argument sysctl"
     );
-    fs::write(output, "isolation passed").unwrap();
+    OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(output)
+        .unwrap()
+        .write_all(b"isolation passed")
+        .unwrap();
 }
 
 // LaunchServices can launch unsandboxed applications on a caller's behalf.
