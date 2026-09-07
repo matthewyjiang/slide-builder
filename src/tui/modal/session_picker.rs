@@ -7,6 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use super::popup;
 use crate::tui::theme;
@@ -97,10 +99,11 @@ impl SessionPickerState {
 pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
     // Match the existing model picker's dimensions; the terminal remains the bound.
     let area = popup(frame, 76, 20);
-    let help = if area.width >= 60 {
-        " type to filter  ↑↓ choose  Enter resume  Esc close "
+    let full_help = "type to filter  ↑↓ choose  Enter resume  Esc close";
+    let help = if full_help.width() <= usize::from(area.width.saturating_sub(2)) {
+        full_help
     } else {
-        " ↑↓  Enter resume  Esc close "
+        "↑↓  Enter resume  Esc close"
     };
     let block = Block::default()
         .title(" Saved sessions ")
@@ -109,7 +112,6 @@ pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
                 .fg(theme::TEXT)
                 .add_modifier(Modifier::BOLD),
         )
-        .title_bottom(Line::from(help).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::ACCENT));
     let inner = block.inner(area);
@@ -130,7 +132,8 @@ pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(error_height),
-        Constraint::Min(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
     ])
     .split(inner);
     frame.render_widget(
@@ -148,6 +151,10 @@ pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
         rows[0],
     );
     frame.render_widget(Paragraph::new(error_rows), rows[1]);
+    frame.render_widget(
+        Paragraph::new(help).style(Style::default().fg(theme::MUTED)),
+        rows[3],
+    );
     let visible = state.visible();
     if visible.is_empty() {
         let message = if state.entries.is_empty() {
@@ -163,6 +170,8 @@ pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
         );
         return;
     }
+    // The list reserves two columns for the selection marker on every detail row.
+    let detail_width = usize::from(rows[2].width.saturating_sub(2));
     let items = visible.iter().map(|entry| {
         let mut name = Vec::new();
         // Put the current badge first so long names cannot hide it on narrow terminals.
@@ -181,7 +190,11 @@ pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
         ListItem::new(vec![
             Line::from(name),
             Line::styled(
-                format!("{} · {}", entry.deck, entry.model),
+                detail_suffix(&entry.deck, detail_width),
+                Style::default().fg(theme::MUTED),
+            ),
+            Line::styled(
+                detail_suffix(&entry.model, detail_width),
                 Style::default().fg(theme::MUTED),
             ),
         ])
@@ -194,6 +207,26 @@ pub fn render(frame: &mut Frame<'_>, state: &SessionPickerState) {
         rows[2],
         &mut selection,
     );
+}
+
+/// Keep the filename or model identifier visible when its prefix cannot fit.
+fn detail_suffix(text: &str, width: usize) -> String {
+    if text.width() <= width {
+        return text.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut used = 1; // Reserve the ellipsis cell.
+    let mut start = text.len();
+    for (index, grapheme) in text.grapheme_indices(true).rev() {
+        used += grapheme.width();
+        if used > width {
+            break;
+        }
+        start = index;
+    }
+    format!("…{}", &text[start..])
 }
 
 #[cfg(test)]

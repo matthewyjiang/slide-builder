@@ -90,3 +90,43 @@ fn empty_filtered_and_inline_error_states_render() {
         capture(&state, width, height);
     }
 }
+
+#[test]
+fn long_session_details_and_footer_fit_inside_the_picker() {
+    let mut state = SessionPickerState::new(vec![SessionPickerEntry {
+        id: "saved".into(),
+        name: "testdeck.pptx".into(),
+        deck: "/home/matthewjiang/projects/slide-builder/testdeck.pptx".into(),
+        model: "openai-codex/gpt-6-astra".into(),
+        current: true,
+    }]);
+    state.error = Some("This session is already open.".into());
+    for (width, height) in [(32, 10), (76, 20), (100, 24)] {
+        let screen = capture(&state, width, height);
+        assert!(screen.contains("testdeck.pptx"), "{screen}");
+        assert!(screen.contains("openai-codex/gpt-6-astra"), "{screen}");
+        assert!(screen.contains("Enter resume"), "{screen}");
+        assert!(screen.contains("Esc close"), "{screen}");
+        let footer = screen
+            .lines()
+            .find(|line| line.contains("Esc close"))
+            .unwrap();
+        assert!(footer.trim().ends_with('│'), "{screen}");
+        if width == 32 {
+            assert!(screen.contains('…'), "{screen}");
+        }
+    }
+}
+
+#[test]
+fn shortened_details_respect_cell_width_and_grapheme_boundaries() {
+    for (text, width, expected) in [
+        ("deck.pptx", 9, "deck.pptx"),
+        ("/演示/图.pptx", 8, "…图.pptx"),
+        ("prefix/e\u{301}.pptx", 7, "…e\u{301}.pptx"),
+        ("deck.pptx", 1, "…"),
+        ("deck.pptx", 0, ""),
+    ] {
+        assert_eq!(detail_suffix(text, width), expected);
+    }
+}

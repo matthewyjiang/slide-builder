@@ -7,6 +7,9 @@ Each interactive deck opening starts a fresh conversation.
 Use `/sessions` or `/resume` to browse saved sessions, most recently updated first.
 Type to filter, use Up/Down to choose, and press Enter to resume. Escape closes
 the picker without leaving your current session. The current session is marked.
+Deck paths and models appear on separate rows. Long details use a leading
+ellipsis to keep the filename or model identifier visible; filtering still
+matches the full values. Keyboard hints sit inside the picker's bottom border.
 
 Switching saves the current session before restoring the selected conversation
 and deck. Finish any active run or design import before switching. Missing or
