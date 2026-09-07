@@ -1,5 +1,5 @@
 use ratatui::{
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -46,31 +46,6 @@ pub(crate) fn render_tool(card: &ToolCard, width: usize) -> Vec<Line<'static>> {
         ]);
     }
     rows
-}
-
-pub(crate) fn render_empty_state(width: usize) -> Vec<Line<'static>> {
-    let width = width.max(1);
-    let mut lines = vec![Line::from("")];
-    lines.extend(plain_rows(
-        "Build your deck by describing the outcome.",
-        width,
-        Style::default()
-            .fg(theme::TEXT)
-            .add_modifier(Modifier::BOLD),
-    ));
-    lines.push(Line::from(""));
-    lines.extend(plain_rows(
-        "Try “Create a 6-slide launch narrative” or “Make the active slide more visual.”",
-        width,
-        Style::default().fg(theme::MUTED),
-    ));
-    lines.push(Line::from(""));
-    lines.extend(plain_rows(
-        "Use Ctrl+V before sending to include the active slide.",
-        width,
-        Style::default().fg(theme::MUTED),
-    ));
-    lines
 }
 
 pub(crate) fn tool_status_text(card: &ToolCard) -> String {

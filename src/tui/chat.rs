@@ -69,9 +69,6 @@ fn conversation_content(app: &App, width: usize) -> (Vec<Line<'static>>, Option<
             }
         }
     }
-    if lines.is_empty() {
-        lines = conversation_entry::render_empty_state(width);
-    }
     (lines, focus)
 }
 

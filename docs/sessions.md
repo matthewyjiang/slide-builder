@@ -4,6 +4,8 @@ Each interactive deck opening starts a fresh conversation. It appears in saved
 sessions only after you send a message. Opening a deck, typing an unsent draft,
 or browsing settings does not create a saved session.
 
+The conversation area stays blank until it has messages or tool activity.
+
 ## Resume inside the TUI
 
 Use `/resume` for a quick picker of saved sessions, most recently updated first.
