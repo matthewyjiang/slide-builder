@@ -107,7 +107,7 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
             fs::canonicalize(&secret).unwrap(),
         )
         .env("SLIDE_BUILDER_TEST_ADDRESS", address.to_string())
-        .env("SLIDE_BUILDER_TEST_PARENT_PID", host.pid.to_string())
+        .env("SLIDE_BUILDER_TEST_FIXTURE_PID", host.pid.to_string())
         .env("SLIDE_BUILDER_TEST_ARGUMENT_SENTINEL", &host.argument)
         .env("SLIDE_BUILDER_TEST_ENVIRONMENT_SENTINEL", &host.environment);
     crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
@@ -188,7 +188,7 @@ fn macos_sandbox_probe_child() {
         "sandbox unexpectedly obtained a LaunchServices port"
     );
     procargs::assert_denied(
-        std::env::var("SLIDE_BUILDER_TEST_PARENT_PID")
+        std::env::var("SLIDE_BUILDER_TEST_FIXTURE_PID")
             .unwrap()
             .parse()
             .unwrap(),
