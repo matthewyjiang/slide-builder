@@ -34,7 +34,9 @@ including its native library initializers. Paths are separate `-D` arguments,
 not interpolated profile source. The environment is cleared before sandbox-exec.
 
 The profile grants reads of the executable, one generated HTML file, system
-libraries/frameworks, and random devices. It grants writes only to the pre-created
+libraries/frameworks, and random devices. The root directory itself is readable
+for dyld startup, but that literal grant does not grant access to its children.
+It grants writes only to the pre-created
 screenshot file. No home/project directory, credential store, network, Mach
 service lookup, or subprocess grants are present. Capture deadlines and
 cancellation kill the sandbox process group. The worker's private-mode guard

@@ -75,7 +75,7 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
         "host LaunchServices positive control failed"
     );
     assert!(
-        process_arguments_readable(),
+        process_arguments_readable(std::process::id()),
         "host process-argument positive control failed"
     );
     let sandbox = Sandbox::probe(Path::new("auto")).unwrap();
@@ -105,7 +105,11 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
             "SLIDE_BUILDER_TEST_SECRET_PATH",
             fs::canonicalize(&secret).unwrap(),
         )
-        .env("SLIDE_BUILDER_TEST_ADDRESS", address.to_string());
+        .env("SLIDE_BUILDER_TEST_ADDRESS", address.to_string())
+        .env(
+            "SLIDE_BUILDER_TEST_PARENT_PID",
+            std::process::id().to_string(),
+        );
     crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
         .await
         .unwrap();
@@ -126,6 +130,18 @@ fn macos_sandbox_probe_child() {
     assert_eq!(fs::read_to_string(input).unwrap(), "permitted input");
     assert_eq!(
         fs::read(&secret).unwrap_err().kind(),
+        ErrorKind::PermissionDenied
+    );
+    // dyld's literal root-directory grant must not authorize openat traversal.
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let root = fs::File::open("/").unwrap();
+    let relative =
+        std::ffi::CString::new(secret.strip_prefix("/").unwrap().as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { libc::openat(root.as_raw_fd(), relative.as_ptr(), libc::O_RDONLY) };
+    assert_eq!(fd, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().kind(),
         ErrorKind::PermissionDenied
     );
     assert_eq!(
@@ -167,7 +183,12 @@ fn macos_sandbox_probe_child() {
         "sandbox unexpectedly obtained a LaunchServices port"
     );
     assert!(
-        !process_arguments_readable(),
+        !process_arguments_readable(
+            std::env::var("SLIDE_BUILDER_TEST_PARENT_PID")
+                .unwrap()
+                .parse()
+                .unwrap()
+        ),
         "sandbox unexpectedly allowed process-argument sysctl"
     );
     OpenOptions::new()
@@ -204,12 +225,8 @@ fn launch_services_available() -> bool {
     result == 0
 }
 
-fn process_arguments_readable() -> bool {
-    let mut mib = [
-        libc::CTL_KERN,
-        libc::KERN_PROCARGS2,
-        std::process::id() as i32,
-    ];
+fn process_arguments_readable(pid: u32) -> bool {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
     let mut size = 0;
     unsafe {
         libc::sysctl(

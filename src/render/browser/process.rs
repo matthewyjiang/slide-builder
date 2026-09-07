@@ -21,9 +21,14 @@ pub(super) async fn run(mut command: Command, timeout: Duration) -> Result<Captu
     let group = ProcessGroupGuard(child.id().context("renderer has no process id")? as i32);
     let stdout = child.stdout.take().context("capture renderer stdout")?;
     let stderr = child.stderr.take().context("capture renderer stderr")?;
+    let mut renderer_status = None;
     let operation = async {
         let (status, stdout, stderr) = tokio::try_join!(
-            async { child.wait().await.context("wait for renderer") },
+            async {
+                let status = child.wait().await.context("wait for renderer")?;
+                renderer_status = Some(status);
+                Ok::<_, anyhow::Error>(status)
+            },
             read_bounded(stdout),
             read_bounded(stderr),
         )?;
@@ -40,10 +45,18 @@ pub(super) async fn run(mut command: Command, timeout: Duration) -> Result<Captu
     };
     let result = match tokio::time::timeout(timeout, operation).await {
         Ok(result) => result,
-        Err(_) => Err(anyhow::anyhow!(
-            "renderer capture timed out after {} ms",
-            timeout.as_millis()
-        )),
+        Err(_) => {
+            let state = match renderer_status {
+                Some(status) => {
+                    format!("renderer exited with {status}, but helper output pipes remained open")
+                }
+                None => "renderer completion was not observed".into(),
+            };
+            Err(anyhow::anyhow!(
+                "renderer capture timed out after {} ms; {state}",
+                timeout.as_millis()
+            ))
+        }
     };
     // Kill lingering helpers even if the parent exited successfully. This also
     // prevents an inherited pipe from outliving a failed or cancelled capture.

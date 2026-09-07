@@ -1,6 +1,11 @@
 (version 1)
 (deny default)
 
+; macOS 15 dyld ignition opens a root-directory descriptor before locating its
+; shared cache. Native CI otherwise aborts even /usr/bin/true in boot_boot.
+; This permits the root directory itself, never its children or their contents.
+(allow file-read-data (literal "/"))
+
 ; Only the chosen worker may execute. No subprocesses, network, Mach service
 ; lookup, user files, credentials, project trees, or writable directory grants.
 (allow process-exec (literal (param "EXECUTABLE")))

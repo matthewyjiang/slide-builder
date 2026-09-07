@@ -168,6 +168,9 @@ async fn process_failure_and_pipe_lifetime_are_bounded() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("timed out after 100 ms"));
+    assert!(error
+        .to_string()
+        .contains("helper output pipes remained open"));
 }
 
 #[tokio::test]
