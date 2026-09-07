@@ -3,12 +3,11 @@
 //! Call before starting an application's runtime. Rendering stays on one thread
 //! in a disposable process; the parent owns the hard deadline and kills the
 //! sandbox process group on cancellation, including synchronous native hangs.
+use super::WORKER_ARGUMENT;
 use anyhow::{bail, Context, Result};
 use obscura_browser::{BrowserContext, Page, WaitUntil};
 use std::io::Write;
 use std::{ffi::OsStr, path::Path, sync::Arc, time::Duration};
-
-pub(crate) const WORKER_ARGUMENT: &str = "--slide-builder-render-worker";
 
 /// Dispatch the private worker mode. Executables using `Browser::probe` must
 /// call this before handling normal arguments so they can render as subprocesses.
@@ -51,12 +50,6 @@ pub fn run_if_requested() -> Result<bool> {
         .to_str()
         .context("invalid worker deadline")?
         .parse::<u64>()?;
-    #[cfg(target_os = "linux")]
-    let (input, output) = (
-        std::path::PathBuf::from("/input/capture.html"),
-        std::path::PathBuf::from("/output/capture.png"),
-    );
-    #[cfg(target_os = "macos")]
     let (input, output) = (
         std::path::PathBuf::from(args.next().context("missing private capture HTML")?),
         std::path::PathBuf::from(args.next().context("missing private screenshot output")?),

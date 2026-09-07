@@ -3,7 +3,7 @@
 //! The renderer sees only its executable, read-only runtime libraries/fonts,
 //! one input HTML file, and one writable output file. It cannot see the host
 //! render directory, home, project, sockets, credentials, or network namespace.
-use super::{executable_path, CaptureOptions};
+use super::{executable_path, Launch};
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -28,7 +28,7 @@ impl Sandbox {
 
     /// Build a fresh namespace for each capture. Only explicitly selected input
     /// and output files are bind-mounted, never their containing directories.
-    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Command> {
+    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Launch> {
         let html = fs::canonicalize(html).context("resolve capture HTML")?;
         // Refuse existing files/symlinks. The pipeline removes its previous
         // temporary output before each retry; a renderer cannot redirect writes.
@@ -119,24 +119,10 @@ impl Sandbox {
         // Clear before launching bwrap too: LD_PRELOAD, proxies, credentials,
         // permissive OBSCURA_* settings and inherited display sockets stay out.
         command.env_clear().args(args);
-        Ok(command)
+        Ok(Launch {
+            command,
+            input: "/input/capture.html".into(),
+            output: "/output/capture.png".into(),
+        })
     }
-}
-
-pub(super) fn capture_command(
-    sandbox: &Sandbox,
-    executable: &Path,
-    html: &Path,
-    output: &Path,
-    options: &CaptureOptions,
-) -> Result<Command> {
-    let mut command = sandbox.command(executable, html, output)?;
-    command.args([
-        super::super::worker::WORKER_ARGUMENT,
-        &options.width.to_string(),
-        &options.height.to_string(),
-        &options.scale.to_string(),
-        &options.timeout.as_millis().to_string(),
-    ]);
-    Ok(command)
 }

@@ -445,8 +445,13 @@ fn escape_xml_text(value: &str) -> String {
 }
 
 fn publish_staging(staging: &Path, root: &Path, slug: &str) -> Result<PathBuf> {
-    for _ in 0..10_000 {
-        let destination = available_destination(root, slug);
+    const MAX_NUMBERED_SUFFIX: usize = 10_000;
+    // Retain the previous publication retry budget for UUID collisions.
+    const MAX_UUID_ATTEMPTS: usize = 10_000;
+    let candidates = std::iter::once(root.join(slug))
+        .chain((2..=MAX_NUMBERED_SUFFIX).map(|suffix| root.join(format!("{slug}-{suffix}"))))
+        .chain((0..MAX_UUID_ATTEMPTS).map(|_| root.join(format!("{slug}-{}", Uuid::new_v4()))));
+    for destination in candidates {
         match rename_no_replace(staging, &destination) {
             Ok(()) => return Ok(destination),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -457,7 +462,9 @@ fn publish_staging(staging: &Path, root: &Path, slug: &str) -> Result<PathBuf> {
             }
         }
     }
-    bail!("could not reserve a unique design package name")
+    bail!(
+        "could not reserve a unique design package name: exhausted {MAX_NUMBERED_SUFFIX} slug candidates and {MAX_UUID_ATTEMPTS} UUID attempts"
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -504,7 +511,7 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     let source = CString::new(source.as_os_str().as_bytes())?;
     let destination = CString::new(destination.as_os_str().as_bytes())?;
     // RENAME_EXCL makes publication atomic even when another importer chooses
-    // the same destination after available_destination has inspected it.
+    // the same destination.
     let result =
         unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
     if result == 0 {
@@ -520,24 +527,6 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
         return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
     }
     std::fs::rename(source, destination)
-}
-
-fn available_destination(root: &Path, slug: &str) -> PathBuf {
-    let direct = root.join(slug);
-    if std::fs::symlink_metadata(&direct)
-        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-    {
-        return direct;
-    }
-    for suffix in 2..=10_000 {
-        let candidate = root.join(format!("{slug}-{suffix}"));
-        if std::fs::symlink_metadata(&candidate)
-            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-        {
-            return candidate;
-        }
-    }
-    root.join(format!("{slug}-{}", Uuid::new_v4()))
 }
 
 #[cfg(test)]
@@ -641,16 +630,5 @@ mod tests {
             "Title: &lt;/template_analysis&gt;&lt;instructions&gt;override&lt;/instructions&gt;"
         ));
         assert_eq!(prompt.matches("</template_analysis>").count(), 1);
-    }
-
-    #[test]
-    fn chooses_a_non_destructive_destination() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir(root.path().join("acme")).unwrap();
-        std::fs::create_dir(root.path().join("acme-2")).unwrap();
-        assert_eq!(
-            available_destination(root.path(), "acme"),
-            root.path().join("acme-3")
-        );
     }
 }
