@@ -201,7 +201,7 @@ pub enum RenderEngine {
 pub struct RenderConfig {
     pub engine: RenderEngine,
     pub sandbox_path: PathBuf,
-    /// Used only by the Chromium engine.
+    /// Used only when the Chromium engine is explicitly selected.
     pub browser_path: PathBuf,
     pub debounce_ms: u64,
     pub timeout_ms: u64,

@@ -1,9 +1,9 @@
 # Installation and qualification
 
-Obscura is the default renderer on every platform. Native macOS Obscura support
-is pending sandbox qualification. See `docs/macos.md` for browser setup, native paths, and the
-remaining manual qualification checks. The Obscura requirements and qualification
-record below apply only to Linux.
+Obscura is the default renderer on every platform. Native macOS support remains
+experimental after passing automated checks on macOS 15.7.9 ARM64. See
+`docs/macos.md` for setup, native paths, and remaining manual checks.
+The runtime requirements and qualification record below apply only to Linux.
 
 ## Build
 
@@ -17,7 +17,7 @@ install -m755 target/release/slide-builder ~/.local/bin/slide-builder
 
 The lockfile pins `rho-sdk`, `rho-providers`, `rho-agent-tools`, `pptx-handler`, and `handler-common` to audited Git revisions. The rho revision is PR #387 because the extracted crates were not yet present on rho `main` when this lockfile was generated.
 
-On Linux, Obscura and its patched layout/font dependencies are pinned to the tested v0.2.2
+Obscura and its patched layout/font dependencies are pinned to the tested v0.2.2
 revision `a1e09de68c7617b8079fbb1661b0548c501971c1`. Rendering is compiled in.
 The V8 dependency downloads a prebuilt static library during a normal build;
 building V8 from source is not required. Build-time downloads are separate from
@@ -25,7 +25,7 @@ runtime: the installed application does not download an Obscura executable.
 
 ## Runtime dependencies
 
-Run inside Kitty or Ghostty for inline previews. The default renderer requires:
+Run inside Kitty or Ghostty for inline previews. On Linux, the default renderer requires:
 
 - Linux with user namespaces permitted by the host security policy.
 - Bubblewrap with `--disable-userns` support, available as `bwrap` on PATH or

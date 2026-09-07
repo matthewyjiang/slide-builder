@@ -5,6 +5,16 @@ import os
 from pathlib import Path
 import subprocess
 
+for name in ("application.sb", "system.sb"):
+    path = Path("/System/Library/Sandbox/Profiles") / name
+    if not path.is_file():
+        print("system policy not present:", path)
+        continue
+    print("relevant system policy clauses:", path)
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        if any(term in line for term in ("procargs", "kern.proc", "process-info")):
+            print(f"{number}: {line}")
+
 subprocess.run(
     [
         "sudo", "log", "show", "--info", "--debug", "--style", "compact",

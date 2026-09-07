@@ -5,11 +5,10 @@ macOS backend launches the embedded worker through `/usr/bin/sandbox-exec`.
 Chromium is available only when explicitly selected; failures never change
 engines or run Obscura without isolation.
 
-This backend is not ready for use. Native capture works, but host-process
-confidentiality is still failing qualification. This branch remains a draft
-pending a fix; the current policy is not an approved security boundary.
-The implementation host was Linux. macOS support remains experimental even
-after automated qualification, pending the manual checks below.
+macOS support remains experimental. Native CI passed capture, export, and
+isolation checks on macOS 15.7.9 ARM64, but that does not qualify other releases,
+architectures, or interactive terminal behavior. The implementation host was
+Linux; the macOS checks ran on GitHub's native runner.
 
 ## Setup
 
@@ -45,6 +44,14 @@ cancellation kill the sandbox process group. The worker's private-mode guard
 prevents accidental direct invocation; the external sandbox is the security
 boundary, not that guard.
 
+Keep the explicit process-inspection denials as well as `deny default`. During
+qualification, the default-only profile allowed a sandboxed process to read a
+separate host fixture's argument and environment sentinels. Explicit denials for
+`process-info*` and the `kern.procargs` sysctl-name prefix blocked that data read
+with `PermissionDenied`. The prefix covers PID-suffixed names such as
+`kern.procargs2.<pid>`. The test fixture has a cleared environment and only
+nonsecret sentinels; it never needs real host credentials.
+
 This is not the Linux filesystem/network namespace mechanism. macOS retains the
 host filesystem layout and enforces access through Seatbelt policy. Both backends
 must fail closed, but their guarantees and operating-system dependencies differ.
@@ -54,8 +61,8 @@ sandbox model uses entitlements; this experimental command-line integration
 instead depends on sandbox-exec and a custom SBPL profile. OS changes can break
 capture, and a permissive compatibility workaround can weaken isolation. Do not
 add broad Mach service, user-directory, or network permissions to silence errors.
-A supported entitlement-based helper would require a separate packaging/signing
-design rather than a drop-in replacement for the source-installed CLI.
+The native sentinel probes must stay part of qualification; a deny-default
+profile alone is not evidence that every host-data interface is restricted.
 
 The implementation follows Chromium's documented pre-initializer sandbox design
 and explicit-resource policy. Its design document describes the compatibility
@@ -92,6 +99,12 @@ steps check host-file/network/Mach-service denial, real Obscura captures, styled
 text, and portrait PDF export using Poppler. macOS CI excludes the two existing
 optional Chromium runtime tests; those tests remain available for manual
 qualification and are unchanged on Linux.
+
+The complete native checks passed in GitHub Actions run `34081510067` on
+macOS 15.7.9, build `24G830`, ARM64, using Rust 1.92.0. The process-argument
+sentinel probe failed on the preceding profile and passed with the explicit
+denials described above. No network, Mach-service, home-directory, or project
+read permissions were added to make rendering pass.
 
 To repeat the Obscura checks on a Mac with Poppler installed:
 

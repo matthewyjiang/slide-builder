@@ -1,6 +1,6 @@
 # slide-builder
 
-AI-assisted PowerPoint authoring in your terminal. Linux; macOS qualification is in progress.
+AI-assisted PowerPoint authoring in your terminal. Linux, with experimental macOS support.
 
 ## Your decks, your design
 
@@ -14,8 +14,8 @@ Early preview. No binary releases yet, so you'll need to build from source.
 
 You need Rust 1.92+ and Kitty or Ghostty for inline previews. Linux defaults to
 Obscura and needs Bubblewrap (`bwrap`) with user namespaces enabled. Obscura remains
-the primary renderer on every platform. See `docs/macos.md` for the pending native
-macOS backend and the explicitly selected Chromium compatibility path.
+the primary renderer on every platform. See `docs/macos.md` for macOS setup and
+qualification limits.
 
 From the repository root:
 

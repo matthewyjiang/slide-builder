@@ -3,7 +3,7 @@
 
 ; XNU passes argument-taking sysctls to MAC policy with the PID appended, e.g.
 ; kern.procargs2.123. Cover both legacy procargs interfaces and process inspection.
-; These explicit denials are under native sentinel qualification.
+; Native sentinel qualification showed deny-default alone permits these reads.
 (deny sysctl-read (sysctl-name-prefix "kern.procargs"))
 (deny process-info*)
 
