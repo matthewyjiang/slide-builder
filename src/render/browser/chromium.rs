@@ -53,7 +53,7 @@ pub(super) fn capture_args(
     options: &CaptureOptions,
 ) -> Result<Vec<OsString>> {
     let url = format!("file://{}", percent_encode_path(html)?);
-    Ok(vec![
+    let mut args = vec![
         "--headless=new".into(),
         "--hide-scrollbars".into(),
         "--disable-background-networking".into(),
@@ -74,6 +74,12 @@ pub(super) fn capture_args(
         format!("--force-device-scale-factor={}", options.scale).into(),
         format!("--virtual-time-budget={}", options.timeout.as_millis()).into(),
         format!("--screenshot={}", output.display()).into(),
-        url.into(),
-    ])
+    ];
+    if cfg!(target_os = "macos") {
+        // Use software capture on headless Macs. Native CI reported display-link
+        // errors and failed to terminate after painting with GPU rendering.
+        args.push("--disable-gpu".into());
+    }
+    args.push(url.into());
+    Ok(args)
 }

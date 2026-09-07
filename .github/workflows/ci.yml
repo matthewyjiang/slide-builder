@@ -75,7 +75,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --locked --all-features
+        run: cargo test --locked --all-features --no-fail-fast
       - name: Obscura isolation
         if: ${{ !cancelled() }}
         run: |
@@ -91,6 +91,7 @@ jobs:
         run: |
           cargo test --locked --test export_pdf obscura_exports -- --ignored
       - name: Explicit Chromium compatibility
+        if: ${{ !cancelled() }}
         run: |
           cargo test --locked --test chromium_render -- --ignored
           cargo test --locked --test export_pdf chromium_exports -- --ignored

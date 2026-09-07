@@ -103,7 +103,7 @@ impl Browser {
     /// Explicit Chromium constructor, also useful with test capture executables.
     pub fn from_path(path: &Path) -> Result<Self> {
         let executable = validate_executable(path)?;
-        let cache_identity = format!("chromium-v1-{}", executable_identity(&executable)?).into();
+        let cache_identity = format!("chromium-v2-{}", executable_identity(&executable)?).into();
         Ok(Self {
             executable,
             engine: Engine::Chromium,

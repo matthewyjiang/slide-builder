@@ -253,11 +253,27 @@ fn fork_once() -> std::io::Result<()> {
 fn process_arguments_readable(pid: u32) -> bool {
     let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
     let mut size = 0;
-    unsafe {
+    let sizing = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
             mib.len() as u32,
             std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if sizing != 0 {
+        return false;
+    }
+    // Darwin may permit the size-only query. The security boundary is whether
+    // the actual argument/environment bytes can be copied from the host process.
+    let mut bytes = vec![0_u8; size];
+    unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            bytes.as_mut_ptr().cast(),
             &mut size,
             std::ptr::null_mut(),
             0,
