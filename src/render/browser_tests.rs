@@ -20,6 +20,57 @@ fn chromium_arguments_preserve_sandbox_and_paths() {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn embedded_capture_arguments_use_sandbox_visible_paths() {
+    let directory = tempfile::Builder::new()
+        .prefix("capture spaces ")
+        .tempdir()
+        .unwrap();
+    let html = directory.path().join("input.html");
+    let output = directory.path().join("output.png");
+    fs::write(&html, "capture").unwrap();
+    let executable = Path::new("/usr/bin/true");
+    let sandbox = obscura::Sandbox::probe(executable).unwrap();
+    let options = CaptureOptions {
+        width: 640,
+        height: 360,
+        scale: 2.0,
+        timeout: Duration::from_millis(1500),
+    };
+    let command = capture_command(&sandbox, executable, &html, &output, &options).unwrap();
+    let args: Vec<_> = command
+        .as_std()
+        .get_args()
+        .map(std::ffi::OsStr::to_owned)
+        .collect();
+    let worker = args
+        .iter()
+        .position(|arg| arg == super::super::worker::WORKER_ARGUMENT)
+        .unwrap();
+    #[cfg(target_os = "linux")]
+    let (input, output) = (
+        PathBuf::from("/input/capture.html"),
+        PathBuf::from("/output/capture.png"),
+    );
+    #[cfg(target_os = "macos")]
+    let (input, output) = (
+        fs::canonicalize(html).unwrap(),
+        fs::canonicalize(output).unwrap(),
+    );
+    assert_eq!(
+        args[worker + 1..],
+        [
+            "640".into(),
+            "360".into(),
+            "2".into(),
+            "1500".into(),
+            input.into_os_string(),
+            output.into_os_string(),
+        ]
+    );
+}
+
+#[test]
 fn missing_sandbox_fails_closed_and_scale_is_validated() {
     let config = RenderConfig {
         engine: RenderEngine::Obscura,
@@ -131,10 +182,10 @@ fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
     let output = directory.path().join("output.png");
     fs::write(&html, "capture").unwrap();
     let sandbox = obscura::Sandbox::probe(Path::new("/bin/true")).unwrap();
-    let command = sandbox
+    let launch = sandbox
         .command(Path::new("/bin/true"), &html, &output)
         .unwrap();
-    let args: Vec<_> = command.as_std().get_args().collect();
+    let args: Vec<_> = launch.command.as_std().get_args().collect();
     assert!(!args.contains(&directory.path().as_os_str()));
     for required in [
         "--unshare-all",
@@ -154,20 +205,36 @@ fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
 }
 
 #[tokio::test]
-async fn process_failure_and_pipe_lifetime_are_bounded() {
+async fn process_failure_preserves_stderr() {
     let mut command = Command::new("/bin/sh");
     command.args(["-c", "printf renderer-failure >&2; exit 7"]);
     let error = process::run(command, Duration::from_secs(1))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("renderer-failure"));
+}
+
+#[tokio::test]
+async fn process_deadline_is_bounded() {
     let mut command = Command::new("/bin/sh");
-    // A background descendant keeps inherited pipes open after the parent exits.
-    command.args(["-c", "echo awaiting-helper >&2; sleep 60 & exit 0"]);
+    command.args(["-c", "sleep 60"]);
     let error = process::run(command, Duration::from_millis(100))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("timed out after 100 ms"));
+}
+
+#[tokio::test]
+async fn process_timeout_preserves_diagnostics_when_helpers_hold_pipes() {
+    let mut command = Command::new("/bin/sh");
+    // A background descendant keeps inherited pipes open after the parent exits.
+    command.args(["-c", "echo awaiting-helper >&2; sleep 60 & exit 0"]);
+    // Allow five seconds for shell startup and exit on loaded CI runners. The
+    // separate deadline test exercises a short timeout without requiring progress.
+    let error = process::run(command, Duration::from_secs(5))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("timed out after 5000 ms"));
     assert!(error
         .to_string()
         .contains("helper output pipes remained open"));
@@ -233,7 +300,7 @@ async fn sandbox_blocks_host_files_and_network() {
     let _connection = std::net::TcpStream::connect(address).unwrap();
     let host_net = fs::read_link("/proc/self/ns/net").unwrap();
     let sandbox = obscura::Sandbox::probe(Path::new("auto")).unwrap();
-    let mut command = sandbox
+    let mut launch = sandbox
         .command(Path::new("/usr/bin/python3"), &html, &output)
         .unwrap();
     let script = format!(
@@ -258,10 +325,11 @@ pathlib.Path('/output/extra').write_text('private tmpfs only')
         host_net = host_net.to_string_lossy(),
         port = address.port()
     );
-    command
+    launch
+        .command
         .env("SLIDE_BUILDER_TEST_SECRET", "must-not-reach-renderer")
         .args(["-c", &script]);
-    process::run(command, CaptureOptions::default().timeout)
+    process::run(launch.command, CaptureOptions::default().timeout)
         .await
         .unwrap();
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");

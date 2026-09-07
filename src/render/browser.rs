@@ -21,6 +21,35 @@ mod obscura;
 mod obscura;
 mod process;
 
+/// A sandbox command and the capture paths visible inside its isolation boundary.
+struct Launch {
+    command: Command,
+    input: PathBuf,
+    output: PathBuf,
+}
+
+fn capture_command(
+    sandbox: &obscura::Sandbox,
+    executable: &Path,
+    html: &Path,
+    output: &Path,
+    options: &CaptureOptions,
+) -> Result<Command> {
+    let mut launch = sandbox.command(executable, html, output)?;
+    launch
+        .command
+        .args([
+            super::worker::WORKER_ARGUMENT,
+            &options.width.to_string(),
+            &options.height.to_string(),
+            &options.scale.to_string(),
+            &options.timeout.as_millis().to_string(),
+        ])
+        .arg(launch.input)
+        .arg(launch.output);
+    Ok(launch.command)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Engine {
     Chromium,
@@ -167,7 +196,7 @@ impl Browser {
                 command
             }
             Engine::Obscura(sandbox) => {
-                obscura::capture_command(sandbox, &self.executable, html, output, options)?
+                capture_command(sandbox, &self.executable, html, output, options)?
             }
         };
         let diagnostics = process::run(command, options.timeout).await.with_context(|| match self.engine {
