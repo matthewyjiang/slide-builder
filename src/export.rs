@@ -96,15 +96,21 @@ pub async fn export_snapshot(
     {
         bail!("invalid slide dimensions {design_width} × {design_height}");
     }
-    let width = config.preview.width;
-    let height = (f64::from(width) * design_height / design_width).round();
-    if !(1.0..=f64::from(u32::MAX)).contains(&height) {
-        bail!("export capture height is out of range: {height}");
+    // Target 300 pixels per physical inch, independent of terminal preview size.
+    // A 5 × 8 inch slide therefore captures at 1500 × 2400 pixels.
+    const EXPORT_DPI: f64 = 300.0;
+    let width = (design_width * EXPORT_DPI).round();
+    let height = (design_height * EXPORT_DPI).round();
+    if !(1.0..=f64::from(u32::MAX)).contains(&width)
+        || !(1.0..=f64::from(u32::MAX)).contains(&height)
+    {
+        bail!("export capture dimensions are out of range at {EXPORT_DPI} dpi: {width} × {height}");
     }
+    let width = width as u32;
     let options = CaptureOptions {
         width,
         height: height as u32,
-        scale: config.preview.scale as f32,
+        scale: 1.0,
         timeout: Duration::from_millis(config.render.timeout_ms),
     };
     let key = CacheKey::new(
