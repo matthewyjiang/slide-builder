@@ -1,16 +1,16 @@
 //! Experimental pre-exec Seatbelt isolation for the embedded Obscura worker.
 //! SBPL is undocumented by Apple. Keep permissions explicit and qualify each
 //! supported macOS release; never broaden policy just to make a capture succeed.
-use super::{validate_executable, Launch};
+use super::{Launch, Request, Resolved};
+use crate::render::executable::validate_executable;
 use anyhow::{Context, Result};
-use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 const PROFILE: &str = include_str!("macos.sb");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Sandbox {
+pub(in crate::render) struct Sandbox {
     pub executable: PathBuf,
 }
 
@@ -25,15 +25,13 @@ impl Sandbox {
         Ok(Self { executable })
     }
 
-    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Launch> {
+    pub fn command(&self, request: Request<'_>) -> Result<Launch> {
+        let Resolved {
+            executable,
+            input,
+            output,
+        } = request.resolve()?;
         let executable = validate_executable(executable)?;
-        let html = fs::canonicalize(html).context("resolve private capture HTML")?;
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(output)
-            .context("create private screenshot without replacing existing files")?;
-        let output = fs::canonicalize(output).context("resolve private screenshot")?;
         let mut command = Command::new(&self.executable);
         command
             .env_clear()
@@ -43,9 +41,9 @@ impl Sandbox {
         // sandbox-exec applies the policy before the renderer's loader and native
         // initializers run. No inherited home, proxy, or DYLD_* configuration.
         for (name, path) in [
-            ("EXECUTABLE", &executable),
-            ("INPUT", &html),
-            ("OUTPUT", &output),
+            ("EXECUTABLE", executable.as_path()),
+            ("INPUT", input.as_path()),
+            ("OUTPUT", output.as_path()),
         ] {
             let mut parameter = std::ffi::OsString::from(format!("{name}="));
             parameter.push(path);
@@ -54,7 +52,7 @@ impl Sandbox {
         command.arg("-p").arg(PROFILE).arg(executable);
         Ok(Launch {
             command,
-            input: html,
+            input,
             output,
         })
     }

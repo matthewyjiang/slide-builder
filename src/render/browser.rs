@@ -1,41 +1,35 @@
 //! Renderer discovery and constrained HTML-to-PNG capture.
+pub use super::process::CaptureDiagnostics;
+use super::{
+    executable::{executable_path, validate_executable},
+    process,
+    sandbox::{Request, Sandbox},
+};
 use crate::config::{RenderConfig, RenderEngine};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 
 mod chromium;
-#[cfg(target_os = "linux")]
-mod obscura;
-#[cfg(target_os = "macos")]
-#[path = "browser/macos.rs"]
-mod obscura;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-#[path = "browser/unsupported.rs"]
-mod obscura;
-mod process;
-
-/// A sandbox command and the capture paths visible inside its isolation boundary.
-struct Launch {
-    command: Command,
-    input: PathBuf,
-    output: PathBuf,
-}
 
 fn capture_command(
-    sandbox: &obscura::Sandbox,
+    sandbox: &Sandbox,
     executable: &Path,
     html: &Path,
     output: &Path,
     options: &CaptureOptions,
 ) -> Result<Command> {
-    let mut launch = sandbox.command(executable, html, output)?;
+    let mut launch = sandbox.command(Request {
+        executable,
+        input: html,
+        output,
+    })?;
     launch
         .command
         .args([
@@ -53,7 +47,7 @@ fn capture_command(
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Engine {
     Chromium,
-    Obscura(obscura::Sandbox),
+    Obscura(Sandbox),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,12 +76,6 @@ impl Default for CaptureOptions {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct CaptureDiagnostics {
-    pub stderr: String,
-    pub stdout: String,
-}
-
 impl Browser {
     /// Select exactly the configured engine. Missing isolation is
     /// an error, never permission to fall back to an unisolated renderer.
@@ -109,7 +97,7 @@ impl Browser {
     /// starting its normal runtime. Standalone Obscura CLI binaries do not work.
     pub fn with_embedded_worker(executable: &Path, sandbox_path: &Path) -> Result<Self> {
         let executable = validate_executable(executable)?;
-        let sandbox = obscura::Sandbox::probe(sandbox_path)?;
+        let sandbox = Sandbox::probe(sandbox_path)?;
         let identity = format!(
             "obscura-embedded-a1e09de6-isolated-v4-{}-{}-{}",
             std::env::consts::OS,
@@ -264,36 +252,6 @@ impl CaptureOptions {
         }
         Ok(())
     }
-}
-
-fn executable_path(configured: &Path, candidates: &[&str]) -> Result<PathBuf> {
-    if configured != Path::new("auto") {
-        return validate_executable(configured);
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let directories: Vec<_> = std::env::split_paths(&path)
-        .chain([PathBuf::from("/usr/bin"), PathBuf::from("/usr/local/bin")])
-        .collect();
-    for name in candidates {
-        for directory in &directories {
-            if let Ok(path) = validate_executable(&directory.join(name)) {
-                return Ok(path);
-            }
-        }
-    }
-    bail!("executable not found on PATH: {}", candidates.join(", "))
-}
-
-fn validate_executable(path: &Path) -> Result<PathBuf> {
-    if !path.is_absolute() {
-        bail!("renderer path must be absolute: {}", path.display());
-    }
-    let metadata = fs::metadata(path)
-        .with_context(|| format!("cannot inspect executable {}", path.display()))?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
-        bail!("not an executable file: {}", path.display());
-    }
-    fs::canonicalize(path).with_context(|| format!("resolve executable {}", path.display()))
 }
 
 /// Stat tracks replacement and in-place updates without hashing hundreds of
