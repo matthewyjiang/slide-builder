@@ -54,8 +54,11 @@ fn direct_worker_invocation_fails_before_loading_configuration() {
         .output()
         .unwrap();
     assert!(!output.status.success());
+    #[cfg(target_os = "linux")]
     assert!(String::from_utf8_lossy(&output.stderr)
         .contains("must be launched through the preview sandbox"));
+    #[cfg(not(target_os = "linux"))]
+    assert!(String::from_utf8_lossy(&output.stderr).contains("set render.engine = \"chromium\""));
 }
 
 #[tokio::test]

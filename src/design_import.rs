@@ -496,7 +496,25 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    // RENAME_EXCL makes publication atomic even when another importer chooses
+    // the same destination after available_destination has inspected it.
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     if destination.exists() {
         return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
@@ -506,17 +524,25 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
 
 fn available_destination(root: &Path, slug: &str) -> PathBuf {
     let direct = root.join(slug);
-    if !direct.exists() {
+    if std::fs::symlink_metadata(&direct)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
         return direct;
     }
     for suffix in 2..=10_000 {
         let candidate = root.join(format!("{slug}-{suffix}"));
-        if !candidate.exists() {
+        if std::fs::symlink_metadata(&candidate)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
             return candidate;
         }
     }
     root.join(format!("{slug}-{}", Uuid::new_v4()))
 }
+
+#[cfg(test)]
+#[path = "design_import_publication_tests.rs"]
+mod publication_tests;
 
 #[cfg(test)]
 mod tests {

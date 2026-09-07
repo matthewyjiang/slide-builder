@@ -50,3 +50,31 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --all-features
+
+  macos:
+    name: macOS Chromium lint and tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Native tool and browser versions
+        run: |
+          sw_vers
+          uname -m
+          rustc -Vv
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --version
+          brew install poppler
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --locked --all-features
+      - name: Real Chromium capture and PDF export
+        run: |
+          cargo test --locked --test chromium_render -- --ignored
+          cargo test --locked --test export_pdf chromium_exports -- --ignored

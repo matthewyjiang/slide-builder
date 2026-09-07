@@ -1,4 +1,9 @@
-# Linux installation and qualification
+# Installation and qualification
+
+Linux uses embedded Obscura by default. macOS support is experimental and uses
+Chromium by default. See `docs/macos.md` for browser setup, native paths, and the
+remaining manual qualification checks. The Obscura requirements and qualification
+record below apply only to Linux.
 
 ## Build
 
@@ -6,12 +11,13 @@ Use Rust 1.92 or newer, as required by the pinned dependencies.
 
 ```sh
 cargo build --release --locked -j 8
-install -Dm755 target/release/slide-builder ~/.local/bin/slide-builder
+mkdir -p ~/.local/bin
+install -m755 target/release/slide-builder ~/.local/bin/slide-builder
 ```
 
 The lockfile pins `rho-sdk`, `rho-providers`, `rho-agent-tools`, `pptx-handler`, and `handler-common` to audited Git revisions. The rho revision is PR #387 because the extracted crates were not yet present on rho `main` when this lockfile was generated.
 
-Obscura and its patched layout/font dependencies are pinned to the tested v0.2.2
+On Linux, Obscura and its patched layout/font dependencies are pinned to the tested v0.2.2
 revision `a1e09de68c7617b8079fbb1661b0548c501971c1`. Rendering is compiled in.
 The V8 dependency downloads a prebuilt static library during a normal build;
 building V8 from source is not required. Build-time downloads are separate from
@@ -47,7 +53,8 @@ adds `--no-sandbox`; captures use isolated profiles and offline CSP.
 
 ### Existing configurations
 
-An omitted `render.engine` now means `obscura`. Setting `browser_path` alone no
+On Linux, an omitted `render.engine` means `obscura`. On macOS it means `chromium`.
+Setting `browser_path` alone no
 longer selects Chromium. Add `engine = "chromium"` to the existing `[render]`
 section to retain that backend, or install bubblewrap for the new default.
 Legacy `render.obscura_path` entries are ignored; captures always use the embedded

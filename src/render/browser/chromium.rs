@@ -1,17 +1,50 @@
-//! The explicitly selected Chromium CLI adapter.
+//! Chromium CLI adapter and platform-specific executable discovery.
 use super::{percent_encode_path, CaptureOptions};
 use anyhow::Result;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(super) const CANDIDATES: &[&str] = &[
     "google-chrome-stable",
     "google-chrome",
     "chromium",
     "chromium-browser",
+    "brave-browser",
     "microsoft-edge-stable",
     "microsoft-edge",
 ];
+
+pub(super) fn discover(configured: &Path) -> Result<PathBuf> {
+    // An explicit path is authoritative, including when it is invalid.
+    let result = super::executable_path(configured, CANDIDATES);
+    if configured != Path::new("auto") || result.is_ok() {
+        return result;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let roots = std::iter::once(PathBuf::from("/Applications"))
+            .chain(crate::paths::home_dir().map(|home| home.join("Applications")));
+        if let Some(path) = discover_bundles(roots) {
+            return Ok(path);
+        }
+    }
+    result
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn discover_bundles(roots: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    const BUNDLES: &[&str] = &[
+        "Google Chrome.app/Contents/MacOS/Google Chrome",
+        "Chromium.app/Contents/MacOS/Chromium",
+        "Brave Browser.app/Contents/MacOS/Brave Browser",
+        "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ];
+    roots.into_iter().find_map(|root| {
+        BUNDLES
+            .iter()
+            .find_map(|bundle| super::validate_executable(&root.join(bundle)).ok())
+    })
+}
 
 pub(super) fn capture_args(
     html: &Path,

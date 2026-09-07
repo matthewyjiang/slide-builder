@@ -1,5 +1,6 @@
 use super::*;
 use crate::render::cache::CacheKey;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::symlink;
 
 #[test]
@@ -19,6 +20,7 @@ fn chromium_arguments_preserve_sandbox_and_paths() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn missing_sandbox_fails_closed_and_scale_is_validated() {
     let config = RenderConfig {
         engine: RenderEngine::Obscura,
@@ -58,6 +60,7 @@ fn renderer_identity_separates_cache_entries() {
 }
 
 #[tokio::test]
+#[cfg(target_os = "linux")]
 async fn capture_budgets_fail_before_creating_output_or_launching_worker() {
     let directory = tempfile::tempdir().unwrap();
     let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
@@ -123,6 +126,7 @@ fn replacing_an_executable_invalidates_its_cache_identity() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
     let directory = tempfile::tempdir().unwrap();
     let html = directory.path().join("input.html");
@@ -195,16 +199,12 @@ async fn cancelling_capture_kills_parent_and_helpers() {
     })
     .await
     .expect("capture helpers did not report ready within 5 seconds");
+    assert!(pids.iter().all(|pid| process_is_running(*pid)));
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let running = pids.iter().any(|pid| {
-                fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-                    stat.rsplit_once(") ")
-                        .is_some_and(|(_, rest)| !rest.starts_with(['Z', 'X']))
-                })
-            });
+            let running = pids.iter().any(|pid| process_is_running(*pid));
             if !running {
                 break;
             }
@@ -216,6 +216,7 @@ async fn cancelling_capture_kills_parent_and_helpers() {
 }
 
 #[tokio::test]
+#[cfg(target_os = "linux")]
 #[ignore = "requires Linux user namespaces, bubblewrap and /usr/bin/python3"]
 async fn sandbox_blocks_host_files_and_network() {
     let directory = tempfile::tempdir().unwrap();
@@ -264,4 +265,60 @@ pathlib.Path('/output/extra').write_text('private tmpfs only')
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");
     assert_eq!(fs::read_to_string(secret).unwrap(), "not permitted");
     assert!(!directory.path().join("extra").exists());
+}
+
+fn process_is_running(pid: u32) -> bool {
+    // ps works on Linux and macOS and distinguishes orphaned zombies from
+    // live helpers. Missing /proc must never count as successful cancellation.
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .expect("inspect capture process with ps");
+    assert!(output.status.success() || output.status.code() == Some(1));
+    let status = std::str::from_utf8(&output.stdout).unwrap().trim();
+    !status.is_empty() && !status.starts_with(['Z', 'X'])
+}
+
+#[test]
+fn app_bundle_discovery_skips_invalid_files_and_preserves_explicit_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let system = directory.path().join("Applications");
+    let user = directory.path().join("home/Applications");
+    let chrome = system.join("Google Chrome.app/Contents/MacOS/Google Chrome");
+    let brave = user.join("Brave Browser.app/Contents/MacOS/Brave Browser");
+    for path in [&chrome, &brave] {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "browser").unwrap();
+    }
+    fs::set_permissions(&brave, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        chromium::discover_bundles([system.clone(), user.clone()]),
+        Some(fs::canonicalize(&brave).unwrap())
+    );
+    fs::set_permissions(&chrome, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        chromium::discover_bundles([system, user]),
+        Some(fs::canonicalize(&chrome).unwrap())
+    );
+    assert_eq!(
+        Browser::probe_chromium(Some(&brave)).unwrap().executable(),
+        fs::canonicalize(&brave).unwrap()
+    );
+    assert!(Browser::probe_chromium(Some(&directory.path().join("missing"))).is_err());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn explicit_obscura_is_rejected_with_recovery_instead_of_switching_engines() {
+    let config = RenderConfig {
+        engine: RenderEngine::Obscura,
+        ..Default::default()
+    };
+    let error = Browser::probe(&config).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("set render.engine = \"chromium\""));
+    assert!(CaptureOptions::default()
+        .validate_for_engine(RenderEngine::Obscura)
+        .is_err());
 }

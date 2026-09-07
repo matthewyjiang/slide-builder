@@ -24,7 +24,7 @@ fn bad_numeric_value_is_reported_without_closing() {
 }
 
 #[test]
-fn scaled_obscura_configuration_saves() {
+fn scaled_default_renderer_configuration_saves() {
     let mut config = Config::default();
     config.preview.scale = 2;
     let mut state = ConfigurationState::new(&config, vec![]);
@@ -35,6 +35,7 @@ fn scaled_obscura_configuration_saves() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn oversized_obscura_capture_is_reported_before_save() {
     let mut config = Config::default();
     config.preview.width = 4096;
@@ -61,6 +62,7 @@ fn oversized_obscura_capture_is_reported_before_save() {
 #[test]
 fn renderer_choice_and_paths_save_without_losing_inactive_engine_settings() {
     let mut config = Config::default();
+    config.render.engine = RenderEngine::Obscura;
     config.render.sandbox_path = "/opt/bwrap".into();
     config.render.browser_path = "/opt/chromium".into();
     let mut state = ConfigurationState::new(&config, vec![]);

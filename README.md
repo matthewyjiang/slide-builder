@@ -1,6 +1,6 @@
 # slide-builder
 
-AI-assisted PowerPoint authoring in your terminal. Linux only.
+AI-assisted PowerPoint authoring in your terminal. Linux, with experimental macOS support.
 
 ## Your decks, your design
 
@@ -12,13 +12,17 @@ Run `/import-design` and pick a `.pptx`. Slide-builder copies the template and g
 
 Early preview. No binary releases yet, so you'll need to build from source.
 
-You need Rust 1.92+, Kitty or Ghostty for inline previews, and Bubblewrap (`bwrap`) with user namespaces enabled.
+You need Rust 1.92+ and Kitty or Ghostty for inline previews. Linux defaults to
+Obscura and needs Bubblewrap (`bwrap`) with user namespaces enabled. macOS defaults
+to Chromium and needs an installed Chromium-family browser. See `docs/macos.md`
+for setup and qualification limits.
 
 From the repository root:
 
 ```sh
 cargo build --release --locked -j 8
-install -Dm755 target/release/slide-builder ~/.local/bin/slide-builder
+mkdir -p ~/.local/bin
+install -m755 target/release/slide-builder ~/.local/bin/slide-builder
 ```
 
 Make sure `~/.local/bin` is on your `PATH`. See `INSTALL.md` for detailed requirements and renderer setup.
@@ -47,6 +51,7 @@ cargo test --locked --all-features -j 8
 A separate workflow runs Actionlint when `.github/workflows/` changes. Both
 workflows can also be started manually from GitHub's Actions tab.
 
-CI runs the ordinary test suite, including the direct-worker rejection check.
+CI runs the ordinary test suite on Linux and macOS, including the direct-worker rejection check.
+The macOS job also runs real Chromium capture and PDF export checks.
 The ignored renderer and namespace tests require a qualified Bubblewrap
 host and are not run in CI. See `INSTALL.md` for the commands to run those checks.

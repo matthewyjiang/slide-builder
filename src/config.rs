@@ -191,8 +191,9 @@ impl Default for PreviewConfig {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderEngine {
-    #[default]
+    #[cfg_attr(not(target_os = "macos"), default)]
     Obscura,
+    #[cfg_attr(target_os = "macos", default)]
     Chromium,
 }
 
@@ -201,7 +202,7 @@ pub enum RenderEngine {
 pub struct RenderConfig {
     pub engine: RenderEngine,
     pub sandbox_path: PathBuf,
-    /// Used only when the Chromium engine is explicitly selected.
+    /// Used only by the Chromium engine.
     pub browser_path: PathBuf,
     pub debounce_ms: u64,
     pub timeout_ms: u64,

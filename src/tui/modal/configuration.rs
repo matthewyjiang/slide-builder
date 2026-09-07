@@ -49,8 +49,8 @@ impl ConfigurationState {
                         text("preview_scale", "Scale", "Output pixels per CSS pixel, from 1 to 4.\nHigher scales keep layout size; Obscura capture budgets apply.", &config.preview.scale.to_string()),
                     ]},
                     MenuGroup { title: "Renderer".into(), items: vec![
-                        choice("render_engine", "Engine", "Obscura: Linux + bwrap + user namespaces.\nChromium: opt-in. No fallback. Restart required.", vec!["obscura".into(), "chromium".into()], match config.render.engine { RenderEngine::Obscura => "obscura", RenderEngine::Chromium => "chromium" }),
-                        text("sandbox_path", "Sandbox path", "Required bwrap path, or auto. No bypass.\nMissing isolation disables previews. Restart required.", &config.render.sandbox_path.to_string_lossy()),
+                        choice("render_engine", "Engine", "Defaults: Linux Obscura; macOS Chromium.\nObscura needs Linux + bwrap. No fallback. Restart required.", vec!["obscura".into(), "chromium".into()], match config.render.engine { RenderEngine::Obscura => "obscura", RenderEngine::Chromium => "chromium" }),
+                        text("sandbox_path", "Sandbox path", "Obscura only: bwrap path, or auto. No bypass.\nIgnored by Chromium. Restart required.", &config.render.sandbox_path.to_string_lossy()),
                         text("browser_path", "Chromium path", "Chromium only: executable path, or auto.\nIgnored by Obscura. Restart required.", &config.render.browser_path.to_string_lossy()),
                         text("debounce_ms", "Debounce (ms)", "Delay before rendering after deck changes.", &config.render.debounce_ms.to_string()),
                         text("timeout_ms", "Timeout (ms)", "Rendering timeout; must be greater than zero.", &config.render.timeout_ms.to_string()),

@@ -11,6 +11,10 @@ use std::time::Duration;
 use tokio::process::Command;
 
 mod chromium;
+#[cfg(target_os = "linux")]
+mod obscura;
+#[cfg(not(target_os = "linux"))]
+#[path = "browser/unsupported.rs"]
 mod obscura;
 mod process;
 
@@ -87,11 +91,8 @@ impl Browser {
     }
 
     pub fn probe_chromium(configured: Option<&Path>) -> Result<Self> {
-        let executable = executable_path(
-            configured.unwrap_or(Path::new("auto")),
-            chromium::CANDIDATES,
-        )
-        .context("no Chromium-family browser found; configure render.browser_path")?;
+        let executable = chromium::discover(configured.unwrap_or(Path::new("auto")))
+            .context("no Chromium-family browser found; install Google Chrome, Chromium, Brave, or Microsoft Edge, or set render.browser_path to its absolute executable path (inside Contents/MacOS on macOS)")?;
         Self::from_path(&executable)
     }
 
@@ -184,6 +185,9 @@ impl CaptureOptions {
         self.validate()?;
         match engine {
             RenderEngine::Chromium => Ok(()),
+            #[cfg(not(target_os = "linux"))]
+            RenderEngine::Obscura => bail!(super::worker::UNSUPPORTED),
+            #[cfg(target_os = "linux")]
             RenderEngine::Obscura => obscura_js::validate_capture_region(self.capture_region())
                 .map_err(|error| anyhow::anyhow!(
                     "Obscura capture budget exceeded ({error:?}): requested {}x{} CSS pixels at scale {} ({}x{} output pixels); each surface allows at most {} pixels per dimension and {} total pixels. Reduce preview.width or preview.scale",
@@ -195,6 +199,7 @@ impl CaptureOptions {
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn capture_region(&self) -> obscura_js::CaptureRegion {
         obscura_js::CaptureRegion::new(
             /*x*/ 0.0,

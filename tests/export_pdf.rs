@@ -9,6 +9,21 @@ use std::{collections::HashMap, path::Path, process::Command};
 #[tokio::test]
 #[ignore = "requires Linux user namespaces, bubblewrap, pdfinfo and pdftoppm"]
 async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
+    let browser = Browser::with_embedded_worker(
+        Path::new(env!("CARGO_BIN_EXE_slide-builder")),
+        Path::new("auto"),
+    )
+    .unwrap();
+    exports_portrait_snapshot_as_full_bleed_pdf(browser).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Chromium, pdfinfo and pdftoppm"]
+async fn chromium_exports_portrait_snapshot_as_full_bleed_pdf() {
+    exports_portrait_snapshot_as_full_bleed_pdf(Browser::probe_chromium(None).unwrap()).await;
+}
+
+async fn exports_portrait_snapshot_as_full_bleed_pdf(browser: Browser) {
     let directory = tempfile::tempdir().unwrap();
     let engine = DeckEngine::create(directory.path().join("portrait.pptx"), None)
         .await
@@ -72,11 +87,6 @@ async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
         })
         .await
         .unwrap();
-    let browser = Browser::with_embedded_worker(
-        Path::new(env!("CARGO_BIN_EXE_slide-builder")),
-        Path::new("auto"),
-    )
-    .unwrap();
     let mut config = Config::default();
     config.preview.enabled = false;
     config.preview.width = 500;
