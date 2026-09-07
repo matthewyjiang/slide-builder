@@ -15,6 +15,7 @@ pub enum Command {
     ChangeDesign,
     ImportDesign,
     RenderPreview,
+    ExportPdf,
     Configure,
     ChangeModel,
     Sessions,
@@ -47,7 +48,7 @@ pub struct SlashCommand {
     pub detail: &'static str,
 }
 
-const COMMANDS: [CommandItem; 12] = [
+const COMMANDS: [CommandItem; 13] = [
     CommandItem {
         command: Command::OpenDeck,
         slash_name: "/open",
@@ -131,6 +132,13 @@ const COMMANDS: [CommandItem; 12] = [
         label: "Quit slide-builder",
         detail: "Close the current workspace",
         shortcut: "Ctrl+C",
+    },
+    CommandItem {
+        command: Command::ExportPdf,
+        slash_name: "/export",
+        label: "Export deck",
+        detail: "Usage: /export pdf [destination.pdf]",
+        shortcut: "",
     },
 ];
 

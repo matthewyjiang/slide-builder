@@ -266,6 +266,7 @@ pub struct App {
     pub fullscreen: bool,
     pub prefix_active: bool,
     pub run_active: bool,
+    pub export_active: bool,
     pub should_quit: bool,
     pub deck_name: String,
     pub design_name: String,
@@ -292,6 +293,7 @@ impl Default for App {
             fullscreen: false,
             prefix_active: false,
             run_active: false,
+            export_active: false,
             should_quit: false,
             deck_name: "No deck".into(),
             design_name: "Default".into(),
@@ -353,6 +355,19 @@ impl App {
             }
             AppEvent::RendererUnavailable(reason) => {
                 self.preview.status = PreviewStatus::Unavailable { reason };
+                vec![]
+            }
+            AppEvent::ExportFinished(result) => {
+                self.export_active = false;
+                let text = match result {
+                    Ok(path) => format!("PDF exported to {}.", path.display()),
+                    Err(error) => format!("PDF export failed: {error}"),
+                };
+                self.transcript.push(TranscriptItem::Message(Message {
+                    role: Role::System,
+                    text,
+                    complete: true,
+                }));
                 vec![]
             }
             AppEvent::DeckFileChanged => {
@@ -595,6 +610,14 @@ impl App {
                 vec![]
             }
             KeyCode::Enter => {
+                let input = self.input.text.trim();
+                let (command, arguments) =
+                    input.split_once(char::is_whitespace).unwrap_or((input, ""));
+                if command.eq_ignore_ascii_case("/export") {
+                    let request = crate::export::parse_arguments(arguments);
+                    self.input.take();
+                    return self.request_export(request);
+                }
                 let slash_action = exact_slash_command(self.input.text.trim()).or_else(|| {
                     suggestions
                         .get(
@@ -810,6 +833,7 @@ impl App {
 
     fn run_command(&mut self, command: Command) -> Vec<AppAction> {
         match command {
+            Command::ExportPdf => self.request_export(Err(anyhow::anyhow!(crate::export::USAGE))),
             Command::OpenDeck if !self.run_active => vec![AppAction::OpenDeckPicker],
             Command::OpenDeck => vec![],
             Command::ChangeDesign if !self.run_active => {
@@ -847,6 +871,34 @@ impl App {
                 vec![AppAction::Quit]
             }
         }
+    }
+
+    fn request_export(&mut self, request: anyhow::Result<Option<PathBuf>>) -> Vec<AppAction> {
+        let request = request.and_then(|path| {
+            if self.export_active {
+                anyhow::bail!("A PDF export is already running. Wait for it to finish.");
+            }
+            if self.run_active {
+                anyhow::bail!("Finish the current operation before exporting PDF.");
+            }
+            Ok(path)
+        });
+        let (text, actions) = match request {
+            Ok(path) => {
+                self.export_active = true;
+                (
+                    "Exporting PDF from the current deck snapshot…".to_owned(),
+                    vec![AppAction::ExportPdf(path)],
+                )
+            }
+            Err(error) => (error.to_string(), vec![]),
+        };
+        self.transcript.push(TranscriptItem::Message(Message {
+            role: Role::System,
+            text,
+            complete: true,
+        }));
+        actions
     }
 
     fn navigate_previous(&mut self) -> Vec<AppAction> {
@@ -1099,3 +1151,7 @@ mod import_design_tests;
 #[cfg(test)]
 #[path = "app_session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "app_export_tests.rs"]
+mod export_tests;

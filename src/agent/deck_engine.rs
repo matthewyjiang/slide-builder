@@ -93,6 +93,8 @@ pub struct MutationResult {
 #[derive(Debug, Clone)]
 pub struct DeckSnapshot {
     pub generation: u64,
+    /// Physical slide size read from the same locked handler as the HTML.
+    pub size_inches: (f64, f64),
     pub html: String,
     pub outline: String,
 }
@@ -204,13 +206,15 @@ impl DeckEngine {
     }
 
     pub async fn snapshot(&self) -> Result<DeckSnapshot> {
-        let _guard = self.lock.lock().await;
+        let guard = self.lock.clone().lock_owned().await;
         let path = self.path.clone();
         let generation = self.generation();
         tokio::task::spawn_blocking(move || {
+            let _guard = guard;
             let handler = open(&path, false)?;
             Ok(DeckSnapshot {
                 generation,
+                size_inches: layout_xml::slide_size(&layout_xml::presentation(&handler)?)?,
                 html: handler.view_as_html(ViewOptions::default())?,
                 outline: handler.view_as_outline()?,
             })

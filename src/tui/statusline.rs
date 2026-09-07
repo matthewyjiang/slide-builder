@@ -38,7 +38,9 @@ pub fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
     } else {
         format!("Slide {} of {count}", app.preview.active + 1)
     };
-    let (state, color) = if app.run_active {
+    let (state, color) = if app.export_active {
+        ("● Exporting PDF", theme::WARNING)
+    } else if app.run_active {
         ("● Agent working", theme::WARNING)
     } else {
         match app.preview.status {

@@ -399,6 +399,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
     let mut pending_design_context = saved_session.state.pending_design_context.clone();
     let mut import_picker_directory = cwd.clone();
     let mut run_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut export_task: Option<tokio::task::JoinHandle<()>> = None;
     let result = async {
         let mut input = EventStream::new();
         let mut ui_tool_rx = ui_tool_rx;
@@ -510,6 +511,16 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                                     slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
                                 ));
                             }
+                        }));
+                    }
+                    AppAction::ExportPdf(requested) => {
+                        let destination = slide_builder::export::destination(engine.path(), requested);
+                        let engine = engine.clone();
+                        let config = config.clone();
+                        let tx = event_tx.clone();
+                        export_task = Some(tokio::spawn(async move {
+                            let result = slide_builder::export::export_pdf(engine, config, destination).await;
+                            let _ = tx.send(AppEvent::ExportFinished(result.map_err(|error| format!("{error:#}"))));
                         }));
                     }
                     AppAction::CancelRun => {
@@ -803,6 +814,14 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         }
     }
     .await;
+    // An export owns its temporary files and finishes before deck/session teardown.
+    if let Some(task) = export_task {
+        if let Err(error) = task.await {
+            app.apply(AppEvent::ExportFinished(Err(format!(
+                "PDF export task failed: {error}"
+            ))));
+        }
+    }
     design_import.shutdown().await;
     // Keep the runtime alive until cooperative cancellation has settled. UI tool
     // responders have been dropped with the loop, so no approval/render can hang it.

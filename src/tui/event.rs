@@ -86,6 +86,7 @@ pub enum AppEvent {
         error: String,
     },
     RendererUnavailable(String),
+    ExportFinished(Result<PathBuf, String>),
     DeckFileChanged,
     DeckPickerOpened {
         start_directory: PathBuf,
@@ -142,6 +143,7 @@ pub enum AppAction {
     },
     CancelRun,
     RequestRender,
+    ExportPdf(Option<PathBuf>),
     OpenDeckPicker,
     OpenDeck(PathBuf),
     OpenDesignPicker,
