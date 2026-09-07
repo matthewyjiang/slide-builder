@@ -18,6 +18,14 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+mod addition;
+mod coordination;
+mod layout;
+mod layout_audit;
+mod layout_contract;
+mod layout_plan;
+mod layout_rules;
+mod layout_xml;
 mod mutation;
 mod state;
 
@@ -28,6 +36,11 @@ pub const MAX_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_TEXT_BYTES: usize = 1_000_000;
 pub const MAX_MUTATIONS_PER_BATCH: usize = 100;
 pub const BLANK_DECK: &[u8] = include_bytes!("../../assets/blank.pptx");
+
+enum BoundsCheck {
+    Advanced,
+    Additions,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
@@ -94,10 +107,11 @@ pub struct DeckEngine {
 impl DeckEngine {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let path = absolute_clean(path.as_ref())?;
+        let (lock, generation) = coordination::handles(&path);
         Ok(Self {
             path: Arc::new(path),
-            lock: Arc::new(Mutex::new(())),
-            generation: Arc::new(AtomicU64::new(0)),
+            lock,
+            generation,
         })
     }
     pub fn path(&self) -> &Path {
@@ -160,24 +174,27 @@ impl DeckEngine {
 
     /// Apply multiple mutations in one transaction and advance generation once.
     pub async fn mutate_many(&self, ops: Vec<DeckMutation>) -> Result<MutationResult> {
-        if ops.is_empty() {
-            bail!("mutation batch must not be empty");
-        }
-        if ops.len() > MAX_MUTATIONS_PER_BATCH {
-            bail!("mutation batch exceeds {MAX_MUTATIONS_PER_BATCH} operation limit");
-        }
-        if serde_json::to_vec(&ops)?.len() > MAX_TEXT_BYTES {
-            bail!("mutation batch exceeds {MAX_TEXT_BYTES} byte limit");
-        }
-        for op in &ops {
-            validate_payload(op)?;
-        }
-        let _guard = self.lock.lock().await;
+        self.mutate_batch(ops, BoundsCheck::Advanced).await
+    }
+
+    /// Add elements only after checking geometry against the locked deck's exact dimensions.
+    pub async fn add_bounded(&self, ops: Vec<DeckMutation>) -> Result<MutationResult> {
+        self.mutate_batch(ops, BoundsCheck::Additions).await
+    }
+
+    async fn mutate_batch(
+        &self,
+        ops: Vec<DeckMutation>,
+        bounds: BoundsCheck,
+    ) -> Result<MutationResult> {
+        let guard = self.lock.clone().lock_owned().await;
         let path = self.path.clone();
-        let next = self.generation() + 1;
-        let transaction =
-            tokio::task::spawn_blocking(move || transact(path.as_ref(), ops)).await??;
-        self.generation.store(next, Ordering::Release);
+        let generation = self.generation.clone();
+        let (transaction, next) = tokio::task::spawn_blocking(move || -> Result<_> {
+            let _guard = guard;
+            commit(&path, &generation, ops, bounds)
+        })
+        .await??;
         Ok(MutationResult {
             generation: next,
             affected: transaction.affected,
@@ -254,6 +271,34 @@ impl DeckEngine {
         })
         .await?
     }
+}
+
+/// Call while holding the deck's owned lock, including throughout the blocking transaction.
+fn commit(
+    path: &Path,
+    generation: &AtomicU64,
+    ops: Vec<DeckMutation>,
+    bounds: BoundsCheck,
+) -> Result<(mutation::TransactionResult, u64)> {
+    if ops.is_empty() {
+        bail!("mutation batch must not be empty");
+    }
+    if ops.len() > MAX_MUTATIONS_PER_BATCH {
+        bail!(
+            "mutation batch operation budget: limit {MAX_MUTATIONS_PER_BATCH}, asked {}",
+            ops.len()
+        );
+    }
+    let bytes = serde_json::to_vec(&ops)?.len();
+    if bytes > MAX_TEXT_BYTES {
+        bail!("mutation batch byte budget: limit {MAX_TEXT_BYTES}, asked {bytes}");
+    }
+    for op in &ops {
+        validate_payload(op)?;
+    }
+    let transaction = transact(path, ops, bounds)?;
+    let generation = generation.fetch_add(1, Ordering::AcqRel) + 1;
+    Ok((transaction, generation))
 }
 
 fn open(path: &Path, editable: bool) -> Result<PptxHandler> {

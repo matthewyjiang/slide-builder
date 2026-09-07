@@ -12,6 +12,9 @@ use rho_sdk::{
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
+#[path = "deck_layout_tools.rs"]
+mod layout;
+
 #[derive(Clone)]
 pub struct DeckTool {
     name: &'static str,
@@ -42,6 +45,10 @@ pub fn semantic_tools(engine: DeckEngine) -> Vec<Arc<dyn Tool>> {
         "element_update",
         "deck_inspect",
         "deck_validate",
+        "deck_layout_inspect",
+        "deck_layout_set",
+        "elements_layout",
+        "deck_layout_audit",
         "deck_advanced",
     ]
     .into_iter()
@@ -49,6 +56,9 @@ pub fn semantic_tools(engine: DeckEngine) -> Vec<Arc<dyn Tool>> {
     .collect()
 }
 fn schema(name: &str) -> Value {
+    if let Some(schema) = layout::schema(name) {
+        return schema;
+    }
     let item = single_schema(name);
     if !is_mutation_tool(name) {
         return item;
@@ -74,7 +84,10 @@ fn schema(name: &str) -> Value {
 }
 
 fn is_mutation_tool(name: &str) -> bool {
-    !matches!(name, "deck_inspect" | "deck_validate")
+    !matches!(
+        name,
+        "deck_inspect" | "deck_validate" | "deck_layout_inspect" | "deck_layout_audit"
+    )
 }
 
 fn single_schema(name: &str) -> Value {
@@ -189,6 +202,9 @@ fn single_schema(name: &str) -> Value {
     }
 }
 fn description(name: &str) -> &'static str {
+    if let Some(description) = layout::description(name) {
+        return description;
+    }
     match name {
         "slide_create" => "Add blank slides to the end of the active deck. Pass one edit directly or multiple edits in an `edits` array.",
         "slide_duplicate" => "Duplicate slides by one-based index. Pass one edit directly or multiple edits in an `edits` array.",
@@ -215,19 +231,17 @@ impl Tool for DeckTool {
     }
     fn start_metadata(&self, _: &Value) -> ToolMetadata {
         ToolMetadata::new()
-            .operation(
-                if self.name.starts_with("deck_inspect") || self.name == "deck_validate" {
-                    OperationKind::Read
-                } else {
-                    OperationKind::Write
-                },
-            )
+            .operation(if !is_mutation_tool(self.name) {
+                OperationKind::Read
+            } else {
+                OperationKind::Write
+            })
             .affected_path(self.engine.path())
     }
     fn call<'a>(&'a self, inv: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let args = inv.into_arguments();
-            if self.name != "deck_inspect" && self.name != "deck_validate" {
+            if is_mutation_tool(self.name) {
                 context
                     .authorize(CapabilityRequest::write_path(
                         self.engine.path(),
@@ -247,7 +261,7 @@ impl Tool for DeckTool {
             let result = execute(self.name, &self.engine, args).await.map_err(|e| {
                 ToolError::new(
                     ToolErrorKind::Execution,
-                    format!("{}; deck is unchanged", e),
+                    format!("{e:#}; deck is unchanged"),
                 )
             })?;
             Ok(
@@ -269,14 +283,11 @@ async fn execute(name: &str, e: &DeckEngine, arguments: Value) -> anyhow::Result
                 )
                 .await
         }
-        "deck_validate" => {
-            let snapshot = e.snapshot().await?;
-            return Ok(json!({
-                "valid": true,
-                "generation": snapshot.generation,
-                "outline": snapshot.outline
-            }));
-        }
+        "deck_validate" => return e.validate().await,
+        "deck_layout_inspect" => return e.layout_inspect().await,
+        "deck_layout_set" => return e.layout_set(arguments).await,
+        "elements_layout" => return Ok(serde_json::to_value(e.layout_apply(arguments).await?)?),
+        "deck_layout_audit" => return e.layout_audit().await,
         _ => {}
     }
 
@@ -291,7 +302,10 @@ async fn execute(name: &str, e: &DeckEngine, arguments: Value) -> anyhow::Result
         anyhow::bail!("field `edits` must contain at least one edit");
     }
     if edits.len() > MAX_MUTATIONS_PER_BATCH {
-        anyhow::bail!("field `edits` exceeds {MAX_MUTATIONS_PER_BATCH} edit limit");
+        anyhow::bail!(
+            "mutation batch limit is {MAX_MUTATIONS_PER_BATCH} edits; requested {}",
+            edits.len()
+        );
     }
     let mutations = edits
         .iter()
@@ -301,7 +315,12 @@ async fn execute(name: &str, e: &DeckEngine, arguments: Value) -> anyhow::Result
                 .map_err(|error| anyhow::anyhow!("edit {}: {error}", index + 1))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(serde_json::to_value(e.mutate_many(mutations).await?)?)
+    let result = if matches!(name, "text_add" | "image_add" | "shape_add") {
+        e.add_bounded(mutations).await?
+    } else {
+        e.mutate_many(mutations).await?
+    };
+    Ok(serde_json::to_value(result)?)
 }
 
 fn mutation_from_arguments(name: &str, arguments: &Value) -> anyhow::Result<DeckMutation> {
@@ -497,14 +516,22 @@ fn validate_geometry(x: f64, y: f64, w: f64, h: f64) -> anyhow::Result<()> {
     if ![x, y, w, h].iter().all(|v| v.is_finite()) {
         anyhow::bail!("geometry must be finite")
     };
-    if x < 0. || y < 0. || w <= 0. || h <= 0. || x + w > 13.334 || y + h > 7.5 {
-        anyhow::bail!("geometry exceeds 13.333 x 7.5 inch slide bounds")
+    if x < 0. || y < 0. || w <= 0. || h <= 0. {
+        anyhow::bail!("geometry requires nonnegative x/y and positive width/height; requested x={x}, y={y}, width={w}, height={h}")
     };
     Ok(())
 }
 #[cfg(test)]
 #[path = "deck_tools_style_tests.rs"]
 mod style_tests;
+
+#[cfg(test)]
+#[path = "deck_tools_geometry_tests.rs"]
+mod geometry_tests;
+
+#[cfg(test)]
+#[path = "deck_tools_layout_tests.rs"]
+mod layout_tests;
 
 #[cfg(test)]
 mod tests {
@@ -864,7 +891,7 @@ mod tests {
     #[test]
     fn geometry() {
         assert!(validate_geometry(0., 0., 1., 1.).is_ok());
-        assert!(validate_geometry(13., 0., 1., 1.).is_err());
+        assert!(validate_geometry(-1., 0., 1., 1.).is_err());
     }
 }
 

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 pub const BASE_PROMPT: &str = r#"You are slide-builder, a terminal-first agent that creates and edits PowerPoint decks with native deck tools.
 
-Work on the active deck only unless the user explicitly asks to create or select another deck. Inspect before editing. Prefer semantic deck tools, preserve stable element IDs, validate meaningful changes, and render every slide. A completed `render_deck` call updates the user-facing preview and returns image paths, but it does not attach image bytes to you. Only claim visual inspection after the user attaches the active slide; otherwise ask them to use Ctrl+V when visual feedback is needed. Never claim a mutation or render succeeded without a tool result. Keep deck content accurate, concise, legible, and appropriate for the user's audience.
+Work on the active deck only unless the user explicitly asks to create or select another deck. Inspect before editing. Prefer semantic deck tools, preserve stable element IDs, validate meaningful changes, and render every slide. A completed `render_deck` call updates the preview and attaches the rendered slide images in the order listed in its result. Inspect those images before concluding the work. If rendering or image delivery fails, report that visual review is incomplete; never claim to have inspected images you did not receive. The user can also attach the active slide with Ctrl+V for targeted feedback. Never claim a mutation or render succeeded without a tool result. Keep deck content accurate, concise, legible, and appropriate for the user's audience.
+
+Before composing slides, inspect the saved deck layout with `deck_layout_inspect`. Reuse its regions and text styles. If none exists, establish one with `deck_layout_set` from the active design package or the existing deck's conventions. Do not impose the terminal application's visual design on slide content. Use `elements_layout` for shared edges, even gaps, named regions, and named text styles rather than estimating independent coordinates. Identify each slide's takeaway and primary visual before placing supporting content. Run `deck_layout_audit` for mechanical findings, then review rendered images for hierarchy and text fit. A clean audit does not prove visual quality.
 
 Repository reads are available for research and asset generation. Deck writes are normal product work. Repository writes and processes may require approval. Network access from agent tools is unavailable. Do not use raw OOXML or optional external OfficeCLI unless native tools explicitly cannot perform the operation."#;
 
@@ -53,7 +55,7 @@ pub fn assemble(context: &PromptContext<'_>) -> Result<String> {
     }
 
     if !context.skills.is_empty() {
-        prompt.push_str("\n\nSkills contain task-specific operating instructions. Call `load_skill` before acting whenever a skill description matches the request. For any PowerPoint inspection or edit, load `slide-builder-pptx` before the first deck tool call.");
+        prompt.push_str("\n\nSkills contain task-specific operating instructions. Call `load_skill` before acting whenever a skill description matches the request. For any PowerPoint inspection or edit, load `slide-builder-pptx` before the first deck tool call. For slide composition or visual refinement, also load `slide-design` before arranging content.");
         prompt.push_str("\n\n<available_skills>");
         for skill in context.skills {
             prompt.push_str(&format!(
@@ -228,7 +230,7 @@ mod tests {
         assert!(prompt.contains("Use &lt;blue&gt;"));
         assert!(prompt.contains("Helpful &amp; safe"));
         assert!(prompt.contains("Call `load_skill` before acting"));
-        assert!(prompt.contains("does not attach image bytes"));
+        assert!(prompt.contains("attaches the rendered slide images"));
         std::fs::remove_dir_all(root).unwrap();
     }
 

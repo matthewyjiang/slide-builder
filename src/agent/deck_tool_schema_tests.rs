@@ -49,7 +49,12 @@ fn mutation_schemas_accept_atomic_edit_batches() {
 
 #[test]
 fn read_tool_schemas_do_not_advertise_edit_batches() {
-    for name in ["deck_inspect", "deck_validate"] {
+    for name in [
+        "deck_inspect",
+        "deck_validate",
+        "deck_layout_inspect",
+        "deck_layout_audit",
+    ] {
         assert!(schema(name).get("oneOf").is_none(), "{name}");
     }
 }

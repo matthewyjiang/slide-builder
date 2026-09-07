@@ -3,7 +3,7 @@ use super::{
     state::{
         resolve_mutation_selectors, stable_id_for_path, stable_ids_added, stable_ids_for_mutation,
     },
-    DeckMutation,
+    BoundsCheck, DeckMutation,
 };
 use crate::agent::inspection_geometry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -23,7 +23,11 @@ pub(super) struct TransactionResult {
     pub(super) post_state: serde_json::Value,
 }
 
-pub(super) fn transact(path: &Path, ops: Vec<DeckMutation>) -> Result<TransactionResult> {
+pub(super) fn transact(
+    path: &Path,
+    ops: Vec<DeckMutation>,
+    bounds: BoundsCheck,
+) -> Result<TransactionResult> {
     if !path.exists() {
         bail!("deck does not exist: {}", path.display());
     }
@@ -36,6 +40,10 @@ pub(super) fn transact(path: &Path, ops: Vec<DeckMutation>) -> Result<Transactio
     std::fs::copy(path, &temp)?;
     let result = (|| -> Result<TransactionResult> {
         let handler = open(&temp, true)?;
+        match bounds {
+            BoundsCheck::Advanced => {}
+            BoundsCheck::Additions => super::addition::validate(&handler, &ops)?,
+        }
         let mut current_state = handler.view_as_outline_json()?;
         let initial_html = handler.view_as_html(ViewOptions::default())?;
         inspection_geometry::enrich(&mut current_state, &initial_html);
@@ -307,7 +315,7 @@ fn take_geometry(properties: &mut HashMap<String, String>) -> HashMap<String, St
     .collect()
 }
 
-fn value_as_emu(value: &str) -> Result<i64> {
+pub(super) fn value_as_emu(value: &str) -> Result<i64> {
     let value = value.trim();
     let (number, multiplier) = if let Some(number) = value.strip_suffix("in") {
         (number, 914_400.0)
@@ -478,7 +486,7 @@ fn xml_string_attr<'a>(element: &'a str, name: &str) -> Option<&'a str> {
     Some(&element[start..end])
 }
 
-fn slide_part(handler: &PptxHandler, index: usize) -> Result<String> {
+pub(super) fn slide_part(handler: &PptxHandler, index: usize) -> Result<String> {
     let presentation = handler.raw("ppt/presentation.xml", RawOptions::default())?;
     let entries = presentation
         .split("<p:sldId ")
