@@ -4,14 +4,7 @@ use super::{Config, RenderConfig, RenderEngine};
 fn missing_renderer_fields_use_platform_default_without_rewriting_explicit_scale() {
     let config: Config = toml::from_str("").unwrap();
     assert_eq!(config, Config::default());
-    assert_eq!(
-        config.render.engine,
-        if cfg!(target_os = "macos") {
-            RenderEngine::Chromium
-        } else {
-            RenderEngine::Obscura
-        }
-    );
+    assert_eq!(config.render.engine, RenderEngine::Obscura);
 
     let legacy: Config = toml::from_str(
         r#"

@@ -52,7 +52,7 @@ jobs:
         run: cargo test --locked --all-features
 
   macos:
-    name: macOS Chromium lint and tests
+    name: macOS Obscura lint and isolation
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,7 +74,12 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --all-features
-      - name: Real Chromium capture and PDF export
+      - name: Obscura isolation and native capture
+        run: |
+          cargo test --locked --lib macos_sandbox_blocks_host_files_network_and_services -- --ignored
+          cargo test --locked --test embedded_render -- --include-ignored
+          cargo test --locked --test export_pdf obscura_exports -- --ignored
+      - name: Explicit Chromium compatibility
         run: |
           cargo test --locked --test chromium_render -- --ignored
           cargo test --locked --test export_pdf chromium_exports -- --ignored

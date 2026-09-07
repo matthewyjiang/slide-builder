@@ -20,7 +20,6 @@ fn chromium_arguments_preserve_sandbox_and_paths() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
 fn missing_sandbox_fails_closed_and_scale_is_validated() {
     let config = RenderConfig {
         engine: RenderEngine::Obscura,
@@ -28,7 +27,7 @@ fn missing_sandbox_fails_closed_and_scale_is_validated() {
         ..RenderConfig::default()
     };
     let error = Browser::probe(&config).unwrap_err();
-    assert!(format!("{error:#}").contains("bubblewrap"));
+    assert!(format!("{error:#}").contains("Unsandboxed rendering is not allowed"));
     let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
     browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/bin/true")).unwrap());
     assert!(browser.validate_options(&CaptureOptions::default()).is_ok());
@@ -60,7 +59,6 @@ fn renderer_identity_separates_cache_entries() {
 }
 
 #[tokio::test]
-#[cfg(target_os = "linux")]
 async fn capture_budgets_fail_before_creating_output_or_launching_worker() {
     let directory = tempfile::tempdir().unwrap();
     let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
@@ -305,20 +303,4 @@ fn app_bundle_discovery_skips_invalid_files_and_preserves_explicit_paths() {
         fs::canonicalize(&brave).unwrap()
     );
     assert!(Browser::probe_chromium(Some(&directory.path().join("missing"))).is_err());
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn explicit_obscura_is_rejected_with_recovery_instead_of_switching_engines() {
-    let config = RenderConfig {
-        engine: RenderEngine::Obscura,
-        ..Default::default()
-    };
-    let error = Browser::probe(&config).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("set render.engine = \"chromium\""));
-    assert!(CaptureOptions::default()
-        .validate_for_engine(RenderEngine::Obscura)
-        .is_err());
 }

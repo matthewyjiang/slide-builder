@@ -35,7 +35,6 @@ fn scaled_default_renderer_configuration_saves() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
 fn oversized_obscura_capture_is_reported_before_save() {
     let mut config = Config::default();
     config.preview.width = 4096;

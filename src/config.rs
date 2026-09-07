@@ -191,9 +191,8 @@ impl Default for PreviewConfig {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderEngine {
-    #[cfg_attr(not(target_os = "macos"), default)]
+    #[default]
     Obscura,
-    #[cfg_attr(target_os = "macos", default)]
     Chromium,
 }
 

@@ -1,0 +1,23 @@
+(version 1)
+(deny default)
+
+; Only the chosen worker may execute. No subprocesses, network, Mach service
+; lookup, user files, credentials, project trees, or writable directory grants.
+(allow process-exec (literal (param "EXECUTABLE")))
+(allow file-read*
+    (literal (param "EXECUTABLE"))
+    (literal (param "INPUT"))
+    (literal "/dev/null")
+    (literal "/dev/random")
+    (literal "/dev/urandom")
+    (subpath "/usr/lib")
+    (subpath "/System/Library")
+    (subpath "/Library/Apple/System/Library"))
+(allow file-map-executable
+    (literal (param "EXECUTABLE"))
+    (subpath "/usr/lib")
+    (subpath "/System/Library")
+    (subpath "/Library/Apple/System/Library"))
+(allow file-write-data (literal (param "OUTPUT")))
+(allow sysctl-read)
+(allow signal (target self))

@@ -1,6 +1,6 @@
 # slide-builder
 
-AI-assisted PowerPoint authoring in your terminal. Linux, with experimental macOS support.
+AI-assisted PowerPoint authoring in your terminal. Linux; macOS qualification is in progress.
 
 ## Your decks, your design
 
@@ -13,9 +13,9 @@ Run `/import-design` and pick a `.pptx`. Slide-builder copies the template and g
 Early preview. No binary releases yet, so you'll need to build from source.
 
 You need Rust 1.92+ and Kitty or Ghostty for inline previews. Linux defaults to
-Obscura and needs Bubblewrap (`bwrap`) with user namespaces enabled. macOS defaults
-to Chromium and needs an installed Chromium-family browser. See `docs/macos.md`
-for setup and qualification limits.
+Obscura and needs Bubblewrap (`bwrap`) with user namespaces enabled. Obscura remains
+the primary renderer on every platform. See `docs/macos.md` for the pending native
+macOS backend and the explicitly selected Chromium compatibility path.
 
 From the repository root:
 
@@ -52,6 +52,7 @@ A separate workflow runs Actionlint when `.github/workflows/` changes. Both
 workflows can also be started manually from GitHub's Actions tab.
 
 CI runs the ordinary test suite on Linux and macOS, including the direct-worker rejection check.
-The macOS job also runs real Chromium capture and PDF export checks.
-The ignored renderer and namespace tests require a qualified Bubblewrap
-host and are not run in CI. See `INSTALL.md` for the commands to run those checks.
+The macOS job also runs real Obscura isolation, capture, and PDF export checks,
+plus explicitly selected Chromium compatibility checks. The ignored Linux
+namespace tests require a qualified Bubblewrap host and are not run in CI.
+See `INSTALL.md` for the commands to run those checks.

@@ -1,7 +1,7 @@
 # Installation and qualification
 
-Linux uses embedded Obscura by default. macOS support is experimental and uses
-Chromium by default. See `docs/macos.md` for browser setup, native paths, and the
+Obscura is the default renderer on every platform. Native macOS Obscura support
+is pending sandbox qualification. See `docs/macos.md` for browser setup, native paths, and the
 remaining manual qualification checks. The Obscura requirements and qualification
 record below apply only to Linux.
 
@@ -53,7 +53,7 @@ adds `--no-sandbox`; captures use isolated profiles and offline CSP.
 
 ### Existing configurations
 
-On Linux, an omitted `render.engine` means `obscura`. On macOS it means `chromium`.
+An omitted `render.engine` means `obscura` on every platform.
 Setting `browser_path` alone no
 longer selects Chromium. Add `engine = "chromium"` to the existing `[render]`
 section to retain that backend, or install bubblewrap for the new default.

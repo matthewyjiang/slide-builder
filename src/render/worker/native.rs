@@ -2,7 +2,7 @@
 //!
 //! Call before starting an application's runtime. Rendering stays on one thread
 //! in a disposable process; the parent owns the hard deadline and kills the
-//! bubblewrap process group on cancellation, including synchronous native hangs.
+//! sandbox process group on cancellation, including synchronous native hangs.
 use anyhow::{bail, Context, Result};
 use obscura_browser::{BrowserContext, Page, WaitUntil};
 use std::{ffi::OsStr, path::Path, sync::Arc, time::Duration};
@@ -19,7 +19,11 @@ pub fn run_if_requested() -> Result<bool> {
     }
     // This is an accidental-invocation guard, not the security boundary. Only
     // Sandbox::command establishes isolation; no public URL/path input exists.
-    if std::env::current_exe()? != Path::new("/app/slide-builder") {
+    #[cfg(target_os = "linux")]
+    let sandboxed = std::env::current_exe()? == Path::new("/app/slide-builder");
+    #[cfg(target_os = "macos")]
+    let sandboxed = std::env::var_os("SLIDE_BUILDER_SANDBOXED").as_deref() == Some(OsStr::new("1"));
+    if !sandboxed {
         bail!("private render worker must be launched through the preview sandbox");
     }
     let width = args
@@ -46,6 +50,16 @@ pub fn run_if_requested() -> Result<bool> {
         .to_str()
         .context("invalid worker deadline")?
         .parse::<u64>()?;
+    #[cfg(target_os = "linux")]
+    let (input, output) = (
+        std::path::PathBuf::from("/input/capture.html"),
+        std::path::PathBuf::from("/output/capture.png"),
+    );
+    #[cfg(target_os = "macos")]
+    let (input, output) = (
+        std::path::PathBuf::from(args.next().context("missing private capture HTML")?),
+        std::path::PathBuf::from(args.next().context("missing private screenshot output")?),
+    );
     if args.next().is_some() {
         bail!("unexpected private render worker arguments");
     }
@@ -60,18 +74,26 @@ pub fn run_if_requested() -> Result<bool> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(capture(&options))?;
+        .block_on(capture(&options, &input, &output))?;
     Ok(true)
 }
 
-async fn capture(options: &crate::render::browser::CaptureOptions) -> Result<()> {
+async fn capture(
+    options: &crate::render::browser::CaptureOptions,
+    input: &Path,
+    output: &Path,
+) -> Result<()> {
     let context = Arc::new(BrowserContext::new("slide-preview".into()));
     let mut page = Page::new("slide".into(), context);
     let viewport = (options.width as f32, options.height as f32);
     page.set_viewport(viewport);
     page.set_device_scale_factor(options.scale);
     page.set_navigation_timeout(options.timeout);
-    page.navigate_with_wait("file:///input/capture.html", WaitUntil::Load)
+    let url = format!(
+        "file://{}",
+        crate::render::browser::percent_encode_path(input)?
+    );
+    page.navigate_with_wait(&url, WaitUntil::Load)
         .await
         .context("load private capture HTML")?;
     // Match the qualified CLI's --wait 0 and screenshot resource preparation.
@@ -89,5 +111,5 @@ async fn capture(options: &crate::render::browser::CaptureOptions) -> Result<()>
         page.screenshot_region(options.capture_region())
             .map_err(|error| anyhow::anyhow!("Obscura scaled screenshot failed: {error:?}"))?
     };
-    std::fs::write("/output/capture.png", png).context("write private screenshot")
+    std::fs::write(output, png).context("write private screenshot")
 }
