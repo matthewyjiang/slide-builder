@@ -4,22 +4,60 @@ description: Build and edit PowerPoint decks safely with slide-builder's native 
 ---
 # Native PPTX authoring
 
-Use the semantic native deck tools first. They operate on the active deck, enforce slide bounds and payload limits, preserve stable element IDs, validate mutations, and publish changes transactionally.
+Use the semantic native deck tools first. They operate on the active deck, enforce payload limits, preserve stable element IDs, validate mutations, and publish changes transactionally. Additions and layout operations check slide bounds; run the layout audit after freeform element updates and advanced edits as well.
 
 ## Workflow
 
 1. Inspect the deck and identify its slide size, theme, layouts, and existing element IDs.
-2. Plan a coherent narrative and reusable layout system before adding content.
+2. Load `slide-design` when composing or visually refining slides. Identify each slide's takeaway, primary visual, and supporting evidence. Inspect `deck_layout_inspect` and reuse its saved settings. If no contract exists, resolve margins, gutters, named regions, and text styles from the active design package or existing deck, then save them with `deck_layout_set`. For a new blank deck without a package, establish a restrained system and check its sizes in a rendered representative slide before extending the deck.
 3. Use `slide_create`, `slide_duplicate`, `slide_delete`, and `slide_reorder` for structure.
 4. Use `text_add`, `image_add`, and `shape_add` for content. Keep returned stable IDs.
-5. Use `element_update` with a stable ID instead of positional or ambiguous selectors.
-6. Run `deck_validate` after meaningful edits.
+5. Use `elements_layout` to establish shared edges, equal gaps, matching dimensions, region placement, and named text styles. Use `element_update` for individual content edits with a stable ID instead of positional or ambiguous selectors.
+6. Run `deck_validate` after meaningful edits and `deck_layout_audit` before visual review. Inspect the returned errors and issues, not merely tool success. These checks do not measure visual hierarchy or text fit.
 7. Run `render_deck` and wait for completion. The rendered slide images are attached automatically before your next response, in the order listed in the tool result. Inspect those images, not just the returned paths. Use `set_active_slide` to synchronize the UI while discussing a slide.
 8. Fix clipping, overlap, contrast, alignment, and hierarchy, then render again to check the affected output. If rendering or image delivery fails, report that visual review is incomplete; never claim to have inspected an image you did not receive. The user can still attach the active slide with Ctrl+V for targeted feedback.
 
 ## Coordinates and layout
 
 Use the coordinate units reported by `deck_inspect`. Never guess the slide dimensions. Keep every element inside slide bounds and reserve consistent margins. Prefer alignment, grids, whitespace, and a small type scale over dense decoration. Use theme colors and fonts where possible. Crop images intentionally and preserve aspect ratio unless distortion is explicitly desired.
+
+## Shared layout tools
+
+`deck_layout_inspect` takes `{}` and returns the saved `contract`, text-style `assignments`, `geometry_rules`, and exact `slide_size`. A missing contract is `null`, not a license to guess the slide dimensions. The contract travels inside the PowerPoint file and survives reopening; it is separate from the terminal application's `DESIGN.md`.
+
+`deck_layout_set` takes a complete contract. This example illustrates the shape of a contract for a slide with room for these regions; it is not a universal design or a minimum font-size rule:
+
+```json
+{
+  "margins": {"left":0.75,"right":0.75,"top":0.5,"bottom":0.5},
+  "gutter": 0.5,
+  "regions": {
+    "headline": {"x":0.75,"y":0.5,"width":11,"height":0.8},
+    "evidence": {"x":0.75,"y":2,"width":11,"height":4.5}
+  },
+  "text_styles": {
+    "headline": {"font_size":40,"font_family":"Arial","color":"#142837","bold":true},
+    "body": {"font_size":24,"font_family":"Arial","color":"#243746"}
+  }
+}
+```
+
+Choose the actual values from the package, slide dimensions, content, and rendered evidence. Style names and region names are yours to define. Each text style requires `font_size`, `font_family`, and RGB `color`; omitted `bold` and `italic` become false and omitted `alignment` becomes left. Setting the contract replaces settings but does not restyle or reposition existing content. Apply the relevant styles or placements afterward.
+
+`elements_layout` takes one operation with stable IDs. The complete operation is atomic; it is not wrapped in `edits`:
+
+- Align shared edges: `{"operation":"align","ids":["<a>","<b>"],"edge":"left"}`. Edges are `left`, `right`, `top`, `bottom`, `center_x`, or `center_y`. An optional `reference` ID anchors the alignment; otherwise the selection's bounds determine the target.
+- Equalize gaps: `{"operation":"distribute","ids":["<a>","<b>","<c>"],"axis":"horizontal"}`. Spatial order is preserved. Without `gap`, the outer endpoints stay fixed; with an explicit gap in inches, the first element anchors the sequence.
+- Match dimensions: `{"operation":"match_size","ids":["<b>","<c>"],"reference":"<a>","dimension":"width"}`. Dimension can also be `height` or `both`.
+- Fill a region: `{"operation":"place","ids":["<a>","<b>"],"region":"evidence","axis":"horizontal"}`. Elements fill equal slots in supplied ID order, using the saved gutter unless `gap` is explicit. This operation resizes elements; use it for text and shape groups, and do not stretch an image unless intended. A single ID fills the region.
+- Apply hierarchy: `{"operation":"text_style","ids":["<title>"],"style":"headline"}`. Applies the complete style to every text run in each selected box; do not use it when existing mixed emphasis must be preserved.
+- Release a relationship: `{"operation":"release","ids":["<a>"]}`. Removes saved geometry rules that select or reference the IDs, plus their text-style assignments, without moving or restyling content. Deleted IDs are accepted so stale checks can be removed.
+
+Geometry selections and references must belong to one slide. Text styles can span slides. Use `vertical` for vertically distributed or placed items. Missing IDs, duplicate IDs, impossible spacing, unknown names, and out-of-slide results fail without changing the deck. For a grid, define row regions and place each row, rather than estimating cell coordinates independently.
+
+Geometry operations save their declared relationships for audit. A new operation supersedes earlier rules that control the same coordinates or dimensions on overlapping selections. Superseding removes the whole previous relationship, including its other members; it does not create partial subgroups. Unrelated rules remain, so matching widths after distribution may require distributing again. Moving only a reference element leaves its relationships intact and lets the audit report the drift. To intentionally detach elements from a relationship, use `release` rather than repeatedly ignoring its warnings.
+
+`deck_layout_audit` takes `{}`. It checks slide bounds, margins, assigned text styles, and retained geometry rules against the saved file. A changed region or manually moved element can produce a rule departure; inspect the reported rule, then reapply it or release it if the relationship no longer belongs. Review the reported limitations. Margin departures can be intentional for background shapes or full-bleed imagery; do not move them blindly. `release` removes assignments and relationships, not deck-wide margin checks. A clean report does not check clipping, font substitution, optical alignment, or the audience's reading order. Render every slide and inspect those separately.
 
 ## Transactions and validation
 

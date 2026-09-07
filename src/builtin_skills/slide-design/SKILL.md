@@ -14,11 +14,19 @@ Read `TEMPLATE-REFERENCE.md` only when listed and needed for layout names, place
 
 Use the package's palette, typefaces, spacing scale, grid, and motif. Do not substitute generic preferences or invent brand claims, logos, colors, or proprietary styling. If no package is active, use restrained defaults.
 
+## Establish reusable geometry and type
+
+Inspect the deck's shared layout contract before composing. Reuse its named regions and text styles instead of recreating coordinates and formatting for each slide. If none exists, resolve the package's rules into a contract with `deck_layout_set`. In an existing deck, preserve observed conventions unless the user asks for a redesign. For a new deck without a package, choose a restrained system, render a representative content slide, and adjust it before extending the deck.
+
+Use `elements_layout` for exact shared edges, equal gaps, matching dimensions, and placement inside named regions. The model decides which elements belong together; the tool computes their coordinates. Apply named text styles to make title, evidence, and source roles consistent across slides. A contract is a reusable starting point, not a requirement that every slide use the same composition.
+
 ## One message per slide
 
 Before placing anything, answer: **what single thing should a viewer take away in three seconds?** Make that the focal point and give it the most visual weight. Everything else supports it or gets cut. Two co-equal messages require two slides; no clear message means the slide should not exist.
 
 Every slide also needs a visual anchor that makes the message stick: an image, chart, diagram, icon set, large stat, or strong typographic statement. A title plus prose is usually a statement slide waiting to be simplified or content that belongs on a neighboring slide.
+
+Before placing content, identify the takeaway, primary visual, supporting evidence, and secondary context. Assign visual roles in that order. Sources and caveats must remain readable, but should not compete with the claim they support.
 
 ## Make importance visible
 
@@ -53,9 +61,22 @@ Do not default to title and bullets. Choose the form that exposes the content's 
 
 Vary content layouts to create rhythm, but keep the package grid, type scale, spacing, and motif stable. Repeat title and section-break treatments so the audience can locate itself in the narrative. Carry the package motif through the deck rather than adding one-off flourishes.
 
+Reuse relationships within each composition:
+
+- **Comparison:** align column headings and corresponding evidence rows. Use matching widths and the same internal spacing. Place the conclusion outside the comparison group.
+- **Chart with takeaway:** give the chart the primary evidence region. Align its caption and source with the chart edge; keep explanatory text secondary.
+- **Image with explanation:** preserve image proportions and align the explanation with the image or caption. Do not stretch an image merely to fill a region.
+- **Key metric:** make the number and its meaning one group. Keep contextual comparisons and sources subordinate.
+- **Process:** distribute steps evenly, align their labels, and reserve room for connectors instead of adding them over text.
+- **Statement:** use one clear typographic focal point and leave supporting detail off the slide when it belongs in notes.
+
+Repeated cards are appropriate only for genuinely parallel items. Do not force unrelated content into equal boxes to make the layout look orderly.
+
 ## Write for presentation distance
 
 Slides are not documents. Use headlines and short supporting phrases, not paragraphs to be read aloud. Cut sentences to phrases and phrases to keywords where meaning survives. A multi-line bullet usually belongs in the speaker's notes. Fewer, larger words improve readability, retention, and visual calm.
+
+When content does not fit, shorten it, move detail to notes, or split the slide before reducing the text size. Preserve the important claims and qualifiers. Do not silently delete meaning to satisfy a layout.
 
 ## Avoid generated-looking patterns
 
@@ -72,7 +93,7 @@ Use hierarchy and whitespace before decoration. If a block needs separation, pre
 
 ## Review rendered slides
 
-Render and inspect every slide, not only the active one. Look fresh at the output rather than trusting the intended layout:
+Run `deck_layout_audit` for mechanical evidence, then render and inspect every slide, not only the active one. Compare neighboring slides for title placement, type roles, and density before reviewing individual defects. A clean mechanical report does not prove good hierarchy. Look fresh at the output rather than trusting the intended layout:
 
 - **Focal point:** when squinting, does one element dominate?
 - **Hierarchy:** can elements be ranked without reading them?

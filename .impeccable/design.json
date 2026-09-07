@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-18T09:25:24Z",
+  "generatedAt": "2026-09-07T00:01:24Z",
   "title": "Design System: slide-builder",
   "extensions": {
     "colorMeta": {
@@ -88,7 +88,50 @@
       }
     ]
   },
-  "components": [],
+  "components": [
+    {
+      "name": "Workspace Shell",
+      "kind": "custom",
+      "refersTo": "panel-title",
+      "description": "The wide layout gives 56% of the body to Conversation and 44% to the Preview and Slides stack. Compact terminals stack Conversation, Preview, and Slides vertically above the prompt. One-cell separators define ownership without turning every panel into a card."
+    },
+    {
+      "name": "Conversation Entries",
+      "kind": "custom",
+      "refersTo": "conversation-user",
+      "description": "Every message is width-aware and padded by one terminal column and one row. User messages use Neutral Soft, assistant messages remain on the terminal background, and system notices use Warning Soft. Roles are distinguished by surface treatment and context rather than repeated speaker labels."
+    },
+    {
+      "name": "Tool Activity",
+      "kind": "custom",
+      "refersTo": "tool-proposed",
+      "description": "Consecutive tool calls form an expandable activity group inside the conversation. Messages and run boundaries separate groups. Without explicit task metadata, the group is labeled \"Tool activity\" rather than guessing its relationship to a slide. Running groups remain open, completed groups collapse by default, and failed groups stay open with readable error text. Manual expansion persists after completion.\n\nGroups and calls use compact rows on the terminal background, not filled status cards. A disclosure glyph marks expansion; status glyphs use the semantic ANSI colors alongside plain-language action text. Cyan focus is separate from execution status. Expanded call details show the tool name, arguments, and recorded output. Text wraps with hanging indentation in narrow terminals; details use normal foreground contrast rather than dim output text.\n\n`Ctrl+B`, then `t` enters tool inspection. Up/Down navigates visible headers and calls, Enter toggles expansion, and Right enters a group. Page Up/Down scrolls long details. Escape closes details, returns to the group, then returns to the prompt. Inspection never sends the prompt or cancels a run through Enter or Escape."
+    },
+    {
+      "name": "Slide List",
+      "kind": "custom",
+      "refersTo": "slide-active",
+      "description": "The active slide uses Soft Signal across the row, bold terminal foreground text, and a `›` highlight symbol. Hover uses Neutral Soft. Inactive rows use ANSI gray. Selection must remain obvious without relying on color alone."
+    },
+    {
+      "name": "Prompt Composer",
+      "kind": "custom",
+      "refersTo": "panel-title",
+      "description": "The composer is anchored by top and bottom separators and grows with wrapped or multiline input. Its title shares the persistent panel-title treatment. Slash suggestions appear immediately above it as a temporary bordered surface rather than displacing the main workspace."
+    },
+    {
+      "name": "Keycaps and Status",
+      "kind": "custom",
+      "refersTo": "keycap",
+      "description": "Keycaps use Neutral Soft, bold contrasting text, and one-column horizontal padding. Status surfaces pair concise labels with semantic ANSI color and remain visually subordinate to the deck and conversation."
+    },
+    {
+      "name": "Modals",
+      "kind": "custom",
+      "refersTo": "panel-title",
+      "description": "Menus, help, approval, configuration, and picker surfaces use square one-cell borders, a clear title, and compact internal spacing. Selection, help text, and validation status follow the same accent, muted, warning, and danger vocabulary as the workspace."
+    }
+  ],
   "narrative": {
     "northStar": "The Focused Studio",
     "overview": "Slide-builder is a content-first editorial tool compressed into a professional terminal workspace. The deck and the work required to improve it remain central; interface chrome exists only to orient, expose state, and make the next action obvious. Density is welcome when it shortens the path between intent and a presentation-quality result.\n\nThe system is understated, technical, and focused. It borrows Rho's terminal-native conversation flow, Linear's disciplined hierarchy and restrained state color, and Notion's calm content-first posture. It explicitly rejects noisy cyberpunk styling, generic chatbot bubbles, repeated speaker labels, card-heavy SaaS composition, cute assistant behavior, and undifferentiated walls of terminal text.",

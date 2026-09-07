@@ -41,6 +41,18 @@ pub fn target(name: &str, arguments: &Value) -> String {
             on_slide(kind, arguments)
         }
         "element_update" => "element".into(),
+        "elements_layout" => {
+            let operation = arguments
+                .get("operation")
+                .and_then(Value::as_str)
+                .unwrap_or("layout")
+                .replace('_', " ");
+            match arguments.get("ids").and_then(Value::as_array) {
+                Some(ids) => format!("{operation} for {} elements", ids.len()),
+                None => operation,
+            }
+        }
+        "deck_layout_inspect" | "deck_layout_set" | "deck_layout_audit" => "deck layout".into(),
         "deck_inspect" | "deck_validate" | "deck_advanced" => "deck".into(),
         "render_deck" => "preview".into(),
         "set_active_slide" => numbered("slide", arguments, "index"),
