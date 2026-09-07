@@ -1,3 +1,5 @@
+mod asset_tools;
+mod assets;
 pub mod deck_engine;
 pub mod deck_tools;
 pub mod design_importer;

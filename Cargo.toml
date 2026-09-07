@@ -26,6 +26,8 @@ obscura-js = { git = "https://github.com/h4ckf0r0day/obscura", rev = "a1e09de68c
 pptx-handler = { git = "https://github.com/RainLib/OfficeCli-rust.git", rev = "acabe4959a37235dd587bbcc788565f19a824bb7" }
 pulldown-cmark = "0.13"
 quick-xml = "0.37.5"
+resvg = { version = "0.47", default-features = false }
+svgtypes = "0.16"
 ratatui = "0.30.0"
 ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm"] }
 rho-sdk = { git = "https://github.com/matthewyjiang/rho.git", rev = "5bdb60e3273a2516f6d9f5d631d1b01f06b4bac0" }

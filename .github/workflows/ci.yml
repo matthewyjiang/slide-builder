@@ -93,6 +93,7 @@ jobs:
         run: |
           cargo test --locked --test embedded_render -- --include-ignored
           cargo test --locked --test styled_text_render -- --ignored
+          cargo test --locked --test assets_render -- --ignored
       - name: Obscura PDF export
         if: ${{ !cancelled() }}
         run: |

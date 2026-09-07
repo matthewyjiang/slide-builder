@@ -342,7 +342,10 @@ pub fn register_deck_tools(
     mut builder: rho_sdk::RhoBuilder,
     engine: DeckEngine,
 ) -> rho_sdk::RhoBuilder {
-    for tool in crate::agent::deck_tools::semantic_tools(engine) {
+    for tool in crate::agent::deck_tools::semantic_tools(engine.clone()) {
+        builder = builder.tool_shared(tool)
+    }
+    for tool in crate::agent::asset_tools::tools(engine) {
         builder = builder.tool_shared(tool)
     }
     builder

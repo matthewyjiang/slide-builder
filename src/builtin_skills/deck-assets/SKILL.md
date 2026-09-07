@@ -23,3 +23,25 @@ Keep labels short, make reading order obvious, and avoid crossing connectors. Re
 ## Embedding
 
 Store assets in an approved location, use stable descriptive names, preserve aspect ratios, and embed rather than link remote resources. Match the active design package's colors and typography without sacrificing contrast. Do not fetch untrusted remote assets or depend on a CDN. After insertion, validate the deck and use the render-to-attach-to-fix loop to catch scaling, clipping, font, and transparency problems.
+
+## Managed SVG illustrations
+
+Use `asset_list` before creating custom icons or conceptual illustrations. Author
+SVG with `asset_create_svg`, supplying a name and a brief with `purpose`, `style`,
+and `alt_text`. Use simple shapes, groups, paths, solid fills/strokes, and an
+explicit positive `viewBox`. Text, CSS, gradients, images, references, filters,
+dashed strokes, and translucent groups are unsupported. Keep labels native.
+
+The tool validates the source and attaches a PNG preview. Inspect it for visible
+defects and compliance with the brief; a passing gate does not prove quality.
+`asset_inspect` takes an `id` and returns source plus a fresh preview. To revise,
+call `asset_create_svg` with `revises` set to the old ID. Do not overwrite stored
+records. `asset_place` takes `id`, `slide`, `x`, `y`, `width`, and `height`; it
+centers the image in the box without distortion and embeds SVG with PNG fallback.
+
+Every placement requires `render_deck` and an in-slide check for contrast,
+legibility, crop, hierarchy, style consistency, and meaning. Give concrete defect
+feedback instead of a beauty score. Do not claim approval for unseen images.
+These assets are picture objects, not editable PowerPoint shapes. Never use a
+generated illustration as experimental evidence or a photo of actual equipment.
+Raster AI image generation is not available.

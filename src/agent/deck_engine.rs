@@ -1,6 +1,7 @@
 //! Transactional adapter around the non-`Sync` OfficeCli PowerPoint handler.
 
 use super::inspection_geometry;
+use crate::render::svg::ValidatedSvg;
 use anyhow::{anyhow, bail, Context, Result};
 use handler_common::{
     output_format::{RawOptions, ViewOptions},
@@ -184,17 +185,74 @@ impl DeckEngine {
         self.mutate_batch(ops, BoundsCheck::Additions).await
     }
 
+    /// Keep validated media outside the serialized geometry and metadata budget.
+    pub(crate) async fn add_svg_picture(
+        &self,
+        slide: usize,
+        properties: HashMap<String, String>,
+        svg: ValidatedSvg,
+    ) -> Result<MutationResult> {
+        self.mutate_batch_with_svg(
+            vec![DeckMutation::Add {
+                parent: format!("/slide[{slide}]"),
+                element_type: "image".into(),
+                properties,
+            }],
+            BoundsCheck::Additions,
+            Some(svg),
+        )
+        .await
+    }
+
     async fn mutate_batch(
         &self,
         ops: Vec<DeckMutation>,
         bounds: BoundsCheck,
+    ) -> Result<MutationResult> {
+        self.mutate_batch_with_svg(ops, bounds, /*svg*/ None).await
+    }
+
+    async fn mutate_batch_with_svg(
+        &self,
+        mut ops: Vec<DeckMutation>,
+        bounds: BoundsCheck,
+        svg: Option<ValidatedSvg>,
     ) -> Result<MutationResult> {
         let guard = self.lock.clone().lock_owned().await;
         let path = self.path.clone();
         let generation = self.generation.clone();
         let (transaction, next) = tokio::task::spawn_blocking(move || -> Result<_> {
             let _guard = guard;
-            commit(&path, &generation, ops, bounds)
+            // The normal picture adder reads this file synchronously. Retain it
+            // until the whole commit finishes, including reopen validation.
+            let _preview = if let Some(svg) = &svg {
+                use std::io::Write;
+                let [DeckMutation::Add {
+                    element_type,
+                    properties,
+                    ..
+                }] = ops.as_mut_slice()
+                else {
+                    bail!("SVG attachment requires exactly one image addition");
+                };
+                if element_type != "image" {
+                    bail!("SVG attachment requires exactly one image addition");
+                }
+                let mut preview = tempfile::Builder::new().suffix(".png").tempfile()?;
+                preview.write_all(&svg.png)?;
+                properties.insert(
+                    "path".into(),
+                    preview
+                        .path()
+                        .to_str()
+                        .context("non-UTF8 preview path")?
+                        .into(),
+                );
+                Some(preview)
+            } else {
+                None
+            };
+            commit_with_svg(&path, &generation, ops, bounds, svg.as_ref())
         })
         .await??;
         Ok(MutationResult {
@@ -284,6 +342,16 @@ fn commit(
     ops: Vec<DeckMutation>,
     bounds: BoundsCheck,
 ) -> Result<(mutation::TransactionResult, u64)> {
+    commit_with_svg(path, generation, ops, bounds, /*svg*/ None)
+}
+
+fn commit_with_svg(
+    path: &Path,
+    generation: &AtomicU64,
+    ops: Vec<DeckMutation>,
+    bounds: BoundsCheck,
+    svg: Option<&ValidatedSvg>,
+) -> Result<(mutation::TransactionResult, u64)> {
     if ops.is_empty() {
         bail!("mutation batch must not be empty");
     }
@@ -300,7 +368,7 @@ fn commit(
     for op in &ops {
         validate_payload(op)?;
     }
-    let transaction = transact(path, ops, bounds)?;
+    let transaction = transact(path, ops, bounds, svg)?;
     let generation = generation.fetch_add(1, Ordering::AcqRel) + 1;
     Ok((transaction, generation))
 }
@@ -352,6 +420,11 @@ fn reject_part(part: &str) -> Result<()> {
     Ok(())
 }
 fn validate_payload(op: &DeckMutation) -> Result<()> {
+    if let DeckMutation::Add { properties, .. } | DeckMutation::Set { properties, .. } = op {
+        if properties.contains_key("svgSource") {
+            bail!("svgSource is an unsupported unvalidated media property; SVG pictures require a typed validated attachment");
+        }
+    }
     let encoded = serde_json::to_vec(op)?;
     if encoded.len() > MAX_TEXT_BYTES {
         bail!("tool payload exceeds {} bytes", MAX_TEXT_BYTES);

@@ -11,3 +11,7 @@ model automatically for visual review. Use an image-capable model for this workf
 You can also attach the active slide with `Ctrl+V` to ask about a specific layout.
 The preview is an HTML-based rendering, so check the final deck in PowerPoint when
 exact Office rendering matters.
+
+For custom SVG illustrations, see `docs/assets.md`. Asset tools attach isolated
+previews and validate a static SVG subset. Place by ID, then use `render_deck`
+to review the asset in context; mechanical checks do not establish visual quality.
