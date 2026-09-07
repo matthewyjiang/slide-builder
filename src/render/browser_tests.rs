@@ -1,7 +1,6 @@
 use super::*;
 use crate::render::cache::CacheKey;
-#[cfg(target_os = "linux")]
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn chromium_arguments_preserve_sandbox_and_paths() {
@@ -30,7 +29,7 @@ fn embedded_capture_arguments_use_sandbox_visible_paths() {
     let output = directory.path().join("output.png");
     fs::write(&html, "capture").unwrap();
     let executable = Path::new("/usr/bin/true");
-    let sandbox = obscura::Sandbox::probe(executable).unwrap();
+    let sandbox = Sandbox::probe(executable).unwrap();
     let options = CaptureOptions {
         width: 640,
         height: 360,
@@ -80,7 +79,7 @@ fn missing_sandbox_fails_closed_and_scale_is_validated() {
     let error = Browser::probe(&config).unwrap_err();
     assert!(format!("{error:#}").contains("Unsandboxed rendering is not allowed"));
     let mut browser = Browser::from_path(Path::new("/usr/bin/true")).unwrap();
-    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
+    browser.engine = Engine::Obscura(Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
     assert!(browser.validate_options(&CaptureOptions::default()).is_ok());
     let scaled = CaptureOptions {
         scale: 2.0,
@@ -113,7 +112,7 @@ fn renderer_identity_separates_cache_entries() {
 async fn capture_budgets_fail_before_creating_output_or_launching_worker() {
     let directory = tempfile::tempdir().unwrap();
     let mut browser = Browser::from_path(Path::new("/usr/bin/true")).unwrap();
-    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
+    browser.engine = Engine::Obscura(Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
     for (width, height, scale, asked) in [
         (4096, 2304, 2.0, "8192x4608 output pixels"),
         (16384, 1, 4.0, "65536x4 output pixels"),
@@ -172,36 +171,6 @@ fn replacing_an_executable_invalidates_its_cache_identity() {
     fs::rename(replacement, &path).unwrap();
     let second = Browser::from_path(&path).unwrap();
     assert_ne!(first.cache_identity(), second.cache_identity());
-}
-
-#[test]
-#[cfg(target_os = "linux")]
-fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
-    let directory = tempfile::tempdir().unwrap();
-    let html = directory.path().join("input.html");
-    let output = directory.path().join("output.png");
-    fs::write(&html, "capture").unwrap();
-    let sandbox = obscura::Sandbox::probe(Path::new("/bin/true")).unwrap();
-    let launch = sandbox
-        .command(Path::new("/bin/true"), &html, &output)
-        .unwrap();
-    let args: Vec<_> = launch.command.as_std().get_args().collect();
-    assert!(!args.contains(&directory.path().as_os_str()));
-    for required in [
-        "--unshare-all",
-        "--unshare-user",
-        "--disable-userns",
-        "--clearenv",
-        "--die-with-parent",
-    ] {
-        assert!(args.contains(&std::ffi::OsStr::new(required)));
-    }
-    fs::remove_file(&output).unwrap();
-    symlink(&html, &output).unwrap();
-    assert!(sandbox
-        .command(Path::new("/bin/true"), &html, &output,)
-        .is_err());
-    assert_eq!(fs::read_to_string(html).unwrap(), "capture");
 }
 
 #[tokio::test]
@@ -282,59 +251,6 @@ async fn cancelling_capture_kills_parent_and_helpers() {
     })
     .await
     .expect("cancelled capture left a parent or helper running after 5 seconds");
-}
-
-#[tokio::test]
-#[cfg(target_os = "linux")]
-#[ignore = "requires Linux user namespaces, bubblewrap and /usr/bin/python3"]
-async fn sandbox_blocks_host_files_and_network() {
-    let directory = tempfile::tempdir().unwrap();
-    let html = directory.path().join("capture.html");
-    let output = directory.path().join("capture.png");
-    let secret = directory.path().join("sentinel.txt");
-    fs::write(&html, "permitted input").unwrap();
-    fs::write(&secret, "not permitted").unwrap();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    // Positive control: the host listener is reachable before entering isolation.
-    let _connection = std::net::TcpStream::connect(address).unwrap();
-    let host_net = fs::read_link("/proc/self/ns/net").unwrap();
-    let sandbox = obscura::Sandbox::probe(Path::new("auto")).unwrap();
-    let mut launch = sandbox
-        .command(Path::new("/usr/bin/python3"), &html, &output)
-        .unwrap();
-    let script = format!(
-        r#"
-import os, pathlib, socket
-assert pathlib.Path('/input/capture.html').read_text() == 'permitted input'
-assert not pathlib.Path({secret:?}).exists()
-assert not pathlib.Path('/input/sentinel.txt').exists()
-assert not pathlib.Path('/etc/passwd').exists()
-assert 'SLIDE_BUILDER_TEST_SECRET' not in os.environ
-assert os.readlink('/proc/self/ns/net') != {host_net:?}
-s = socket.socket()
-s.settimeout(1)
-try:
-    assert s.connect_ex(('127.0.0.1', {port})) != 0
-finally:
-    s.close()
-pathlib.Path('/output/capture.png').write_text('isolation passed')
-pathlib.Path('/output/extra').write_text('private tmpfs only')
-"#,
-        secret = secret.to_string_lossy(),
-        host_net = host_net.to_string_lossy(),
-        port = address.port()
-    );
-    launch
-        .command
-        .env("SLIDE_BUILDER_TEST_SECRET", "must-not-reach-renderer")
-        .args(["-c", &script]);
-    process::run(launch.command, CaptureOptions::default().timeout)
-        .await
-        .unwrap();
-    assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");
-    assert_eq!(fs::read_to_string(secret).unwrap(), "not permitted");
-    assert!(!directory.path().join("extra").exists());
 }
 
 fn process_is_running(pid: u32) -> bool {

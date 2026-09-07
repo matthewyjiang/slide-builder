@@ -16,7 +16,13 @@ fn sandbox_parameters_are_not_profile_source_and_output_cannot_be_redirected() {
     fs::write(&html, "input").unwrap();
     let sandbox = Sandbox::probe(Path::new("/usr/bin/sandbox-exec")).unwrap();
     let executable = fs::canonicalize("/usr/bin/true").unwrap();
-    let launch = sandbox.command(&executable, &html, &output).unwrap();
+    let launch = sandbox
+        .command(Request {
+            executable: &executable,
+            input: &html,
+            output: &output,
+        })
+        .unwrap();
     let args: Vec<_> = launch
         .command
         .as_std()
@@ -45,7 +51,11 @@ fn sandbox_parameters_are_not_profile_source_and_output_cannot_be_redirected() {
     fs::remove_file(&output).unwrap();
     std::os::unix::fs::symlink(&html, &output).unwrap();
     assert!(sandbox
-        .command(Path::new("/usr/bin/true"), &html, &output)
+        .command(Request {
+            executable: Path::new("/usr/bin/true"),
+            input: &html,
+            output: &output
+        })
         .is_err());
     assert_eq!(fs::read_to_string(html).unwrap(), "input");
 }
@@ -83,22 +93,28 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
     let sandbox = Sandbox::probe(Path::new("auto")).unwrap();
     // Distinguish a launcher/profile failure from native initialization failures.
     let launch = sandbox
-        .command(
-            Path::new("/usr/bin/true"),
-            &html,
-            &directory.path().join("true-output"),
-        )
+        .command(Request {
+            executable: Path::new("/usr/bin/true"),
+            input: &html,
+            output: &directory.path().join("true-output"),
+        })
         .unwrap();
     crate::render::browser::process::run(launch.command, CaptureOptions::default().timeout)
         .await
         .expect("minimal executable failed under sandbox profile");
     let executable = std::env::current_exe().unwrap();
-    let mut launch = sandbox.command(&executable, &html, &output).unwrap();
+    let mut launch = sandbox
+        .command(Request {
+            executable: &executable,
+            input: &html,
+            output: &output,
+        })
+        .unwrap();
     launch
         .command
         .args([
             "--exact",
-            "render::browser::obscura::tests::macos_sandbox_probe_child",
+            "render::sandbox::platform::tests::macos_sandbox_probe_child",
             "--nocapture",
         ])
         .env("SLIDE_BUILDER_TEST_INPUT", &launch.input)

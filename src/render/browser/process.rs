@@ -10,7 +10,10 @@ const DIAGNOSTIC_LIMIT: usize = 64 * 1024;
 
 /// Kill the whole process group on cancellation as well as wall-clock timeout.
 /// Bubblewrap additionally ties its isolated PID namespace to its parent's life.
-pub(super) async fn run(mut command: Command, timeout: Duration) -> Result<CaptureDiagnostics> {
+pub(in crate::render) async fn run(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<CaptureDiagnostics> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

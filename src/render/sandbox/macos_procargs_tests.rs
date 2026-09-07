@@ -4,7 +4,7 @@ use std::process::Stdio;
 use tokio::io::AsyncBufReadExt;
 use tokio::process::{Child, Command};
 
-const FIXTURE: &str = "render::browser::obscura::tests::procargs::host_fixture";
+const FIXTURE: &str = "render::sandbox::platform::tests::procargs::host_fixture";
 
 pub(super) struct HostFixture {
     child: Child,

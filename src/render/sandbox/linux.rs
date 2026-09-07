@@ -3,7 +3,8 @@
 //! The renderer sees only its executable, read-only runtime libraries/fonts,
 //! one input HTML file, and one writable output file. It cannot see the host
 //! render directory, home, project, sockets, credentials, or network namespace.
-use super::{executable_path, Launch};
+use super::{Launch, Request};
+use crate::render::executable::executable_path;
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Sandbox {
+pub(in crate::render) struct Sandbox {
     pub executable: PathBuf,
     font_home: Option<PathBuf>,
 }
@@ -28,7 +29,12 @@ impl Sandbox {
 
     /// Build a fresh namespace for each capture. Only explicitly selected input
     /// and output files are bind-mounted, never their containing directories.
-    pub fn command(&self, executable: &Path, html: &Path, output: &Path) -> Result<Launch> {
+    pub fn command(&self, request: Request<'_>) -> Result<Launch> {
+        let Request {
+            executable,
+            input: html,
+            output,
+        } = request;
         let html = fs::canonicalize(html).context("resolve capture HTML")?;
         // Refuse existing files/symlinks. The pipeline removes its previous
         // temporary output before each retry; a renderer cannot redirect writes.
@@ -126,3 +132,7 @@ impl Sandbox {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "linux_tests.rs"]
+mod tests;
