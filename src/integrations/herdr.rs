@@ -55,7 +55,7 @@ struct Report {
 /// One sequential worker owns registration, state updates, and release.
 /// Pending updates coalesce to the latest state; an in-flight update completes
 /// before that latest state is sent. Successful identical updates are skipped;
-/// failed updates can be retried without changing the visible state.
+/// failed updates retry on the next state or message change, not on UI ticks.
 /// Dropping also closes the queue; `shutdown` additionally waits for release.
 #[derive(Debug)]
 pub struct HerdrReporter {
@@ -149,10 +149,18 @@ impl HerdrReporter {
     /// to the latest pending update, not the number of calls to this method.
     pub fn report(&self, state: HerdrState, message: Option<&str>) {
         if let Some(updates) = &self.updates {
-            updates.send_replace(Some(Report {
+            let report = Some(Report {
                 state,
                 message: message.map(str::to_owned),
-            }));
+            });
+            updates.send_if_modified(|current| {
+                if *current == report {
+                    false
+                } else {
+                    *current = report;
+                    true
+                }
+            });
         }
     }
 
@@ -192,39 +200,12 @@ async fn run_reporter(
     let identity = json!({"pane_id": config.pane_id, "source": SOURCE, "agent": AGENT});
     let mut session = identity.clone();
     session["agent_session_id"] = json!(session_id);
-    let mut registered = match exchange(
-        &config,
-        "pane.report_agent_session",
-        session.clone(),
-        REQUEST_TIMEOUT,
-    )
-    .await
-    {
-        Ok(_) => true,
-        Err(error) => {
-            record_error(&diagnostics, error.to_string());
-            false
-        }
-    };
     let mut last_successful_report = None;
     while updates.changed().await.is_ok() {
         // Never hold a watch borrow across socket I/O: report() must stay synchronous.
         let Some(report) = updates.borrow_and_update().clone() else {
             continue;
         };
-        if !registered {
-            match exchange(
-                &config,
-                "pane.report_agent_session",
-                session.clone(),
-                REQUEST_TIMEOUT,
-            )
-            .await
-            {
-                Ok(_) => registered = true,
-                Err(error) => record_error(&diagnostics, error.to_string()),
-            }
-        }
         if last_successful_report.as_ref() == Some(&report) {
             continue;
         }
@@ -271,7 +252,7 @@ async fn exchange(
             format!("Herdr {method}: malformed response: {error}"),
         )
     })?;
-    if let Some(error) = response.get("error") {
+    if let Some(error) = response.get("error").filter(|error| !error.is_null()) {
         return Err(io::Error::other(format!(
             "Herdr {method}: RPC error: {error}"
         )));

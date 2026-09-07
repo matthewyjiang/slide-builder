@@ -19,7 +19,7 @@ Slide Builder reports as `slide-builder`, with the source `herdr:slide-builder`.
 
 A preview refresh alone does not make the agent busy. Messages describe the operation and its outcome without sending prompt text, tool arguments, provider errors, or deck contents. Herdr decides whether an idle agent represents unseen completion and should appear as `done`.
 
-Reports run sequentially in a background task. Pending state updates coalesce to the latest state when the host is slow, so this is a current-status integration, not a lossless event log. Successful unchanged reports are suppressed. Failed updates can retry on a later UI iteration. Socket failures do not stop deck editing. If reporting failed during the session, the latest error is printed after the terminal is restored on exit, even if a later retry succeeded.
+Reports run sequentially in a background task. Pending state updates coalesce to the latest state when the host is slow, so this is a current-status integration, not a lossless event log. Unchanged reports are suppressed, including after failures: the next state or message change retries reporting rather than every UI tick. Socket failures do not stop deck editing. If reporting failed during the session, the latest error is printed after the terminal is restored on exit, even if a later retry succeeded.
 
 ## Slide previews
 

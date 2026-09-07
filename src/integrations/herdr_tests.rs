@@ -105,19 +105,6 @@ mod unix {
         let socket = temp.path().join("herdr.sock");
         let mut server = Server::bind(&socket);
         let reporter = client_for_socket(&socket).start_reporting("session-123");
-        let session = server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await;
-        assert_eq!(session["method"], "pane.report_agent_session");
-        assert_eq!(
-            session["params"],
-            json!({
-                "pane_id": "w1:p1", "source": "herdr:slide-builder",
-                "agent": "slide-builder", "agent_session_id": "session-123",
-            })
-        );
-        assert!(session["id"]
-            .as_str()
-            .unwrap()
-            .starts_with("herdr:slide-builder:"));
         for (state, text) in [
             (HerdrState::Working, "working"),
             (HerdrState::Blocked, "blocked"),
@@ -125,7 +112,10 @@ mod unix {
         ] {
             reporter.report(state, Some("status"));
             let report = server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await;
-            let mut expected = session["params"].clone();
+            let mut expected = json!({
+                "pane_id": "w1:p1", "source": "herdr:slide-builder",
+                "agent": "slide-builder", "agent_session_id": "session-123",
+            });
             expected["state"] = json!(text);
             expected["message"] = json!("status");
             assert_eq!(report["method"], "pane.report_agent");
@@ -150,7 +140,7 @@ mod unix {
     async fn graphics_probes_validate_host_cells() {
         for (reply, expected) in [
             (
-                "{\"result\":{\"cell_width_px\":9,\"cell_height_px\":18}}\n",
+                "{\"result\":{\"cell_width_px\":9,\"cell_height_px\":18},\"error\":null}\n",
                 HerdrGraphicsCapability::Paintable {
                     width: 9,
                     height: 18,
@@ -201,12 +191,11 @@ mod unix {
     }
 
     #[tokio::test]
-    async fn pending_updates_coalesce_and_unchanged_reports_retry() {
+    async fn pending_transitions_coalesce_and_retry_after_failure() {
         let temp = tempfile::tempdir().unwrap();
         let socket = temp.path().join("herdr.sock");
         let mut server = Server::bind(&socket);
         let reporter = client_for_socket(&socket).start_reporting("session");
-        server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await;
         reporter.report(HerdrState::Working, None);
         let first = server.requests.recv().await.unwrap();
         // The worker is waiting for the first response. Only the latest update
@@ -240,7 +229,6 @@ mod unix {
         let socket = temp.path().join("herdr.sock");
         let mut server = Server::bind(&socket);
         let reporter = client_for_socket(&socket).start_reporting("session");
-        server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await;
         reporter.report(HerdrState::Working, Some("building"));
         let first = server.requests.recv().await.unwrap();
         assert_eq!(first["method"], "pane.report_agent");
@@ -270,20 +258,17 @@ mod unix {
     }
 
     #[tokio::test]
-    async fn failed_registration_retries_on_report() {
+    async fn rpc_failure_recovers_on_next_transition() {
         let temp = tempfile::tempdir().unwrap();
         let socket = temp.path().join("herdr.sock");
         let mut server = Server::bind(&socket);
         let reporter = client_for_socket(&socket).start_reporting("session");
-        server.next(b"{\"error\":\"try again\"}\n").await;
         reporter.report(HerdrState::Working, None);
-        // Even if the host keeps refusing session registration, report state.
         assert_eq!(
-            server
-                .next(b"{\"error\":\"unsupported session source\"}\n")
-                .await["method"],
-            "pane.report_agent_session"
+            server.next(b"{\"error\":\"try again\"}\n").await["method"],
+            "pane.report_agent"
         );
+        reporter.report(HerdrState::Idle, None);
         assert_eq!(
             server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await["method"],
             "pane.report_agent"
@@ -295,7 +280,28 @@ mod unix {
             .unwrap()
             .unwrap_err()
             .to_string()
-            .contains("unsupported session source"));
+            .contains("try again"));
+    }
+
+    #[tokio::test]
+    async fn failed_identical_reports_do_not_retry_on_ui_ticks() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("herdr.sock");
+        let mut server = Server::bind(&socket);
+        let reporter = client_for_socket(&socket).start_reporting("session");
+        reporter.report(HerdrState::Working, None);
+        server.next(b"{\"error\":\"unavailable\"}\n").await;
+        // Yield until the worker records the failure, then mimic another UI tick.
+        while reporter.last_error().is_none() {
+            tokio::task::yield_now().await;
+        }
+        reporter.report(HerdrState::Working, None);
+        let shutdown = tokio::spawn(reporter.shutdown());
+        assert_eq!(
+            server.next(b"{\"result\":{\"type\":\"ok\"}}\n").await["method"],
+            "pane.release_agent"
+        );
+        assert!(shutdown.await.unwrap().is_err());
     }
 
     #[tokio::test]
