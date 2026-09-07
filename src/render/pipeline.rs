@@ -478,7 +478,9 @@ mod tests {
             width: 1600,
             height: 900,
             scale: 1.0,
-            timeout: std::time::Duration::from_secs(20),
+            // Use the application's capture deadline; the first native macOS
+            // CI capture hit the old test-only 20-second deadline.
+            timeout: CaptureOptions::default().timeout,
         }
     }
 

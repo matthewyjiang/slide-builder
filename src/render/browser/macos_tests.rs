@@ -39,6 +39,14 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let _connection = std::net::TcpStream::connect(address).unwrap();
+    assert!(
+        launch_services_available(),
+        "host LaunchServices positive control failed"
+    );
+    assert!(
+        process_arguments_readable(),
+        "host process-argument positive control failed"
+    );
     let sandbox = Sandbox::probe(Path::new("auto")).unwrap();
     let executable = std::env::current_exe().unwrap();
     let mut command = sandbox.command(&executable, &html, &output).unwrap();
@@ -90,10 +98,24 @@ fn macos_sandbox_probe_child() {
         .is_err());
     assert!(std::env::var_os("HOME").is_none());
     assert!(std::env::var_os("PATH").is_none());
-    // LaunchServices can launch unsandboxed applications on a caller's behalf.
-    // The worker has no reason to obtain this or any other Mach service port.
+    assert!(
+        !launch_services_available(),
+        "sandbox unexpectedly obtained a LaunchServices port"
+    );
+    assert!(
+        !process_arguments_readable(),
+        "sandbox unexpectedly allowed process-argument sysctl"
+    );
+    fs::write(output, "isolation passed").unwrap();
+}
+
+// LaunchServices can launch unsandboxed applications on a caller's behalf.
+// The worker has no reason to obtain this or any other Mach service port.
+fn launch_services_available() -> bool {
     unsafe extern "C" {
         static bootstrap_port: u32;
+        static mach_task_self_: u32;
+        fn mach_port_deallocate(task: u32, port: u32) -> i32;
         fn bootstrap_look_up(port: u32, name: *const std::ffi::c_char, service: *mut u32) -> i32;
     }
     let mut service = 0;
@@ -104,9 +126,29 @@ fn macos_sandbox_probe_child() {
             &mut service,
         )
     };
-    assert_ne!(
-        result, 0,
-        "sandbox unexpectedly obtained a LaunchServices port"
-    );
-    fs::write(output, "isolation passed").unwrap();
+    if result == 0 {
+        unsafe {
+            mach_port_deallocate(mach_task_self_, service);
+        }
+    }
+    result == 0
+}
+
+fn process_arguments_readable() -> bool {
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROCARGS2,
+        std::process::id() as i32,
+    ];
+    let mut size = 0;
+    unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        ) == 0
+    }
 }

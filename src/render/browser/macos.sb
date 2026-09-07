@@ -19,5 +19,21 @@
     (subpath "/System/Library")
     (subpath "/Library/Apple/System/Library"))
 (allow file-write-data (literal (param "OUTPUT")))
-(allow sysctl-read)
+; V8 CPU feature and allocation sizing queries, plus loader OS/ABI queries.
+; Never grant all sysctls: process-argument queries can expose host secrets.
+(allow sysctl-read
+    (sysctl-name "hw.activecpu")
+    (sysctl-name "hw.ncpu")
+    (sysctl-name "hw.logicalcpu_max")
+    (sysctl-name "hw.physicalcpu_max")
+    (sysctl-name "hw.memsize")
+    (sysctl-name "hw.pagesize")
+    (sysctl-name "hw.pagesize_compat")
+    (sysctl-name "hw.cputype")
+    (sysctl-name "hw.cpufamily")
+    (sysctl-name "kern.osrelease")
+    (sysctl-name "kern.osversion")
+    (sysctl-name "kern.osproductversion")
+    (sysctl-name "kern.tcsm_available")
+    (sysctl-name-prefix "hw.optional."))
 (allow signal (target self))

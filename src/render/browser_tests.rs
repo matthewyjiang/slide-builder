@@ -28,8 +28,8 @@ fn missing_sandbox_fails_closed_and_scale_is_validated() {
     };
     let error = Browser::probe(&config).unwrap_err();
     assert!(format!("{error:#}").contains("Unsandboxed rendering is not allowed"));
-    let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
-    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/bin/true")).unwrap());
+    let mut browser = Browser::from_path(Path::new("/usr/bin/true")).unwrap();
+    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
     assert!(browser.validate_options(&CaptureOptions::default()).is_ok());
     let scaled = CaptureOptions {
         scale: 2.0,
@@ -61,8 +61,8 @@ fn renderer_identity_separates_cache_entries() {
 #[tokio::test]
 async fn capture_budgets_fail_before_creating_output_or_launching_worker() {
     let directory = tempfile::tempdir().unwrap();
-    let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
-    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/bin/true")).unwrap());
+    let mut browser = Browser::from_path(Path::new("/usr/bin/true")).unwrap();
+    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
     for (width, height, scale, asked) in [
         (4096, 2304, 2.0, "8192x4608 output pixels"),
         (16384, 1, 4.0, "65536x4 output pixels"),

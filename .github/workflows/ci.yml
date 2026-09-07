@@ -75,7 +75,9 @@ jobs:
       - name: Test
         run: cargo test --locked --all-features
       - name: Obscura isolation and native capture
+        if: ${{ !cancelled() }}
         run: |
+          echo "SANDBOX_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_ENV"
           cargo test --locked --lib macos_sandbox_blocks_host_files_network_and_services -- --ignored
           cargo test --locked --test embedded_render -- --include-ignored
           cargo test --locked --test export_pdf obscura_exports -- --ignored
@@ -83,3 +85,6 @@ jobs:
         run: |
           cargo test --locked --test chromium_render -- --ignored
           cargo test --locked --test export_pdf chromium_exports -- --ignored
+      - name: Sandbox denial diagnostics
+        if: failure() && env.SANDBOX_STARTED_AT != ''
+        run: sudo log show --style compact --start "$SANDBOX_STARTED_AT" --predicate 'eventMessage CONTAINS "Sandbox:"'
