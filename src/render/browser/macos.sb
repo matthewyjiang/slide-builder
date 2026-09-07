@@ -1,6 +1,12 @@
 (version 1)
 (deny default)
 
+; XNU passes argument-taking sysctls to MAC policy with the PID appended, e.g.
+; kern.procargs2.123. Cover both legacy procargs interfaces and process inspection.
+; These explicit denials are under native sentinel qualification.
+(deny sysctl-read (sysctl-name-prefix "kern.procargs"))
+(deny process-info*)
+
 ; macOS 15 dyld ignition opens a root-directory descriptor before locating its
 ; shared cache. Native CI otherwise aborts even /usr/bin/true in boot_boot.
 ; This permits the root directory itself, never its children or their contents.
