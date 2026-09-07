@@ -5,6 +5,7 @@ fn run(home: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_slide-builder"))
         .args(args)
         .current_dir(home)
+        .env("HOME", home)
         .env("XDG_DATA_HOME", home.join("data"))
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("XDG_CACHE_HOME", home.join("cache"))
@@ -32,6 +33,11 @@ fn create_list_rename_continue_and_delete_without_credentials() {
         .trim()
         .to_owned();
     let deck = home.path().join("example.pptx");
+    #[cfg(target_os = "macos")]
+    assert!(home
+        .path()
+        .join("Library/Application Support/slide-builder/slide-builder.sqlite3")
+        .is_file());
     assert!(deck.is_file());
     let original_deck = std::fs::read(&deck).unwrap();
     let listed: Value =

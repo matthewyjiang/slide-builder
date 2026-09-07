@@ -8,7 +8,7 @@ use slide_builder::{
 use std::{collections::HashMap, fs, path::Path};
 
 #[tokio::test]
-#[ignore = "requires Linux user namespaces and bubblewrap"]
+#[ignore = "requires a qualified native Obscura sandbox"]
 async fn light_text_on_dark_background_reaches_rendered_pixels() {
     let directory = tempfile::tempdir().unwrap();
     let deck = DeckEngine::create(directory.path().join("contrast.pptx"), None)

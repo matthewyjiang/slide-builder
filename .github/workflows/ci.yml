@@ -34,8 +34,8 @@ jobs:
       - run: rustup component add rustfmt
       - run: cargo fmt --all -- --check
 
-  test:
-    name: Rust lint and tests
+  linux:
+    name: Linux CI
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,3 +50,51 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --all-features
+
+  macos:
+    name: macOS CI
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # PR caches are scoped to the PR merge ref. Keep native dependencies
+          # after a failed qualification run so policy fixes do not rebuild V8.
+          cache-on-failure: true
+      - name: Platform tools
+        run: |
+          sw_vers
+          uname -m
+          rustc -Vv
+          brew install poppler
+          pdfinfo -v
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Test
+        # These existing optional browser checks remain runnable manually;
+        # Chromium runtime qualification is not part of native macOS support.
+        run: |
+          cargo test --locked --all-features --no-fail-fast -- \
+            --skip chromium_captures_pinned_handler_slide_when_available \
+            --skip chromium_captures_deck_pptx_content_when_available
+      - name: Obscura isolation
+        if: ${{ !cancelled() }}
+        run: |
+          echo "SANDBOX_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_ENV"
+          cargo test --locked --lib macos_sandbox_blocks_host_files_network_and_services -- --ignored
+      - name: Obscura native capture
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked --test embedded_render -- --include-ignored
+          cargo test --locked --test styled_text_render -- --ignored
+      - name: Obscura PDF export
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --locked --test export_pdf obscura_exports -- --ignored
+      - name: Native failure diagnostics
+        if: failure() && env.SANDBOX_STARTED_AT != ''
+        run: python3 scripts/macos_ci_diagnostics.py

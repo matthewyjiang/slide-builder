@@ -11,6 +11,13 @@ use std::time::Duration;
 use tokio::process::Command;
 
 mod chromium;
+#[cfg(target_os = "linux")]
+mod obscura;
+#[cfg(target_os = "macos")]
+#[path = "browser/macos.rs"]
+mod obscura;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[path = "browser/unsupported.rs"]
 mod obscura;
 mod process;
 
@@ -75,7 +82,8 @@ impl Browser {
         let executable = validate_executable(executable)?;
         let sandbox = obscura::Sandbox::probe(sandbox_path)?;
         let identity = format!(
-            "obscura-embedded-a1e09de6-isolated-v3-{}-{}",
+            "obscura-embedded-a1e09de6-isolated-v4-{}-{}-{}",
+            std::env::consts::OS,
             executable_identity(&executable)?,
             executable_identity(&sandbox.executable)?
         );
@@ -164,7 +172,7 @@ impl Browser {
         };
         let diagnostics = process::run(command, options.timeout).await.with_context(|| match self.engine {
             Engine::Chromium => "Chromium capture failed",
-            Engine::Obscura(_) => "isolated Obscura capture failed; bubblewrap must support unprivileged user/network namespaces. No unsandboxed fallback is allowed",
+            Engine::Obscura(_) => "isolated Obscura capture failed; Linux requires bubblewrap user/network namespaces, macOS requires a compatible sandbox-exec policy. No unsandboxed fallback is allowed",
         })?;
         if !output.is_file() || output.metadata()?.len() == 0 {
             bail!(
@@ -295,7 +303,7 @@ fn validate_capture_path(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn percent_encode_path(path: &Path) -> Result<String> {
+pub(crate) fn percent_encode_path(path: &Path) -> Result<String> {
     let text = path.to_str().context("capture path is not valid UTF-8")?;
     let mut encoded = String::with_capacity(text.len());
     for byte in text.bytes() {

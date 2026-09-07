@@ -1,9 +1,10 @@
 use super::{Config, RenderConfig, RenderEngine};
 
 #[test]
-fn missing_renderer_fields_use_obscura_without_rewriting_explicit_scale() {
+fn missing_renderer_fields_use_platform_default_without_rewriting_explicit_scale() {
     let config: Config = toml::from_str("").unwrap();
     assert_eq!(config, Config::default());
+    assert_eq!(config.render.engine, RenderEngine::Obscura);
 
     let legacy: Config = toml::from_str(
         r#"
@@ -22,7 +23,7 @@ fn missing_renderer_fields_use_obscura_without_rewriting_explicit_scale() {
                 ..super::PreviewConfig::default()
             },
             render: RenderConfig {
-                engine: RenderEngine::Obscura,
+                engine: RenderEngine::default(),
                 browser_path: "/usr/bin/custom-chromium".into(),
                 ..RenderConfig::default()
             },
@@ -58,6 +59,16 @@ fn explicit_chromium_and_active_executable_paths_survive_round_trip() {
 #[test]
 fn unknown_engine_is_an_error_instead_of_a_fallback() {
     assert!(toml::from_str::<RenderConfig>("engine = 'other'").is_err());
+}
+
+#[test]
+fn explicit_obscura_survives_loading_on_every_platform() {
+    let render: RenderConfig = toml::from_str("engine = 'obscura'").unwrap();
+    assert_eq!(render.engine, RenderEngine::Obscura);
+    assert_eq!(
+        toml::from_str::<RenderConfig>(&toml::to_string(&render).unwrap()).unwrap(),
+        render
+    );
 }
 
 #[test]

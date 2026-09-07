@@ -1,4 +1,9 @@
-# Linux installation and qualification
+# Installation and qualification
+
+Obscura is the default renderer on every platform. Native macOS support remains
+experimental after passing automated checks on macOS 15.7.9 ARM64. See
+`docs/macos.md` for setup, native paths, and remaining manual checks.
+The runtime requirements and qualification record below apply only to Linux.
 
 ## Build
 
@@ -6,7 +11,8 @@ Use Rust 1.92 or newer, as required by the pinned dependencies.
 
 ```sh
 cargo build --release --locked -j 8
-install -Dm755 target/release/slide-builder ~/.local/bin/slide-builder
+mkdir -p ~/.local/bin
+install -m755 target/release/slide-builder ~/.local/bin/slide-builder
 ```
 
 The lockfile pins `rho-sdk`, `rho-providers`, `rho-agent-tools`, `pptx-handler`, and `handler-common` to audited Git revisions. The rho revision is PR #387 because the extracted crates were not yet present on rho `main` when this lockfile was generated.
@@ -19,7 +25,7 @@ runtime: the installed application does not download an Obscura executable.
 
 ## Runtime dependencies
 
-Run inside Kitty or Ghostty for inline previews. The default renderer requires:
+Run inside Kitty or Ghostty for inline previews. On Linux, the default renderer requires:
 
 - Linux with user namespaces permitted by the host security policy.
 - Bubblewrap with `--disable-userns` support, available as `bwrap` on PATH or
@@ -47,7 +53,8 @@ adds `--no-sandbox`; captures use isolated profiles and offline CSP.
 
 ### Existing configurations
 
-An omitted `render.engine` now means `obscura`. Setting `browser_path` alone no
+An omitted `render.engine` means `obscura` on every platform.
+Setting `browser_path` alone no
 longer selects Chromium. Add `engine = "chromium"` to the existing `[render]`
 section to retain that backend, or install bubblewrap for the new default.
 Legacy `render.obscura_path` entries are ignored; captures always use the embedded

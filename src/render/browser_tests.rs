@@ -1,5 +1,6 @@
 use super::*;
 use crate::render::cache::CacheKey;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::symlink;
 
 #[test]
@@ -26,9 +27,9 @@ fn missing_sandbox_fails_closed_and_scale_is_validated() {
         ..RenderConfig::default()
     };
     let error = Browser::probe(&config).unwrap_err();
-    assert!(format!("{error:#}").contains("bubblewrap"));
-    let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
-    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/bin/true")).unwrap());
+    assert!(format!("{error:#}").contains("Unsandboxed rendering is not allowed"));
+    let mut browser = Browser::from_path(Path::new("/usr/bin/true")).unwrap();
+    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
     assert!(browser.validate_options(&CaptureOptions::default()).is_ok());
     let scaled = CaptureOptions {
         scale: 2.0,
@@ -60,8 +61,8 @@ fn renderer_identity_separates_cache_entries() {
 #[tokio::test]
 async fn capture_budgets_fail_before_creating_output_or_launching_worker() {
     let directory = tempfile::tempdir().unwrap();
-    let mut browser = Browser::from_path(Path::new("/bin/true")).unwrap();
-    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/bin/true")).unwrap());
+    let mut browser = Browser::from_path(Path::new("/usr/bin/true")).unwrap();
+    browser.engine = Engine::Obscura(obscura::Sandbox::probe(Path::new("/usr/bin/true")).unwrap());
     for (width, height, scale, asked) in [
         (4096, 2304, 2.0, "8192x4608 output pixels"),
         (16384, 1, 4.0, "65536x4 output pixels"),
@@ -123,6 +124,7 @@ fn replacing_an_executable_invalidates_its_cache_identity() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn sandbox_does_not_bind_parent_directories_or_reuse_output_symlinks() {
     let directory = tempfile::tempdir().unwrap();
     let html = directory.path().join("input.html");
@@ -161,11 +163,15 @@ async fn process_failure_and_pipe_lifetime_are_bounded() {
     assert!(error.to_string().contains("renderer-failure"));
     let mut command = Command::new("/bin/sh");
     // A background descendant keeps inherited pipes open after the parent exits.
-    command.args(["-c", "sleep 60 & exit 0"]);
+    command.args(["-c", "echo awaiting-helper >&2; sleep 60 & exit 0"]);
     let error = process::run(command, Duration::from_millis(100))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("timed out after 100 ms"));
+    assert!(error
+        .to_string()
+        .contains("helper output pipes remained open"));
+    assert!(error.to_string().contains("awaiting-helper"));
 }
 
 #[tokio::test]
@@ -195,16 +201,12 @@ async fn cancelling_capture_kills_parent_and_helpers() {
     })
     .await
     .expect("capture helpers did not report ready within 5 seconds");
+    assert!(pids.iter().all(|pid| process_is_running(*pid)));
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let running = pids.iter().any(|pid| {
-                fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-                    stat.rsplit_once(") ")
-                        .is_some_and(|(_, rest)| !rest.starts_with(['Z', 'X']))
-                })
-            });
+            let running = pids.iter().any(|pid| process_is_running(*pid));
             if !running {
                 break;
             }
@@ -216,6 +218,7 @@ async fn cancelling_capture_kills_parent_and_helpers() {
 }
 
 #[tokio::test]
+#[cfg(target_os = "linux")]
 #[ignore = "requires Linux user namespaces, bubblewrap and /usr/bin/python3"]
 async fn sandbox_blocks_host_files_and_network() {
     let directory = tempfile::tempdir().unwrap();
@@ -264,4 +267,16 @@ pathlib.Path('/output/extra').write_text('private tmpfs only')
     assert_eq!(fs::read_to_string(output).unwrap(), "isolation passed");
     assert_eq!(fs::read_to_string(secret).unwrap(), "not permitted");
     assert!(!directory.path().join("extra").exists());
+}
+
+fn process_is_running(pid: u32) -> bool {
+    // ps works on Linux and macOS and distinguishes orphaned zombies from
+    // live helpers. Missing /proc must never count as successful cancellation.
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .expect("inspect capture process with ps");
+    assert!(output.status.success() || output.status.code() == Some(1));
+    let status = std::str::from_utf8(&output.stdout).unwrap().trim();
+    !status.is_empty() && !status.starts_with(['Z', 'X'])
 }
