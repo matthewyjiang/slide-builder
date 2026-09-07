@@ -372,16 +372,6 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         sessions::restore_app(&mut app, &session.state, slide_count);
     }
     app.mouse.viewport = terminal.size()?.into();
-    if app.transcript.is_empty() {
-        app.transcript
-        .push(slide_builder::tui::TranscriptItem::Message(
-            slide_builder::tui::Message {
-                role: slide_builder::tui::Role::System,
-                text: format!("Session {session_id}. Saved after you send a message. Use `slide-builder sessions continue {session_id}` to return. Saved history never replays tools; the deck is read from disk."),
-                complete: true,
-            },
-        ));
-    }
     if render_service.is_some() {
         queue_render(
             render_service.clone().unwrap(),
