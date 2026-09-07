@@ -21,26 +21,30 @@ pub(super) async fn run(mut command: Command, timeout: Duration) -> Result<Captu
     let group = ProcessGroupGuard(child.id().context("renderer has no process id")? as i32);
     let stdout = child.stdout.take().context("capture renderer stdout")?;
     let stderr = child.stderr.take().context("capture renderer stderr")?;
+    // Keep bounded diagnostics outside the timed future so cancellation does
+    // not discard the only explanation of a renderer startup failure.
+    let mut stdout_bytes = Vec::new();
+    let mut stderr_bytes = Vec::new();
     let mut renderer_status = None;
     let operation = async {
-        let (status, stdout, stderr) = tokio::try_join!(
+        let (status, (), ()) = tokio::try_join!(
             async {
                 let status = child.wait().await.context("wait for renderer")?;
                 renderer_status = Some(status);
                 Ok::<_, anyhow::Error>(status)
             },
-            read_bounded(stdout),
-            read_bounded(stderr),
+            read_bounded(stdout, &mut stdout_bytes),
+            read_bounded(stderr, &mut stderr_bytes),
         )?;
         if !status.success() {
             bail!(
                 "renderer exited with {status}: {}",
-                String::from_utf8_lossy(&stderr).trim()
+                String::from_utf8_lossy(&stderr_bytes).trim()
             );
         }
         Ok(CaptureDiagnostics {
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
         })
     };
     let result = match tokio::time::timeout(timeout, operation).await {
@@ -53,8 +57,10 @@ pub(super) async fn run(mut command: Command, timeout: Duration) -> Result<Captu
                 None => "renderer completion was not observed".into(),
             };
             Err(anyhow::anyhow!(
-                "renderer capture timed out after {} ms; {state}",
-                timeout.as_millis()
+                "renderer capture timed out after {} ms; {state}; stderr: {}; stdout: {}",
+                timeout.as_millis(),
+                String::from_utf8_lossy(&stderr_bytes).trim(),
+                String::from_utf8_lossy(&stdout_bytes).trim(),
             ))
         }
     };
@@ -75,8 +81,7 @@ impl Drop for ProcessGroupGuard {
     }
 }
 
-async fn read_bounded(mut reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
-    let mut all = Vec::new();
+async fn read_bounded(mut reader: impl AsyncRead + Unpin, all: &mut Vec<u8>) -> Result<()> {
     let mut chunk = [0; 4096];
     loop {
         let n = reader.read(&mut chunk).await?;
@@ -88,5 +93,5 @@ async fn read_bounded(mut reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
             all.extend_from_slice(&chunk[..n.min(remaining)]);
         }
     }
-    Ok(all)
+    Ok(())
 }

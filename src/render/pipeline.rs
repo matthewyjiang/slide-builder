@@ -589,6 +589,12 @@ mod tests {
         browser
             .capture(&html_path, &png_path, &profile, &options)
             .await
+            .with_context(|| {
+                format!(
+                    "screenshot dimensions after failed capture: {:?}",
+                    image::image_dimensions(&png_path)
+                )
+            })
             .unwrap();
         let image = image::open(png_path).unwrap();
         assert_eq!((image.width(), image.height()), (960, 720));

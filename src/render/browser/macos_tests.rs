@@ -67,6 +67,7 @@ async fn macos_sandbox_blocks_host_files_network_and_services() {
         .status()
         .unwrap()
         .success());
+    fork_once().unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let _connection = std::net::TcpStream::connect(address).unwrap();
@@ -168,13 +169,17 @@ fn macos_sandbox_probe_child() {
             .kind(),
         ErrorKind::PermissionDenied
     );
+    assert_eq!(fork_once().unwrap_err().kind(), ErrorKind::PermissionDenied);
+    // After process-fork is denied, Rust's spawn fallback cannot inspect the
+    // executable and returns ENOENT. The host executed this exact /bin/sh above;
+    // native CI also records process-fork and /bin/sh metadata denials.
     assert_eq!(
         std::process::Command::new("/bin/sh")
             .args(["-c", "exit 0"])
             .status()
             .unwrap_err()
             .kind(),
-        ErrorKind::PermissionDenied
+        ErrorKind::NotFound
     );
     assert!(std::env::var_os("HOME").is_none());
     assert!(std::env::var_os("PATH").is_none());
@@ -223,6 +228,26 @@ fn launch_services_available() -> bool {
         }
     }
     result == 0
+}
+
+fn fork_once() -> std::io::Result<()> {
+    // The forked child runs only async-signal-safe _exit, never Rust cleanup.
+    let pid = unsafe { libc::fork() };
+    if pid == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if pid == 0 {
+        unsafe { libc::_exit(0) };
+    }
+    loop {
+        if unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) } == pid {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 fn process_arguments_readable(pid: u32) -> bool {

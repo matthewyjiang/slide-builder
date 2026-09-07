@@ -163,7 +163,7 @@ async fn process_failure_and_pipe_lifetime_are_bounded() {
     assert!(error.to_string().contains("renderer-failure"));
     let mut command = Command::new("/bin/sh");
     // A background descendant keeps inherited pipes open after the parent exits.
-    command.args(["-c", "sleep 60 & exit 0"]);
+    command.args(["-c", "echo awaiting-helper >&2; sleep 60 & exit 0"]);
     let error = process::run(command, Duration::from_millis(100))
         .await
         .unwrap_err();
@@ -171,6 +171,7 @@ async fn process_failure_and_pipe_lifetime_are_bounded() {
     assert!(error
         .to_string()
         .contains("helper output pipes remained open"));
+    assert!(error.to_string().contains("awaiting-helper"));
 }
 
 #[tokio::test]
