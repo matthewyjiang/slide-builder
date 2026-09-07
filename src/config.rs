@@ -181,7 +181,7 @@ impl Default for PreviewConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            protocol: "kitty".into(),
+            protocol: "auto".into(),
             width: 1600,
             scale: 1,
         }

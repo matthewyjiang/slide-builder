@@ -44,7 +44,7 @@ impl ConfigurationState {
                     ]},
                     MenuGroup { title: "Preview".into(), items: vec![
                         toggle("preview_enabled", "Enabled", "Enable inline terminal slide previews.", config.preview.enabled),
-                        text("preview_protocol", "Protocol", "Terminal image protocol (normally kitty).", &config.preview.protocol),
+                        text("preview_protocol", "Protocol", "Use auto to detect host support, or force kitty, sixel, iterm2, or halfblocks.", &config.preview.protocol),
                         text("preview_width", "Render width", "Preview render width in pixels; must be greater than zero.", &config.preview.width.to_string()),
                         text("preview_scale", "Scale", "Output pixels per CSS pixel, from 1 to 4.\nHigher scales keep layout size; Obscura capture budgets apply.", &config.preview.scale.to_string()),
                     ]},

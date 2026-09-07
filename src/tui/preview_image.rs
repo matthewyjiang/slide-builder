@@ -85,8 +85,21 @@ impl PreviewImage {
     }
 
     fn detect_with_budget(configured_protocol: &str, decoded_cache_budget: usize) -> Self {
+        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        Self::with_picker_and_budget(configured_protocol, picker, decoded_cache_budget)
+    }
+
+    /// Use host-provided terminal capabilities, retaining explicit protocol overrides.
+    pub fn with_picker(configured_protocol: &str, picker: Picker) -> Self {
+        Self::with_picker_and_budget(configured_protocol, picker, DEFAULT_DECODED_CACHE_BUDGET)
+    }
+
+    fn with_picker_and_budget(
+        configured_protocol: &str,
+        mut picker: Picker,
+        decoded_cache_budget: usize,
+    ) -> Self {
         assert!(decoded_cache_budget > 0, "preview cache must be non-zero");
-        let mut picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
         if let Some(protocol) = configured_protocol_type(configured_protocol) {
             picker.set_protocol_type(protocol);
         }
