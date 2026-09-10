@@ -78,6 +78,33 @@ fn composer_has_separators_above_and_below() {
 }
 
 #[test]
+fn composer_cursor_tracks_rendered_wraps_and_scrolls_above_separator() {
+    use ratatui::backend::Backend;
+
+    for (text, cursor, expected_row, expected_position) in [
+        ("hello world", 11, "rld     ", (3, 2)),
+        ("hello world", 8, "rld     ", (0, 2)),
+        ("one\ntwo\nthree\nfour", 18, "four    ", (4, 2)),
+        ("one\ntwo\nthree\nfour", 5, "two     ", (1, 2)),
+        ("12345678", 8, "        ", (0, 2)),
+    ] {
+        let mut app = App::default();
+        app.input.text = text.into();
+        app.input.cursor = cursor;
+        let mut terminal = Terminal::new(TestBackend::new(8, 4)).unwrap();
+        terminal
+            .draw(|frame| render_input(frame, frame.area(), &app))
+            .unwrap();
+        let position = terminal.backend_mut().get_cursor_position().unwrap();
+        assert_eq!((position.x, position.y), expected_position, "{text:?}");
+        let buffer = terminal.backend().buffer();
+        let row = (0..8).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+        assert_eq!(row, expected_row, "{text:?}");
+        assert!((0..8).all(|x| buffer[(x, 3)].symbol() == "─"));
+    }
+}
+
+#[test]
 fn compact_workspace_keeps_all_status_surfaces_visible() {
     let content = render_at(72, 18, &App::default());
     assert!(content.contains("Conversation"));

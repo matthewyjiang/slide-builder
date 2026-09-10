@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod chat;
+mod composer;
 mod conversation_entry;
 pub mod event;
 pub mod layout;

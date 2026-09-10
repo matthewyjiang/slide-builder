@@ -1,6 +1,7 @@
 use super::{
     app::{App, ImportDesignStatus},
     chat,
+    composer::ComposerLayout,
     event::ImportDesignStage,
     modal, outline, preview, slideshow, statusline, theme,
 };
@@ -8,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
 
@@ -136,36 +137,18 @@ fn render_horizontal_separator(frame: &mut Frame<'_>, area: Rect) {
 }
 
 fn input_height(app: &App, area: Rect) -> u16 {
-    visual_line_count(&app.input.text, area.width)
+    let layout = ComposerLayout::new(&app.input.text, app.input.cursor, area.width);
+    u16::try_from(layout.lines.len())
+        .unwrap_or(u16::MAX)
         .saturating_add(2)
         .clamp(3, area.height.saturating_div(3).max(3))
 }
 
-fn visual_line_count(text: &str, width: u16) -> u16 {
-    let width = width.max(1) as usize;
-    text.split('\n')
-        .map(|line| Line::from(line).width().max(1).div_ceil(width) as u16)
-        .sum()
-}
-
-fn input_cursor_position(text: &str, width: u16) -> (u16, u16) {
-    let width = width.max(1) as usize;
-    let mut lines = text.split('\n').peekable();
-    let mut row = 0usize;
-    let mut col = 0usize;
-    while let Some(line) = lines.next() {
-        let line_width = Line::from(line).width();
-        if lines.peek().is_some() {
-            row += line_width.max(1).div_ceil(width);
-        } else {
-            row += line_width / width;
-            col = line_width % width;
-        }
-    }
-    (row as u16, col as u16)
-}
-
 fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let layout = ComposerLayout::new(&app.input.text, app.input.cursor, area.width);
+    let (row, col) = layout.cursor;
+    let visible_rows = usize::from(area.height.saturating_sub(2));
+    let scroll = row.saturating_add(1).saturating_sub(visible_rows);
     let attachment = if app.input.attach_active_slide {
         Span::styled(
             "  ● active slide attached ",
@@ -188,10 +171,17 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Style::default().fg(theme::MUTED),
         ))
     } else {
-        Text::from(app.input.text.as_str())
+        Text::from(
+            layout
+                .lines
+                .into_iter()
+                .skip(scroll)
+                .take(visible_rows)
+                .collect::<Vec<_>>(),
+        )
     };
     frame.render_widget(
-        Paragraph::new(display).wrap(Wrap { trim: false }).block(
+        Paragraph::new(display).block(
             Block::default()
                 .title(title)
                 .borders(Borders::TOP | Borders::BOTTOM)
@@ -200,12 +190,10 @@ fn render_input(frame: &mut Frame<'_>, area: Rect, app: &App) {
         area,
     );
 
-    if !app.run_active && area.width > 0 && area.height > 1 {
-        let before = &app.input.text[..app.input.cursor];
-        let (row, col) = input_cursor_position(before, area.width);
+    if !app.run_active && area.width > 0 && visible_rows > 0 {
         frame.set_cursor_position((
-            area.x + col.min(area.width - 1),
-            area.y + 1 + row.min(area.height - 2),
+            area.x + (col as u16).min(area.width - 1),
+            area.y + 1 + (row - scroll) as u16,
         ));
     }
 }
