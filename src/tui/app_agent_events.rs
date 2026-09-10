@@ -4,6 +4,27 @@ use super::{AgentEvent, App, Message, Role, ToolCard, ToolStatus, TranscriptItem
 impl App {
     pub(super) fn apply_agent_event(&mut self, event: AgentEvent) {
         match event {
+            AgentEvent::CompactionStarted => {
+                if let Some(TranscriptItem::Message(message)) = self.transcript.last_mut() {
+                    message.complete = true;
+                }
+                self.transcript.push(TranscriptItem::Message(Message {
+                    role: Role::System,
+                    text: "Compacting older conversation to make room. Your transcript stays here."
+                        .into(),
+                    complete: true,
+                }));
+            }
+            AgentEvent::CompactionCompleted {
+                previous_tokens,
+                current_tokens,
+            } => {
+                self.transcript.push(TranscriptItem::Message(Message {
+                    role: Role::System,
+                    text: format!("Context compacted: approximately {previous_tokens} → {current_tokens} tokens. Continuing."),
+                    complete: true,
+                }));
+            }
             AgentEvent::TextDelta(delta) => match self.transcript.last_mut() {
                 Some(TranscriptItem::Message(Message {
                     role: Role::Assistant,

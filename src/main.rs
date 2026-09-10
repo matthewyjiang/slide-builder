@@ -283,6 +283,11 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
     }
     let policy = SlidePolicy::new(policy_mode, deck_parent, &render_cache_dir);
     let auth = config.auth_mode()?.to_owned();
+    rho_providers::model::models_dev::prefetch_model_metadata([(
+        config.provider.clone(),
+        config.model.clone(),
+    )])
+    .await;
     let (rho, approvals) = match build_rho(
         &config.provider,
         &auth,
@@ -374,6 +379,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
     if let Some(session) = &saved_session {
         sessions::restore_app(&mut app, &session.state, slide_count);
     }
+    warn_unknown_context_window(&mut app, &config);
     app.mouse.viewport = terminal.size()?.into();
     if render_service.is_some() {
         queue_render(
@@ -749,7 +755,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                         }
                         // Reload even after cancellation: a nested flow may have saved credentials.
                         if accounts::ensure_connected(&config).is_ok() {
-                            if let Err(error) = switch_model(&agent, &mut app, &config) {
+                            if let Err(error) = switch_model(&agent, &mut app, &config).await {
                                 push_system_message(&mut app, format!("Could not reload the current provider: {error:#}"));
                             }
                         } else {
@@ -774,7 +780,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             next.provider = model.provider.clone();
                             next.auth = model.auth.clone();
                             next.model = model.model.clone();
-                            match switch_model(&agent, &mut app, &next) {
+                            match switch_model(&agent, &mut app, &next).await {
                                 Ok(()) => {
                                     config = next;
                                     let note = match config.save() {
@@ -808,7 +814,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             continue;
                         }
                         if model_changed {
-                            if let Err(error) = switch_model(&agent, &mut app, &next) {
+                            if let Err(error) = switch_model(&agent, &mut app, &next).await {
                                 push_system_message(
                                     &mut app,
                                     format!("Could not switch model: {error:#}"),
@@ -976,8 +982,13 @@ fn import_workflow_app_event(event: DesignImportWorkflowEvent) -> AppEvent {
 
 /// Hot-swaps the live agent onto `next`'s provider/model and mirrors the
 /// change into the TUI. The caller persists `next` afterwards.
-fn switch_model(agent: &AgentHandle, app: &mut App, next: &Config) -> Result<()> {
+async fn switch_model(agent: &AgentHandle, app: &mut App, next: &Config) -> Result<()> {
     let auth = next.auth_mode()?.to_owned();
+    rho_providers::model::models_dev::prefetch_model_metadata([(
+        next.provider.clone(),
+        next.model.clone(),
+    )])
+    .await;
     agent.replace_provider(&next.provider, &auth, &next.model)?;
     app.apply(AppEvent::ModelChanged(
         slide_builder::models::AvailableModel {
@@ -987,7 +998,17 @@ fn switch_model(agent: &AgentHandle, app: &mut App, next: &Config) -> Result<()>
             auth,
         },
     ));
+    warn_unknown_context_window(app, next);
     Ok(())
+}
+
+fn warn_unknown_context_window(app: &mut App, config: &Config) {
+    if slide_builder::models::context_window(&config.provider, &config.model).is_none() {
+        push_system_message(app, format!(
+            "Automatic compaction is unavailable for {}/{} because its context window is unknown. Choose a catalog model for automatic compaction, or start a new session if this model reaches its limit.",
+            config.provider, config.model,
+        ));
+    }
 }
 
 fn push_system_message(app: &mut App, text: String) {

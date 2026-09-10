@@ -4,7 +4,8 @@ Each interactive deck opening starts a fresh conversation. It appears in saved
 sessions only after you send a message. Opening a deck, typing an unsent draft,
 or browsing settings does not create a saved session.
 
-The conversation area stays blank until it has messages or tool activity.
+The conversation area stays blank until it has messages or tool activity, except
+for setup warnings such as an unknown model context window.
 
 ## Resume inside the TUI
 
@@ -67,6 +68,11 @@ mode, transcript and tool results, active slide, draft and attachment toggle,
 design name, and pending design instructions. Credentials still come from the
 credential store, not the session database. Current configuration supplies
 permissions and renderer settings.
+
+Long conversations use [automatic compaction](automatic-compaction.md). Saved
+snapshots retain the reduced model context and compaction counters, while the
+visible transcript keeps the original messages and tool activity. Resume does not
+expand the summarized history or replay older tool calls.
 
 The application rebuilds its system prompt from the current deck and workspace.
 Saving unrelated settings does not make a resumed model the global default;

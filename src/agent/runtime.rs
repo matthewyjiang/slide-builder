@@ -1,50 +1,38 @@
-use crate::agent::{
-    deck_engine::DeckEngine,
-    skill_tool::LoadSkillTool,
-    tool_summary,
-    tools::{UiTool, UiToolCommand},
-};
-use crate::skills::Skill;
+use super::compaction::{self, ModelCompactor};
+use super::runtime_builder::build_provider;
+pub use super::runtime_builder::{build_rho, register_deck_tools, ConfiguredRuntime};
+use crate::agent::tool_summary;
 use crate::tui::{AgentEvent, AppEvent};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rho_sdk::{
-    approval_channel,
     model::{ContentBlock, ImageContent},
-    ApprovalRequestReceiver, Rho, Session, SessionOptions, SystemPrompt, UserInput, Workspace,
+    Session, SessionOptions, UserInput,
 };
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{
-    num::NonZeroUsize,
-    path::{Path, PathBuf},
-};
 use tokio::sync::mpsc;
-
-/// Keep complex deck-building turns from hitting rho-sdk's small safety default.
-/// This mirrors Rho's interactive application while still bounding runaway loops.
-fn run_step_limit() -> NonZeroUsize {
-    NonZeroUsize::new(10_000).expect("step limit is nonzero")
-}
 
 /// Owns a rho session and exposes a cancellation handle independently of the
 /// task that is draining the active run.
 #[derive(Clone)]
 pub struct AgentHandle {
     session: Session,
+    tools: Vec<rho_sdk::model::ToolSpec>,
     active: Arc<AtomicBool>,
     closing: Arc<AtomicBool>,
     cancel_requested: Arc<AtomicBool>,
     cancellation: Arc<Mutex<Option<rho_sdk::CancellationToken>>>,
 }
 impl AgentHandle {
-    pub async fn new(rho: Rho) -> Result<Self> {
-        Self::with_options(rho, SessionOptions::default()).await
+    pub async fn new(rho: impl Into<ConfiguredRuntime>) -> Result<Self> {
+        Self::with_options(rho.into(), SessionOptions::default()).await
     }
 
     /// Restore history without starting a run or replaying any tool. Replace the
     /// saved system prompt with current deck/workspace context before rebinding.
     pub async fn restore(
-        rho: Rho,
+        rho: impl Into<ConfiguredRuntime>,
         snapshot: rho_sdk::SessionSnapshot,
         prompt: String,
     ) -> Result<Self> {
@@ -54,15 +42,16 @@ impl AgentHandle {
             _ => history.insert(0, rho_sdk::model::Message::System(prompt)),
         }
         Self::with_options(
-            rho,
+            rho.into(),
             SessionOptions::from_snapshot(snapshot).history(history),
         )
         .await
     }
 
-    async fn with_options(rho: Rho, options: SessionOptions) -> Result<Self> {
+    async fn with_options(runtime: ConfiguredRuntime, options: SessionOptions) -> Result<Self> {
         Ok(Self {
-            session: rho.session(options).await?,
+            session: runtime.rho.session(options).await?,
+            tools: runtime.tools,
             active: Arc::new(AtomicBool::new(false)),
             closing: Arc::new(AtomicBool::new(false)),
             cancel_requested: Arc::new(AtomicBool::new(false)),
@@ -214,33 +203,45 @@ impl AgentHandle {
     /// Swaps the session onto another provider/model without losing history.
     /// Fails if a run is active; callers should check `is_active` first.
     pub fn replace_provider(&self, provider: &str, auth: &str, model: &str) -> Result<()> {
+        let window = compaction::context_window(provider, model);
         let provider = build_provider(provider, auth, model)?;
-        self.session.replace_provider(provider)?;
-        Ok(())
+        self.replace_model(provider, window)
+    }
+
+    fn replace_model(
+        &self,
+        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
+        window: Option<u64>,
+    ) -> Result<()> {
+        // Share the same guard as send(), so a turn cannot start between the two
+        // idle-only SDK updates. No history or model changes occur on rejection.
+        if self
+            .active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            anyhow::bail!("a run is already active");
+        }
+        let result = (|| {
+            self.session.replace_provider(provider.clone())?;
+            // The session is private and every run starts under the active guard.
+            // In the pinned SDK, set_compaction can fail only for an active run
+            // or a policy without a compactor. Neither is possible here, so this
+            // second update cannot leave a new provider with stale compaction.
+            self.session.set_compaction(
+                Some(Arc::new(ModelCompactor {
+                    provider,
+                    tools: self.tools.clone(),
+                    window,
+                })),
+                compaction::policy(window),
+            )?;
+            Ok(())
+        })();
+        self.active.store(false, Ordering::Release);
+        result
     }
 }
-
-/// Builds the rho model provider using slide-builder's own credential store.
-fn build_provider(
-    provider: &str,
-    auth: &str,
-    model: &str,
-) -> Result<std::sync::Arc<dyn rho_sdk::provider::ModelProvider>> {
-    let options = rho_providers::ProviderBuildOptions::new(provider, model, DEFAULT_REASONING)
-        .map_err(anyhow::Error::new)
-        .context("provider configuration failed")?
-        .with_auth(auth)
-        .map_err(anyhow::Error::new)
-        .context("provider authentication mode failed")?;
-    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        std::sync::Arc::new(crate::credentials::SlideCredentialStore),
-    );
-    rho_providers::build_sdk_provider_with_source(options, &credentials)
-        .map_err(anyhow::Error::new)
-        .context("provider setup failed; log in from slide-builder setup")
-}
-
-const DEFAULT_REASONING: rho_sdk::ReasoningLevel = rho_sdk::ReasoningLevel::Medium;
 
 /// Translate SDK values at the integration boundary so the TUI remains
 /// independent of rho-sdk.
@@ -251,6 +252,13 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
             run_id: run_id.to_string(),
         },
         RunEvent::AssistantTextDelta { text } => AppEvent::Run(AgentEvent::TextDelta(text)),
+        RunEvent::CompactionStarted { .. } => AppEvent::Run(AgentEvent::CompactionStarted),
+        RunEvent::CompactionCompleted { outcome, .. } => {
+            AppEvent::Run(AgentEvent::CompactionCompleted {
+                previous_tokens: outcome.previous_tokens(),
+                current_tokens: outcome.current_tokens(),
+            })
+        }
         RunEvent::ToolProposed { call } => {
             let summary = tool_summary::target(&call.name, &call.arguments);
             let arguments = serde_json::to_string_pretty(&call.arguments)
@@ -296,61 +304,10 @@ pub fn adapt_run_event(event: rho_sdk::RunEvent) -> Vec<AppEvent> {
     vec![event]
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn build_rho(
-    provider: &str,
-    auth: &str,
-    model: &str,
-    prompt: String,
-    repo: &Path,
-    decks: &Path,
-    design: Option<&Path>,
-    skills: &[Skill],
-    ui_tools: mpsc::UnboundedSender<UiToolCommand>,
-    engine: DeckEngine,
-    policy: crate::agent::policy::SlidePolicy,
-) -> Result<(Rho, ApprovalRequestReceiver)> {
-    let provider = build_provider(provider, auth, model)?;
-    let mut workspace = Workspace::new(repo)?.with_granted_root(decks)?;
-    if let Some(path) = design {
-        workspace = workspace.with_granted_root(path)?;
-    }
-    let (approvals, receiver) = approval_channel(NonZeroUsize::new(16).unwrap());
-    let mut builder = Rho::builder()
-        .provider_shared(provider)
-        .system_prompt(SystemPrompt::Custom(prompt))
-        .workspace(workspace)
-        .workspace_policy(policy)
-        .approval_handler(approvals)
-        .reasoning_level(DEFAULT_REASONING)
-        .max_steps(run_step_limit());
-    for tool in rho_agent_tools::coding_tools(rho_agent_tools::CodingToolOptions::new()) {
-        builder = builder.tool_shared(tool)
-    }
-    builder = builder.tool_shared(rho_agent_tools::shell_tool(
-        rho_agent_tools::ShellToolOptions::new()
-            .max_output_bytes(rho_agent_tools::DEFAULT_MAX_OUTPUT_BYTES),
-    ));
-    builder = builder.tool(LoadSkillTool::new(skills.to_vec()));
-    builder = builder.tool(UiTool::render(ui_tools.clone()));
-    builder = builder.tool(UiTool::set_active(ui_tools));
-    builder = register_deck_tools(builder, engine);
-    Ok((builder.build()?, receiver))
-}
-
-pub fn register_deck_tools(
-    mut builder: rho_sdk::RhoBuilder,
-    engine: DeckEngine,
-) -> rho_sdk::RhoBuilder {
-    for tool in crate::agent::deck_tools::semantic_tools(engine.clone()) {
-        builder = builder.tool_shared(tool)
-    }
-    for tool in crate::agent::asset_tools::tools(engine) {
-        builder = builder.tool_shared(tool)
-    }
-    builder
-}
-
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "runtime_compaction_tests.rs"]
+mod compaction_tests;

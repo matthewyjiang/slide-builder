@@ -26,6 +26,11 @@ pub struct RenderManifest {
 pub enum AgentEvent {
     TextDelta(String),
     MessageFinished,
+    CompactionStarted,
+    CompactionCompleted {
+        previous_tokens: u64,
+        current_tokens: u64,
+    },
     ToolProposed {
         id: String,
         name: String,

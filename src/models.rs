@@ -10,6 +10,14 @@ use rho_providers::{
 
 use crate::{config::Config, credentials::SlideCredentialStore};
 
+/// Catalog input capacity after provider-specific usable-window overrides.
+/// Unknown models have no automatic compaction threshold.
+pub fn context_window(provider: &str, model: &str) -> Option<u64> {
+    rho_providers::model::models_dev::cached_model_metadata(provider, model)
+        .and_then(|metadata| metadata.display_context_window())
+        .filter(|window| *window > 0)
+}
+
 /// One selectable model together with the auth mode it will run under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AvailableModel {
