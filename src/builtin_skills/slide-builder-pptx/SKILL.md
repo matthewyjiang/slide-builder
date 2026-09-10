@@ -13,9 +13,11 @@ Use the semantic native deck tools first. They operate on the active deck, enfor
 3. Use `slide_create`, `slide_duplicate`, `slide_delete`, and `slide_reorder` for structure.
 4. Use `text_add`, `image_add`, and `shape_add` for content. Keep returned stable IDs.
 5. Use `elements_layout` to establish shared edges, equal gaps, matching dimensions, region placement, and named text styles. Use `element_update` for individual content edits with a stable ID instead of positional or ambiguous selectors.
-6. Run `deck_validate` after meaningful edits and `deck_layout_audit` before visual review. Inspect the returned errors and issues, not merely tool success. These checks do not measure visual hierarchy or text fit.
+6. Run `deck_validate` after meaningful edits and `deck_layout_audit` before visual review. Inspect all returned issues, warnings, and coverage limitations, not merely tool success or the `valid` flag. These checks do not establish visual quality or prove that all text fits.
 7. Run `render_deck` and wait for completion. The rendered slide images are attached automatically before your next response, in the order listed in the tool result. Inspect those images, not just the returned paths. Use `set_active_slide` to synchronize the UI while discussing a slide.
-8. Fix clipping, overlap, contrast, alignment, and hierarchy, then render again to check the affected output. If rendering or image delivery fails, report that visual review is incomplete; never claim to have inspected an image you did not receive. The user can still attach the active slide with Ctrl+V for targeted feedback.
+8. Before reporting completion, fix text overflow, unintended overlaps, uneven peer gaps, contrast, alignment, and hierarchy without waiting for user feedback. Repeat the audit after repairs, then render again and inspect the changed output. Text or font edits can break fit even if the box has not moved. Preserve intentional backgrounds and layering. If rendering or image delivery fails, or defects remain, report what is incomplete; never claim to have inspected an image you did not receive. The user can still attach the active slide with Ctrl+V for targeted feedback.
+
+For posters and other single-slide documents, follow the poster workflow in `slide-design`. Keep the requested canvas and slide count, establish columns and shared gutters before adding content, and inspect dense sections at readable detail. Do not move required content to notes or extra slides to make the layout fit.
 
 ## Coordinates and layout
 
@@ -57,7 +59,11 @@ Geometry selections and references must belong to one slide. Text styles can spa
 
 Geometry operations save their declared relationships for audit. A new operation supersedes earlier rules that control the same coordinates or dimensions on overlapping selections. Superseding removes the whole previous relationship, including its other members; it does not create partial subgroups. Unrelated rules remain, so matching widths after distribution may require distributing again. Moving only a reference element leaves its relationships intact and lets the audit report the drift. To intentionally detach elements from a relationship, use `release` rather than repeatedly ignoring its warnings.
 
-`deck_layout_audit` takes `{}`. It checks slide bounds, margins, assigned text styles, and retained geometry rules against the saved file. A changed region or manually moved element can produce a rule departure; inspect the reported rule, then reapply it or release it if the relationship no longer belongs. Review the reported limitations. Margin departures can be intentional for background shapes or full-bleed imagery; do not move them blindly. `release` removes assignments and relationships, not deck-wide margin checks. A clean report does not check clipping, font substitution, optical alignment, or the audience's reading order. Render every slide and inspect those separately.
+`deck_layout_audit` takes `{}`. It checks slide bounds, margins, assigned text styles, and retained geometry rules against the saved file. A changed region or manually moved element can produce a rule departure; inspect the reported rule, then reapply it or release it if the relationship no longer belongs. `valid` reflects only these mechanical `issues`; also read `warnings` and `limitations`.
+
+`possible_overlap` warnings identify intersecting unrotated element rectangles on the same slide, including contained text-on-text. Background containment and touching edges do not trigger warnings. `possible_text_overflow` compares an estimate from declared font sizes and explicit line breaks, including literal newlines, with the box's inner height. It does not measure actual line height, automatic wrapping, glyph widths, or font substitution. Rotated shapes and unsupported text layouts such as columns, autofit, and custom line spacing are skipped. An empty warning list does not prove that text fits.
+
+Review warnings in the rendered images. Margin departures and overlaps can be intentional for backgrounds, full-bleed imagery, or layering; do not move them blindly. `release` removes assignments and relationships, not deck-wide margin checks or overlap/text-fit warnings. Render every slide and inspect text clipping, optical alignment, and reading order before reporting completion.
 
 ## Transactions and validation
 

@@ -108,7 +108,7 @@ pub(super) fn description(name: &str) -> Option<&'static str> {
         "deck_layout_inspect" => "Read the deck's saved margins, gutter, named regions, and text styles before composition. Missing settings are not inferred or silently invented.",
         "deck_layout_set" => "Save a complete shared layout contract inside the active PowerPoint. Geometry is inches; font sizes are points. Derive values from the design package or existing deck. Replaces settings, not slide content; use elements_layout to apply them.",
         "elements_layout" => "Align, distribute, match sizes, place elements into a named region, or apply a named text style using stable IDs. Relationships are saved for later audit. Use release to forget checks without changing content. Coordinates are calculated deterministically and changes commit atomically. Placement resizes elements; inspect rendered images afterward for text fit and image proportions.",
-        "deck_layout_audit" => "Check slide geometry and saved layout/style assignments without modifying the deck. Findings are mechanical evidence, not a visual-quality score. Render afterward to review hierarchy, wrapping, and intentional exceptions.",
+        "deck_layout_audit" => "Audit saved slide geometry and layout/style relationships without modifying the deck. Read all findings and coverage limitations, not just valid. Review potential overlaps and text-fit findings in the rendered slides; intentional layering may be valid. Fix defects and repeat the audit and rendered review before reporting completion. Mechanical checks do not establish visual quality.",
         _ => return None,
     })
 }

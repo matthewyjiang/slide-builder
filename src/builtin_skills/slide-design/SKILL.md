@@ -1,6 +1,6 @@
 ---
 name: slide-design
-description: "Use when composing or reviewing slide layouts: placing and sizing elements, establishing hierarchy, choosing a form for stats, comparisons, processes, quotes, or data, fixing slides that look off or generated, and checking rendered slides. This is the design-judgment layer, separate from the generator that emits the file and the design package that supplies palette, typography, spacing, and motif. Do not use it to operate the file format or invent brand styling."
+description: "Use when composing or reviewing presentation slides, posters, or single-slide documents: placing and sizing elements, balancing density, establishing hierarchy, choosing a form for stats, comparisons, processes, quotes, or data, fixing overflow, overlaps, uneven spacing, or generated-looking layouts, and checking rendered slides. This is the design-judgment layer, separate from the generator that emits the file and the design package that supplies palette, typography, spacing, and motif. Do not use it to operate the file format or invent brand styling."
 ---
 # Slide design
 
@@ -20,9 +20,19 @@ Inspect the deck's shared layout contract before composing. Reuse its named regi
 
 Use `elements_layout` for exact shared edges, equal gaps, matching dimensions, and placement inside named regions. The model decides which elements belong together; the tool computes their coordinates. Apply named text styles to make title, evidence, and source roles consistent across slides. A contract is a reusable starting point, not a requirement that every slide use the same composition.
 
-## One message per slide
+## Posters and single-slide documents
 
-Before placing anything, answer: **what single thing should a viewer take away in three seconds?** Make that the focal point and give it the most visual weight. Everything else supports it or gets cut. Two co-equal messages require two slides; no clear message means the slide should not exist.
+Treat a poster as a document read by section within one canvas. Keep the requested slide count and dimensions. The presentation advice below about extra slides, speaker notes, and short phrases does not override a poster's required content.
+
+1. Inspect the actual canvas size. Establish outer margins, columns, section regions, and shared gutters in the layout contract before adding content. Allocate room for headings, body text, figures, captions, and sources within each section.
+2. Use `elements_layout` to align peer components and distribute them with equal gaps. Use tighter gaps within a group and consistent larger gaps between peer sections. Do not distribute headings and their body text as unrelated peers. Saving a gutter alone does not apply it to elements.
+3. Fit content to its region. After text edits or changes to width, font, or size, check wrapping and text height again. Text-box bounds are not proof that the text fits. Reserve space between the rendered text and the next component.
+4. Balance density across columns. Reallocate space or shorten wording while preserving claims and qualifiers before reducing type size. Enlarge undersized content or rebalance regions when the canvas has accidental empty areas. Keep deliberate whitespace that supports grouping. Do not silently remove required content, move it to notes, add slides, or change the canvas to make it fit.
+5. Audit the saved layout, render the poster, and inspect both the whole canvas and dense sections at readable detail. Fix text overflow, unintended overlaps, uneven peer gutters, and crowded or underused regions before reporting completion. If the available image is too small to judge text fit, obtain a readable view with available tools or report that limitation.
+
+## One message per presentation slide
+
+For presentation slides, before placing anything, answer: **what single thing should a viewer take away in three seconds?** Make that the focal point and give it the most visual weight. Everything else supports it or gets cut. Two co-equal messages require two slides; no clear message means the slide should not exist.
 
 Every slide also needs a visual anchor that makes the message stick: an image, chart, diagram, icon set, large stat, or strong typographic statement. A title plus prose is usually a statement slide waiting to be simplified or content that belongs on a neighboring slide.
 
@@ -44,7 +54,7 @@ When these levers agree, the slide reads instantly. When they compete, it feels 
 - **Grid:** establish consistent columns, margins, and gutters across the deck. Snap shared edges exactly; near-alignment reads as sloppiness.
 - **Alignment:** left-align body text and lists. Center only short titles or single-line callouts, never paragraphs. Preserve alignment relationships across slides.
 - **Grouping:** place related elements close together and separate unrelated groups with space. Try proximity before boxes, rules, or dividers.
-- **Whitespace:** do not fill the surface. If a slide feels full, cut roughly a third of the content and enlarge what remains. Reuse gaps from the package spacing scale instead of inventing arbitrary distances.
+- **Whitespace:** do not fill the surface. If a slide feels full, shorten wording or reorganize content while preserving required meaning, then enlarge what remains. If it feels empty, enlarge undersized content or rebalance regions instead of adding filler. Reuse gaps from the package spacing scale instead of inventing arbitrary distances.
 - **Margins:** keep content and footers inside the package's breathing zone, uniformly across every slide.
 
 ## Match form to content
@@ -93,7 +103,7 @@ Use hierarchy and whitespace before decoration. If a block needs separation, pre
 
 ## Review rendered slides
 
-Run `deck_layout_audit` for mechanical evidence, then render and inspect every slide, not only the active one. Compare neighboring slides for title placement, type roles, and density before reviewing individual defects. A clean mechanical report does not prove good hierarchy. Look fresh at the output rather than trusting the intended layout:
+Review is required before reporting completion, including the first result shown as finished. Run `deck_layout_audit` and read its findings and coverage limitations, then render and inspect every slide, not only the active one. Compare neighboring slides for title placement, type roles, and density before reviewing individual defects. For a single-slide poster, compare peer sections and columns. A clean mechanical report does not prove text fit or good hierarchy. Look at the output rather than trusting the intended layout:
 
 - **Focal point:** when squinting, does one element dominate?
 - **Hierarchy:** can elements be ranked without reading them?
@@ -105,4 +115,4 @@ Run `deck_layout_audit` for mechanical evidence, then render and inspect every s
 - **Tells:** remove accent rules, edge stripes, centered paragraphs, and unnecessary boxes.
 - **Deck fit:** does the slide share the package grid, type scale, spacing, and motif with its neighbors?
 
-Fix real defects, render again, and recheck affected slides. Stop when the message is clear, the system is coherent, and another change would not materially help the audience.
+Fix real defects, repeat the audit, render again, and recheck affected slides before reporting completion. Do not wait for the user to point out clipping, overlaps, or uneven gaps. Preserve intentional layering; inspect warnings in context rather than removing backgrounds or releasing valid spacing rules to clear the report. Stop when the message is clear and the checks reveal no unresolved defects. If visual review is unavailable or a defect remains, state the limitation rather than claiming the layout is finished.

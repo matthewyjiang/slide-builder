@@ -16,8 +16,39 @@ gaps, and use the same headline style throughout."
 changes to declared alignment, spacing, region placement, and text styles, alongside
 bounds and margin findings. Later edits can be checked against the saved
 relationships; an explicit `release` operation forgets relationships without
-moving or restyling content. `deck_validate` separately checks the package. Neither
-replaces rendered review for hierarchy, wrapping, text clipping, or image cropping.
+moving or restyling content. Saving a gutter does not apply it to shapes or declare
+which gaps should match. The agent must use alignment, distribution, or region
+placement operations to establish those relationships.
+
+`deck_validate` separately checks the package. Neither tool replaces rendered
+review for hierarchy, wrapping, text clipping, or image cropping.
+
+## Overlap and text-fit warnings
+
+The audit returns `issues` for bounds, margins, assigned styles, and declared
+geometry rules. Its `valid` flag means only that this list is empty. Read
+`warnings` as well, even when `valid` is true.
+
+- `possible_overlap` identifies intersecting, unrotated element rectangles on the
+  same slide. It reports the element IDs, rectangles, and the type of intersection.
+  Text contained within another text box also gets a warning. Non-text background
+  containment and touching edges do not trigger warnings.
+- `possible_text_overflow` estimates vertical demand from declared font sizes and
+  explicit paragraphs or line breaks, then compares it with the box's inner height.
+  The report includes both heights in inches and the basis of the estimate. This
+  is a warning, not a measurement of actual line height or rendered glyphs.
+
+The audit does not infer which overlaps are intentional. Review warnings in the
+rendered output before moving elements or changing text. Rotated shapes and
+connectors are excluded from overlap warnings. Text-fit warnings do not measure
+automatic wrapping, glyph widths, font substitution, columns, non-horizontal text,
+rotation, autofit, or custom line spacing. A narrow box with a long wrapping
+paragraph may therefore produce no warning even when it overflows. Missing
+explicit text sizes can also leave text unmeasured.
+
+The agent must still inspect the rendered slides and repair defects before
+reporting completion. See `docs/slide-styling-and-review.md` for the poster workflow
+and rendered test fixture.
 
 ## Preview proportions
 
