@@ -19,6 +19,14 @@ relationships; an explicit `release` operation forgets relationships without
 moving or restyling content. `deck_validate` separately checks the package. Neither
 replaces rendered review for hierarchy, wrapping, text clipping, or image cropping.
 
+## Preview proportions
+
+Previews use the slide dimensions stored in the deck, including 4:3, square,
+portrait, and custom sizes. The renderer fits the entire slide within the preview
+resolution without stretching or cropping it. The PNG uses the slide's own aspect
+ratio, rounded to whole pixels, rather than adding blank space to make it 16:9.
+The terminal fits that image into the available preview area.
+
 ## Limitations
 
 Region placement resizes elements; preserve image proportions unless stretching

@@ -10,7 +10,7 @@ use tokio::task::JoinSet;
 
 // Bump when capture HTML/layout changes so stale blank or mis-scaled cache entries
 // are not reused.
-pub const RENDERER_VERSION: &str = "html-capture-v3";
+pub const RENDERER_VERSION: &str = "html-capture-v4";
 pub const HANDLER_REVISION: &str = "officecli-acabe4959a37235dd587bbcc788565f19a824bb7";
 const CAPTURE_ATTEMPTS: u32 = 3;
 
@@ -112,6 +112,8 @@ impl BrowserPipeline {
         source_html: &str,
         slide_count: u32,
     ) -> Result<Vec<SlideImage>> {
+        let options = capture_options_for_html(source_html, &self.options)?;
+        self.browser.validate_options(&options)?;
         // Per-slide HTML is sanitized and validated by build_capture_html.
         let mut jobs = JoinSet::new();
         let mut slides = Vec::with_capacity(slide_count as usize);
@@ -119,7 +121,7 @@ impl BrowserPipeline {
         loop {
             while next <= slide_count && jobs.len() < self.max_concurrency {
                 let index = next;
-                let html = match build_capture_html(source_html, index, &self.options) {
+                let html = match build_capture_html(source_html, index, &options) {
                     Ok(html) => html,
                     Err(error) => {
                         jobs.shutdown().await;
@@ -127,7 +129,7 @@ impl BrowserPipeline {
                     }
                 };
                 let browser = self.browser.clone();
-                let options = self.options.clone();
+                let options = options.clone();
                 let directory = directory.to_path_buf();
                 jobs.spawn(
                     async move { render_one(browser, options, directory, html, index).await },
@@ -293,6 +295,23 @@ body>*:not(.main){{display:none!important}}
         }
     }
     Ok(html)
+}
+
+/// Capture only the slide, not the unused space in the configured viewport.
+/// Keep both dimensions within that viewport and round only at the pixel boundary.
+fn capture_options_for_html(html: &str, bounds: &CaptureOptions) -> Result<CaptureOptions> {
+    let Some((width, height)) = parse_slide_design_px(html) else {
+        return Ok(bounds.clone());
+    };
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        bail!("invalid slide design dimensions: {width}x{height} CSS pixels");
+    }
+    let scale = (f64::from(bounds.width) / width).min(f64::from(bounds.height) / height);
+    Ok(CaptureOptions {
+        width: (width * scale).round().max(1.0) as u32,
+        height: (height * scale).round().max(1.0) as u32,
+        ..bounds.clone()
+    })
 }
 
 /// Fit the handler slide into the capture viewport without runtime JS.
@@ -468,6 +487,10 @@ fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
         .windows(needle.len())
         .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
+
+#[cfg(test)]
+#[path = "pipeline_geometry_tests.rs"]
+mod geometry_tests;
 
 #[cfg(test)]
 mod tests {
