@@ -142,10 +142,14 @@ impl Browser {
     }
 
     pub fn validate_options(&self, options: &CaptureOptions) -> Result<()> {
-        options.validate_for_engine(match self.engine {
+        options.validate_for_engine(self.engine())
+    }
+
+    pub fn engine(&self) -> RenderEngine {
+        match self.engine {
             Engine::Obscura(_) => RenderEngine::Obscura,
             Engine::Chromium => RenderEngine::Chromium,
-        })
+        }
     }
 
     pub async fn capture(
@@ -204,6 +208,9 @@ impl Browser {
 }
 
 impl CaptureOptions {
+    /// Application viewport limit shared by all capture backends.
+    pub const MAX_DIMENSION: u32 = 16_384;
+
     /// Validate without discovering or spawning a renderer, including at config save.
     pub fn validate_for_engine(&self, engine: RenderEngine) -> Result<()> {
         self.validate()?;
@@ -231,9 +238,14 @@ impl CaptureOptions {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
-        if self.width == 0 || self.height == 0 || self.width > 16_384 || self.height > 16_384 {
+        if self.width == 0
+            || self.height == 0
+            || self.width > Self::MAX_DIMENSION
+            || self.height > Self::MAX_DIMENSION
+        {
             bail!(
-                "capture dimensions must be between 1 and 16384 pixels; requested {}x{}",
+                "capture dimensions must be between 1 and {} pixels; requested {}x{}",
+                Self::MAX_DIMENSION,
                 self.width,
                 self.height
             );

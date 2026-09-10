@@ -3,7 +3,7 @@ use crate::{
     agent::deck_engine::{DeckEngine, DeckSnapshot},
     config::Config,
     render::{
-        browser::{Browser, CaptureOptions},
+        browser::Browser,
         cache::{CacheKey, RenderCache},
         pipeline::{handler_slide_count, BrowserPipeline, HANDLER_REVISION, RENDERER_VERSION},
     },
@@ -12,10 +12,16 @@ use anyhow::{bail, Context, Result};
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
+mod capture;
 mod pdf;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportReport {
+    pub path: PathBuf,
+    pub resolution_notice: Option<String>,
+}
 
 pub const USAGE: &str = "Usage: /export pdf [destination.pdf]. Defaults beside the active PowerPoint file. Existing files are never overwritten.";
 
@@ -55,7 +61,7 @@ pub async fn export_pdf(
     engine: DeckEngine,
     config: Config,
     destination: PathBuf,
-) -> Result<PathBuf> {
+) -> Result<ExportReport> {
     let snapshot = engine
         .snapshot()
         .await
@@ -64,8 +70,12 @@ pub async fn export_pdf(
     tokio::task::spawn_blocking(move || {
         check_destination(&destination)?;
         let browser = Browser::probe(&config.render).context("PDF export renderer unavailable")?;
-        runtime.block_on(export_snapshot(snapshot, browser, &config, &destination))?;
-        Ok(destination)
+        let resolution_notice =
+            runtime.block_on(export_snapshot(snapshot, browser, &config, &destination))?;
+        Ok(ExportReport {
+            path: destination,
+            resolution_notice,
+        })
     })
     .await
     .context("PDF export task failed")?
@@ -81,12 +91,13 @@ fn check_destination(destination: &Path) -> Result<()> {
 
 /// Export an already captured snapshot through the same PNG pipeline as previews.
 /// Callers must run this away from the UI task because image/PDF encoding is blocking.
+/// Returns a resolution notice when the 300 dpi target had to be reduced.
 pub async fn export_snapshot(
     snapshot: DeckSnapshot,
     browser: Browser,
     config: &Config,
     destination: &Path,
-) -> Result<()> {
+) -> Result<Option<String>> {
     check_destination(destination)?;
     let (design_width, design_height) = snapshot.size_inches;
     if !design_width.is_finite()
@@ -96,28 +107,16 @@ pub async fn export_snapshot(
     {
         bail!("invalid slide dimensions {design_width} × {design_height}");
     }
-    // Target 300 pixels per physical inch, independent of terminal preview size.
-    // A 5 × 8 inch slide therefore captures at 1500 × 2400 pixels.
-    const EXPORT_DPI: f64 = 300.0;
-    let width = (design_width * EXPORT_DPI).round();
-    let height = (design_height * EXPORT_DPI).round();
-    if !(1.0..=f64::from(u32::MAX)).contains(&width)
-        || !(1.0..=f64::from(u32::MAX)).contains(&height)
-    {
-        bail!("export capture dimensions are out of range at {EXPORT_DPI} dpi: {width} × {height}");
-    }
-    let width = width as u32;
-    let options = CaptureOptions {
-        width,
-        height: height as u32,
-        scale: 1.0,
-        timeout: Duration::from_millis(config.render.timeout_ms),
-    };
+    let (options, resolution_notice) = capture::options(
+        snapshot.size_inches,
+        browser.engine(),
+        config.render.timeout_ms,
+    )?;
     let key = CacheKey::new(
         snapshot.html.as_bytes(),
         HANDLER_REVISION,
         RENDERER_VERSION,
-        width,
+        options.width,
         options.height,
         options.scale,
     )?;
@@ -148,7 +147,8 @@ pub async fn export_snapshot(
         (design_width * 72.0) as f32,
         (design_height * 72.0) as f32,
     )?;
-    publish(destination, &bytes)
+    publish(destination, &bytes)?;
+    Ok(resolution_notice)
 }
 
 fn publish(destination: &Path, bytes: &[u8]) -> Result<()> {

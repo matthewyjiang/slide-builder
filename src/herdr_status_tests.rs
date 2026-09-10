@@ -106,7 +106,10 @@ fn export_import_and_dialogs_take_precedence_over_idle() {
         apply(
             &mut status,
             &mut app,
-            AppEvent::ExportFinished(Ok("deck.pdf".into()))
+            AppEvent::ExportFinished(Ok(slide_builder::export::ExportReport {
+                path: "deck.pdf".into(),
+                resolution_notice: None,
+            }))
         ),
         (HerdrState::Idle, "PDF exported")
     );

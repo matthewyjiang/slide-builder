@@ -360,7 +360,14 @@ impl App {
             AppEvent::ExportFinished(result) => {
                 self.export_active = false;
                 let text = match result {
-                    Ok(path) => format!("PDF exported to {}.", path.display()),
+                    Ok(report) => {
+                        let mut text = format!("PDF exported to {}.", report.path.display());
+                        if let Some(notice) = report.resolution_notice {
+                            text.push('\n');
+                            text.push_str(&notice);
+                        }
+                        text
+                    }
                     Err(error) => format!("PDF export failed: {error}"),
                 };
                 self.transcript.push(TranscriptItem::Message(Message {

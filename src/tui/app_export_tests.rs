@@ -20,10 +20,16 @@ fn export_command_validates_without_sending_an_agent_message() {
     );
     assert!(app.export_active);
     assert!(submit(&mut app, "/export pdf").is_empty());
-    app.apply(AppEvent::ExportFinished(Ok("deck.pdf".into())));
+    app.apply(AppEvent::ExportFinished(Ok(crate::export::ExportReport {
+        path: "deck.pdf".into(),
+        resolution_notice: Some("Export resolution reduced to fit renderer limits.".into()),
+    })));
     assert!(!app.export_active);
     assert!(
         matches!(app.transcript.last(), Some(TranscriptItem::Message(Message { text, .. })) if text.contains("PDF exported to deck.pdf"))
+    );
+    assert!(
+        matches!(app.transcript.last(), Some(TranscriptItem::Message(Message { text, .. })) if text.contains("Export resolution reduced"))
     );
     assert_eq!(
         submit(&mut app, "/export pdf my slides.pdf"),

@@ -91,7 +91,7 @@ pub enum AppEvent {
         error: String,
     },
     RendererUnavailable(String),
-    ExportFinished(Result<PathBuf, String>),
+    ExportFinished(Result<crate::export::ExportReport, String>),
     DeckFileChanged,
     DeckPickerOpened {
         start_directory: PathBuf,

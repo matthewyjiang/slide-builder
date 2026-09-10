@@ -8,6 +8,38 @@ use std::{collections::HashMap, path::Path, process::Command};
 
 #[tokio::test]
 #[ignore = "requires a qualified native Obscura sandbox and Poppler"]
+async fn obscura_exports_oversized_slide_with_reduced_resolution() {
+    let browser = Browser::with_embedded_worker(
+        Path::new(env!("CARGO_BIN_EXE_slide-builder")),
+        Path::new("auto"),
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let engine = DeckEngine::create(directory.path().join("large.pptx"), None)
+        .await
+        .unwrap();
+    engine.mutate(DeckMutation::RawSet {
+        part: "ppt/presentation.xml".into(), xpath: "/presentation/sldSz".into(), action: "replace".into(),
+        xml: Some("<p:sldSz xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" cx=\"43891200\" cy=\"32918400\"/>".into()),
+    }).await.unwrap();
+    let snapshot = engine.snapshot().await.unwrap();
+    assert_eq!(snapshot.size_inches, (48.0, 36.0));
+    let output = directory.path().join("large.pdf");
+    let notice = export_snapshot(snapshot, browser, &Config::default(), &output)
+        .await
+        .unwrap();
+    assert!(notice.unwrap().contains("Export resolution reduced"));
+    let bytes = std::fs::read(&output).unwrap();
+    let pdf = String::from_utf8_lossy(&bytes);
+    assert!(pdf.contains("/Width 4729"), "missing reduced image width");
+    assert!(pdf.contains("/Height 3547"), "missing reduced image height");
+    let info = Command::new("pdfinfo").arg(&output).output().unwrap();
+    assert!(info.status.success());
+    assert!(String::from_utf8_lossy(&info.stdout).contains("3456 x 2592 pts"));
+}
+
+#[tokio::test]
+#[ignore = "requires a qualified native Obscura sandbox and Poppler"]
 async fn obscura_exports_portrait_snapshot_as_full_bleed_pdf() {
     let browser = Browser::with_embedded_worker(
         Path::new(env!("CARGO_BIN_EXE_slide-builder")),

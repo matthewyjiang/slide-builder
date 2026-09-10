@@ -50,11 +50,17 @@ configured Chromium PNG backend. It works when live preview is disabled, but a
 working renderer is still required. It never invokes LibreOffice or browser PDF
 printing.
 
-Slides are captured at 300 pixels per inch of their physical page size, independent
+Slides target 300 pixels per inch of their physical page size, independent
 of preview width and scale. A 5 × 8 inch slide produces a 1500 × 2400 pixel image.
 Both dimensions follow the deck's actual size instead of assuming 16:9. Existing
-renderer size and timeout checks also apply to export; oversized captures fail
-with an error rather than silently reducing quality. The export owns a separate
+renderer timeout checks also apply to export. Oversized slides automatically use
+a lower capture resolution to fit the renderer's dimension limits and, for
+Obscura, its native and output pixel budgets. The same proportional reduction
+applies to both dimensions, with rounding at pixel boundaries; PDF page size and
+slide layout remain unchanged. The completion message reports reduced resolution.
+Slides are captured separately, so adding slides does not reduce image quality.
+This does not change preview settings or raise resolution above the 300 dpi target.
+The export owns a separate
 temporary render cache and removes it after completion or failure.
 
 The PDF embeds losslessly compressed slide images using `pdf-writer`. Text is
@@ -82,3 +88,7 @@ It exports a two-slide portrait snapshot after changing the source deck, checks
 page count and physical dimensions with `pdfinfo`, checks embedded image dimensions
 at 300 dpi despite low preview settings, and rasterizes the PDF to check slide
 order and full-bleed pixels.
+
+An oversized 48 × 36 inch regression case also checks that Obscura exports at
+4729 × 3547 pixels, reports the resolution reduction, and retains the original
+physical PDF page size.
