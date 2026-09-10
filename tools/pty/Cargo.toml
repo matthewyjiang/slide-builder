@@ -1,0 +1,16 @@
+[package]
+name = "slide-builder-pty"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+# Keep harness builds independent of the embedded browser dependencies.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+portable-pty = "0.9"
+tempfile = "3"
+vt100 = "0.16"

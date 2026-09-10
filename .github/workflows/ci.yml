@@ -33,6 +33,7 @@ jobs:
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       - run: rustup component add rustfmt
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path tools/pty/Cargo.toml -- --check
 
   linux:
     name: Linux CI
@@ -50,6 +51,12 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --all-features
+      - name: PTY harness
+        run: |
+          cargo test --locked --manifest-path tools/pty/Cargo.toml
+          cargo clippy --locked --manifest-path tools/pty/Cargo.toml --all-targets -- -D warnings
+          cargo build --locked --bin slide-builder
+          cargo run --locked --manifest-path tools/pty/Cargo.toml -- all target/debug/slide-builder
       - name: Diagnostics script tests
         run: python3 -B -m unittest discover -s scripts -p 'test_macos_ci_diagnostics.py' -v
 
@@ -83,6 +90,12 @@ jobs:
           cargo test --locked --all-features --no-fail-fast -- \
             --skip chromium_captures_pinned_handler_slide_when_available \
             --skip chromium_captures_deck_pptx_content_when_available
+      - name: PTY harness
+        run: |
+          cargo test --locked --manifest-path tools/pty/Cargo.toml
+          cargo clippy --locked --manifest-path tools/pty/Cargo.toml --all-targets -- -D warnings
+          cargo build --locked --bin slide-builder
+          cargo run --locked --manifest-path tools/pty/Cargo.toml -- all target/debug/slide-builder
       - name: Obscura isolation
         if: ${{ !cancelled() }}
         run: |
