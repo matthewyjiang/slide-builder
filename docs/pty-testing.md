@@ -9,6 +9,10 @@ The harness is a separate Cargo package with its own lockfile. Its tests do not
 build slide-builder's rendering dependencies, and it is not linked into the app.
 Linux and macOS CI run the harness checks and application scenarios.
 
+For agent-assisted test work, use `$slide-builder-tests`. The project skill at
+[.agents/skills/slide-builder-tests/SKILL.md](../.agents/skills/slide-builder-tests/SKILL.md)
+covers choosing a test boundary, adding PTY scenarios, and diagnosing failures.
+
 ## Run
 
 From the repository root:
