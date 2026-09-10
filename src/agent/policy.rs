@@ -36,9 +36,7 @@ impl WorkspacePolicy for SlidePolicy {
             ReadPath { .. } | LoadSkill { .. } | DiscoverInstructions { .. } => {
                 PolicyDecision::Allow
             }
-            NetworkAccess(_) => PolicyDecision::Deny {
-                reason: "agent-tool network access is disabled in v1".into(),
-            },
+            NetworkAccess(_) => PolicyDecision::Allow,
             WritePath { path, .. } if self.mode == PermissionMode::Plan => PolicyDecision::Deny {
                 reason: "writes are disabled in plan mode".into(),
             },
@@ -61,6 +59,10 @@ impl WorkspacePolicy for SlidePolicy {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod network_tests;
 
 #[cfg(test)]
 mod tests {
