@@ -118,7 +118,7 @@ pub fn render(frame: &mut Frame<'_>, state: &ModelPickerState) {
     let visible = state.visible();
     if visible.is_empty() {
         let message = if state.models.is_empty() {
-            "No logged-in providers. Run /config or restart with SLIDE_BUILDER_FORCE_FIRST_RUN=1 to sign in."
+            "No logged-in providers. Run /login to connect a provider."
         } else {
             "No models match this filter."
         };

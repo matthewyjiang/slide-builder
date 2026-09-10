@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{read, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -31,6 +31,9 @@ use slide_builder::{config::Config, credentials::SlideCredentialStore};
 use zeroize::Zeroize;
 
 type CrosstermTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+
+mod account;
+pub use account::{login, logout};
 
 /// Owns the alt-screen session for first-run setup and reauthentication.
 ///
@@ -101,19 +104,28 @@ enum Navigation<T> {
 
 pub async fn run(config: &mut Config) -> Result<()> {
     let mut session = TerminalSession::open()?;
+    let mut input = EventStream::new();
     'providers: loop {
-        let provider = match choose_provider(&mut session.terminal)? {
+        let provider = match choose_provider(&mut session.terminal, &mut input).await? {
             Navigation::Selected(provider) => provider,
             Navigation::Back => anyhow::bail!("setup cancelled"),
         };
         let has_auth_picker = provider_has_auth_picker(&provider)?;
 
         'authentication: loop {
-            let auth = match choose_auth(&mut session.terminal, &provider)? {
+            let auth = match choose_auth(&mut session.terminal, &mut input, &provider).await? {
                 Navigation::Selected(auth) => auth,
                 Navigation::Back => continue 'providers,
             };
-            if authenticate_mode(&mut session.terminal, &provider, auth, true, None).await?
+            if authenticate_mode(
+                &mut session.terminal,
+                &mut input,
+                &provider,
+                auth,
+                /*reuse_existing*/ true,
+                /*diagnostic*/ None,
+            )
+            .await?
                 == Navigation::Back
             {
                 if has_auth_picker {
@@ -123,11 +135,12 @@ pub async fn run(config: &mut Config) -> Result<()> {
             }
 
             let models = discover_models(&provider, auth.id).await?;
-            let model = match choose_model(&mut session.terminal, &provider, &models)? {
-                Navigation::Selected(model) => model,
-                Navigation::Back if has_auth_picker => continue 'authentication,
-                Navigation::Back => continue 'providers,
-            };
+            let model =
+                match choose_model(&mut session.terminal, &mut input, &provider, &models).await? {
+                    Navigation::Selected(model) => model,
+                    Navigation::Back if has_auth_picker => continue 'authentication,
+                    Navigation::Back => continue 'providers,
+                };
 
             config.provider = provider;
             config.auth = auth.id.to_owned();
@@ -138,7 +151,10 @@ pub async fn run(config: &mut Config) -> Result<()> {
     }
 }
 
-fn choose_provider(terminal: &mut CrosstermTerminal) -> Result<Navigation<String>> {
+async fn choose_provider(
+    terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
+) -> Result<Navigation<String>> {
     let providers = rho_providers::provider::providers();
     let rows = providers
         .iter()
@@ -149,6 +165,7 @@ fn choose_provider(terminal: &mut CrosstermTerminal) -> Result<Navigation<String
         .collect::<Vec<_>>();
     let selected = select(
         terminal,
+        input,
         " Welcome to slide-builder ",
         &[
             "Build and refine native PowerPoint decks with an AI provider you trust.",
@@ -157,7 +174,8 @@ fn choose_provider(terminal: &mut CrosstermTerminal) -> Result<Navigation<String
         &rows,
         0,
         "Enter connect  ·  ↑/↓ move  ·  Esc cancel",
-    )?;
+    )
+    .await?;
     Ok(match selected {
         Navigation::Selected(index) => Navigation::Selected(providers[index].name.to_owned()),
         Navigation::Back => Navigation::Back,
@@ -191,7 +209,11 @@ fn auth_kind_summary(auth_kind: ProviderAuthKind) -> &'static str {
     }
 }
 
-fn choose_auth(terminal: &mut CrosstermTerminal, provider: &str) -> Result<Navigation<AuthMode>> {
+async fn choose_auth(
+    terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
+    provider: &str,
+) -> Result<Navigation<AuthMode>> {
     let descriptor = rho_providers::provider::provider_descriptor(provider)
         .with_context(|| format!("unsupported provider {provider}"))?;
     let modes = descriptor.auth_modes().collect::<Vec<_>>();
@@ -210,6 +232,7 @@ fn choose_auth(terminal: &mut CrosstermTerminal, provider: &str) -> Result<Navig
         .collect::<Vec<_>>();
     let selected = select(
         terminal,
+        input,
         " Choose how to connect ",
         &[
             descriptor.display_name,
@@ -218,7 +241,8 @@ fn choose_auth(terminal: &mut CrosstermTerminal, provider: &str) -> Result<Navig
         &rows,
         0,
         "Enter continue  ·  ↑/↓ move  ·  Esc back",
-    )?;
+    )
+    .await?;
     Ok(match selected {
         Navigation::Selected(index) => Navigation::Selected(modes[index]),
         Navigation::Back => Navigation::Back,
@@ -227,12 +251,22 @@ fn choose_auth(terminal: &mut CrosstermTerminal, provider: &str) -> Result<Navig
 
 pub async fn reauthenticate(provider: &str, auth: &str, diagnostic: Option<&str>) -> Result<()> {
     let mut session = TerminalSession::open()?;
+    let mut input = EventStream::new();
     let descriptor = rho_providers::provider::provider_descriptor(provider)
         .with_context(|| format!("unsupported provider {provider}"))?;
     let mode = descriptor
         .auth_mode(auth)
         .with_context(|| format!("unsupported authentication mode {auth} for {provider}"))?;
-    match authenticate_mode(&mut session.terminal, provider, mode, false, diagnostic).await? {
+    match authenticate_mode(
+        &mut session.terminal,
+        &mut input,
+        provider,
+        mode,
+        /*reuse_existing*/ false,
+        diagnostic,
+    )
+    .await?
+    {
         Navigation::Selected(()) => Ok(()),
         Navigation::Back => anyhow::bail!("login cancelled"),
     }
@@ -240,6 +274,7 @@ pub async fn reauthenticate(provider: &str, auth: &str, diagnostic: Option<&str>
 
 async fn authenticate_mode(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     provider: &str,
     auth: AuthMode,
     reuse_existing: bool,
@@ -254,7 +289,7 @@ async fn authenticate_mode(
             {
                 return Ok(Navigation::Selected(()));
             }
-            api_key_login(terminal, provider, entry_label, diagnostic)
+            api_key_login(terminal, input, provider, auth.id, entry_label, diagnostic).await
         }
         AuthenticationMethod::Interactive { .. } => {
             if reuse_existing
@@ -262,13 +297,14 @@ async fn authenticate_mode(
             {
                 return Ok(Navigation::Selected(()));
             }
-            interactive_login(terminal, auth.id, diagnostic).await
+            interactive_login(terminal, input, auth.id, diagnostic).await
         }
     }
 }
 
 async fn interactive_login(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     auth: &str,
     diagnostic: Option<&str>,
 ) -> Result<Navigation<()>> {
@@ -288,8 +324,15 @@ async fn interactive_login(
     let prompt = login.prompt;
     match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => {
-            match interactive_login_wait(terminal, provider_label, &prompt, completion, diagnostic)
-                .await?
+            match interactive_login_wait(
+                terminal,
+                input,
+                provider_label,
+                &prompt,
+                completion,
+                diagnostic,
+            )
+            .await?
             {
                 Navigation::Selected(completed) => {
                     completed.save(&SlideCredentialStore)?;
@@ -299,19 +342,29 @@ async fn interactive_login(
             }
         }
         InteractiveLoginCompletion::Unconfirmed { instruction } => {
-            confirm_external_login(terminal, provider_label, &prompt, instruction, diagnostic)
+            confirm_external_login(
+                terminal,
+                input,
+                provider_label,
+                &prompt,
+                instruction,
+                diagnostic,
+            )
+            .await
         }
     }
 }
 
-fn api_key_login(
+async fn api_key_login(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     provider: &str,
+    auth: &str,
     entry_label: &str,
     diagnostic: Option<&str>,
 ) -> Result<Navigation<()>> {
     let mut secret = String::new();
-    let result = (|| -> Result<Navigation<()>> {
+    let result: Result<Navigation<()>> = async {
         loop {
             terminal.draw(|frame| {
                 let mut lines = vec![Line::styled(
@@ -347,7 +400,7 @@ fn api_key_login(
                     popup,
                 );
             })?;
-            if let Event::Key(key) = read()? {
+            if let Event::Key(key) = next_event(input).await? {
                 if key.kind == KeyEventKind::Release {
                     continue;
                 }
@@ -355,7 +408,7 @@ fn api_key_login(
                     KeyCode::Enter if !secret.trim().is_empty() => {
                         ProviderAuthentication::save_api_key(
                             &SlideCredentialStore,
-                            provider,
+                            auth,
                             secret.trim(),
                         )?;
                         return Ok(Navigation::Selected(()));
@@ -369,7 +422,8 @@ fn api_key_login(
                 }
             }
         }
-    })();
+    }
+    .await;
     secret.zeroize();
     result
 }
@@ -436,6 +490,7 @@ fn interactive_login_body(
 
 async fn interactive_login_wait(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     label: &str,
     prompt: &LoginPrompt,
     completion: AuthenticationFuture,
@@ -460,7 +515,6 @@ async fn interactive_login_wait(
             popup,
         );
     })?;
-    let mut input = EventStream::new();
     let mut completion = completion;
     loop {
         tokio::select! {
@@ -481,8 +535,9 @@ async fn interactive_login_wait(
     }
 }
 
-fn confirm_external_login(
+async fn confirm_external_login(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     label: &str,
     prompt: &LoginPrompt,
     instruction: &str,
@@ -508,7 +563,7 @@ fn confirm_external_login(
                 popup,
             );
         })?;
-        if let Event::Key(key) = read()? {
+        if let Event::Key(key) = next_event(input).await? {
             if cancels_authentication(key) {
                 return Ok(Navigation::Back);
             }
@@ -591,8 +646,9 @@ fn unique_models_by_id(mut choices: Vec<ModelChoice>) -> Vec<ModelChoice> {
     choices
 }
 
-fn choose_model(
+async fn choose_model(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     provider: &str,
     models: &[ModelChoice],
 ) -> Result<Navigation<String>> {
@@ -614,6 +670,7 @@ fn choose_model(
         .unwrap_or(0);
     let selected = select(
         terminal,
+        input,
         " Choose a model ",
         &[
             descriptor.display_name,
@@ -622,7 +679,8 @@ fn choose_model(
         &rows,
         initial,
         "Enter start building  ·  ↑/↓ move  ·  Esc back",
-    )?;
+    )
+    .await?;
     Ok(match selected {
         Navigation::Selected(index) => Navigation::Selected(models[index].id.clone()),
         Navigation::Back => Navigation::Back,
@@ -643,8 +701,17 @@ fn selection_line(row: &str, selected: bool) -> Line<'_> {
     ])
 }
 
-fn select(
+async fn next_event(input: &mut EventStream) -> Result<Event> {
+    input
+        .next()
+        .await
+        .context("terminal input closed")?
+        .map_err(Into::into)
+}
+
+async fn select(
     terminal: &mut CrosstermTerminal,
+    input: &mut EventStream,
     title: &str,
     intro: &[&str],
     rows: &[String],
@@ -687,7 +754,7 @@ fn select(
             );
         })?;
 
-        if let Event::Key(key) = read()? {
+        if let Event::Key(key) = next_event(input).await? {
             if key.kind == KeyEventKind::Release {
                 continue;
             }

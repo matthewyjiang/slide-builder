@@ -42,6 +42,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod accounts;
 mod herdr_status;
 mod onboarding;
 mod sessions;
@@ -489,10 +490,18 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                         text,
                         attach_active_slide,
                     } => {
+                        if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
+                        if let Err(error) = accounts::ensure_connected(&config).and_then(|()| {
+                            agent.replace_provider(&config.provider, config.auth_mode()?, &config.model)
+                        }) {
+                            app.apply(AppEvent::Run(
+                                slide_builder::tui::AgentEvent::RunFailed(format!("{error:#}")),
+                            ));
+                            continue;
+                        }
                         if let Some(session) = &saved_session {
                             store.check_revision(session)?;
                         }
-                        if let Some(task) = run_task.take() { task.await.context("agent task failed")?; }
                         if saved_session.is_none() {
                             let mut session = store.create(
                                 agent.snapshot(),
@@ -686,6 +695,10 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                         }
                     }
                     AppAction::ImportDesign(source) => {
+                        if let Err(error) = accounts::ensure_connected(&config) {
+                            push_system_message(&mut app, format!("{error:#}"));
+                            continue;
+                        }
                         if let Some(parent) = source.parent() {
                             import_picker_directory = parent.to_path_buf();
                         }
@@ -715,6 +728,32 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                                     error: format!("{error:#}"),
                                 });
                             }
+                        }
+                    }
+                    AppAction::Login | AppAction::Logout => {
+                        if app.run_active || design_import.is_active() {
+                            push_system_message(&mut app, "Finish the current operation before managing provider connections.".into());
+                            continue;
+                        }
+                        let connection_action = if action == AppAction::Login {
+                            accounts::ConnectionAction::Login
+                        } else {
+                            accounts::ConnectionAction::Logout
+                        };
+                        let outcome = accounts::manage(&mut terminal, &mut input, connection_action).await;
+                        app.available_models = slide_builder::models::discover_available_models(&config);
+                        match outcome {
+                            Ok(Some(message)) => push_system_message(&mut app, message),
+                            Ok(None) => {}
+                            Err(error) => push_system_message(&mut app, format!("Could not update provider connection: {error:#}")),
+                        }
+                        // Reload even after cancellation: a nested flow may have saved credentials.
+                        if accounts::ensure_connected(&config).is_ok() {
+                            if let Err(error) = switch_model(&agent, &mut app, &config) {
+                                push_system_message(&mut app, format!("Could not reload the current provider: {error:#}"));
+                            }
+                        } else {
+                            push_system_message(&mut app, "The current model is disconnected. Use /login to reconnect or /model to choose another provider.".into());
                         }
                     }
                     AppAction::OpenModelPicker => {

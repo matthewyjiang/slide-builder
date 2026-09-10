@@ -867,6 +867,8 @@ impl App {
                 vec![]
             }
             Command::ChangeModel => vec![AppAction::OpenModelPicker],
+            Command::Login => vec![AppAction::Login],
+            Command::Logout => vec![AppAction::Logout],
             Command::Sessions => vec![AppAction::OpenSessionManager],
             Command::ResumeSession => vec![AppAction::OpenSessionPicker],
             Command::ToggleAttachment => {
@@ -1172,3 +1174,7 @@ mod session_tests;
 #[cfg(test)]
 #[path = "app_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "app_account_tests.rs"]
+mod account_tests;

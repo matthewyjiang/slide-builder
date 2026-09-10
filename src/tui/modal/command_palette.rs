@@ -18,6 +18,8 @@ pub enum Command {
     ExportPdf,
     Configure,
     ChangeModel,
+    Login,
+    Logout,
     Sessions,
     ResumeSession,
     ToggleAttachment,
@@ -48,7 +50,7 @@ pub struct SlashCommand {
     pub detail: &'static str,
 }
 
-const COMMANDS: [CommandItem; 13] = [
+const COMMANDS: [CommandItem; 15] = [
     CommandItem {
         command: Command::OpenDeck,
         slash_name: "/open",
@@ -89,6 +91,20 @@ const COMMANDS: [CommandItem; 13] = [
         slash_name: "/model",
         label: "Change model",
         detail: "Switch to another logged-in provider model",
+        shortcut: "",
+    },
+    CommandItem {
+        command: Command::Login,
+        slash_name: "/login",
+        label: "Log in to provider",
+        detail: "Connect or reconnect an AI provider",
+        shortcut: "",
+    },
+    CommandItem {
+        command: Command::Logout,
+        slash_name: "/logout",
+        label: "Log out of provider",
+        detail: "Remove a saved provider connection",
         shortcut: "",
     },
     CommandItem {

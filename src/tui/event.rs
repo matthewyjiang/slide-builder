@@ -158,6 +158,8 @@ pub enum AppAction {
     ImportDesign(PathBuf),
     SaveConfiguration(Box<Config>),
     OpenModelPicker,
+    Login,
+    Logout,
     OpenSessionPicker,
     OpenSessionManager,
     RenameSession {

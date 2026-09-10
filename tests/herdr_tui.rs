@@ -19,6 +19,26 @@ struct TerminalChild {
     master: File,
 }
 
+// Ratatui's diff renderer emits cursor moves instead of unchanged spaces.
+fn terminal_words(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut chars = text.chars().peekable();
+    let mut visible = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for code in chars.by_ref() {
+                if ('@'..='~').contains(&code) {
+                    break;
+                }
+            }
+        } else if !ch.is_whitespace() {
+            visible.push(ch);
+        }
+    }
+    visible
+}
+
 impl Drop for TerminalChild {
     fn drop(&mut self) {
         if self.child.try_wait().ok().flatten().is_none() {
@@ -28,12 +48,12 @@ impl Drop for TerminalChild {
     }
 }
 
-fn spawn_terminal(command: &mut Command) -> TerminalChild {
+fn spawn_terminal(command: &mut Command, width: u16) -> TerminalChild {
     let mut master = -1;
     let mut slave = -1;
     let size = libc::winsize {
         ws_row: 35,
-        ws_col: 110,
+        ws_col: width,
         ws_xpixel: 880,
         ws_ypixel: 560,
     };
@@ -74,6 +94,15 @@ fn spawn_terminal(command: &mut Command) -> TerminalChild {
 
 #[test]
 fn native_reports_follow_workspace_dialog_and_shutdown() {
+    exercise_workspace_connections(110);
+}
+
+#[test]
+fn connection_flows_return_to_a_narrow_workspace() {
+    exercise_workspace_connections(48);
+}
+
+fn exercise_workspace_connections(width: u16) {
     let home = tempfile::tempdir().unwrap();
     let config_dir = home.path().join("config/slide-builder");
     fs::create_dir_all(&config_dir).unwrap();
@@ -119,8 +148,9 @@ fn native_reports_follow_workspace_dialog_and_shutdown() {
         .env("HERDR_ENV", "1")
         .env("HERDR_SOCKET_PATH", &socket_path)
         .env("HERDR_PANE_ID", "test:p1");
-    let mut terminal = spawn_terminal(&mut command);
+    let mut terminal = spawn_terminal(&mut command, width);
     let mut reader = terminal.master.try_clone().unwrap();
+    let (output_tx, output_rx) = mpsc::channel();
     let output = std::thread::spawn(move || {
         let mut output = Vec::new();
         let mut buffer = [0; 8192];
@@ -129,6 +159,7 @@ fn native_reports_follow_workspace_dialog_and_shutdown() {
                 break;
             }
             output.extend_from_slice(&buffer[..count]);
+            let _ = output_tx.send(buffer[..count].to_vec());
         }
         output
     });
@@ -145,6 +176,56 @@ fn native_reports_follow_workspace_dialog_and_shutdown() {
         }
     };
     wait("pane.report_agent", Some("idle"));
+    let wait_for_any_text = |texts: &[&str]| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut captured = Vec::new();
+        loop {
+            let chunk = output_rx
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "TUI did not display {texts:?}: {}",
+                        String::from_utf8_lossy(&captured)
+                    )
+                });
+            captured.extend(chunk);
+            if let Some(index) = texts.iter().position(|text| {
+                terminal_words(&captured).contains(&text.split_whitespace().collect::<String>())
+            }) {
+                break index;
+            }
+        }
+    };
+    let wait_for_text = |text: &str| {
+        wait_for_any_text(&[text]);
+    };
+    terminal.master.write_all(b"/login\r").unwrap();
+    wait_for_text("Connect a provider");
+    // Select a known API-key provider without relying on registry ordering.
+    let openai = rho_providers::provider::providers()
+        .iter()
+        .position(|provider| provider.name == "openai")
+        .unwrap();
+    for _ in 0..openai {
+        terminal.master.write_all(b"\x1b[B").unwrap();
+    }
+    terminal.master.write_all(b"\r").unwrap();
+    wait_for_text("Authentication");
+    terminal.master.write_all(b"\x1b").unwrap();
+    wait_for_text("Connect a provider");
+    terminal.master.write_all(b"\x1b").unwrap();
+    wait_for_text("SLIDE BUILDER");
+    terminal.master.write_all(b"/logout\r").unwrap();
+    // The OS keyring is not isolated by HOME. Never select or delete a real credential.
+    if wait_for_any_text(&[
+        "Disconnect a provider",
+        "No saved connections",
+        "Could not update provider connection",
+    ]) == 0
+    {
+        terminal.master.write_all(b"\x1b").unwrap();
+        wait_for_text("SLIDE BUILDER");
+    }
     terminal.master.write_all(b"/help\r").unwrap();
     wait("pane.report_agent", Some("blocked"));
     terminal.master.write_all(b"\x1b").unwrap();

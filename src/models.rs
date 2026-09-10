@@ -38,7 +38,9 @@ impl AvailableModel {
     }
 
     pub fn matches_config(&self, config: &Config) -> bool {
-        self.provider == config.provider && self.model == config.model
+        self.provider == config.provider
+            && self.model == config.model
+            && config.auth_mode().is_ok_and(|auth| self.auth == auth)
     }
 }
 
