@@ -26,6 +26,39 @@ fn app_at(width: u16, height: u16) -> App {
 }
 
 #[test]
+fn clicking_code_copy_uses_unwrapped_source_after_scroll_and_resize() {
+    for width in [140, 70] {
+        let source =
+            "let result = a_very_long_function_name_that_wraps_in_a_narrow_conversation();";
+        let mut app = App {
+            transcript: vec![TranscriptItem::Message(Message {
+                role: Role::Assistant,
+                text: format!("{}\n```rust\n{source}\n```", "earlier\n".repeat(30)),
+                complete: true,
+            })],
+            ..app_at(width, 40)
+        };
+        let chat = layout::regions(app.mouse.viewport, &app).chat;
+        let rows = chat::visible_text_rows(chat, &app);
+        let (row, column) = rows
+            .iter()
+            .enumerate()
+            .find_map(|(row, text)| {
+                text.to_lowercase()
+                    .find("copy")
+                    .map(|column| (row, text[..column].width()))
+            })
+            .expect("copy header visible above final code block");
+        let x = chat.x + column as u16;
+        let y = chat.y + 1 + row as u16;
+        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+        let actions = app.apply(mouse(MouseEventKind::Up(MouseButton::Left), x, y));
+        assert_eq!(actions, vec![AppAction::CopyText(source.into())]);
+        assert!(app.mouse.selection.is_none());
+    }
+}
+
+#[test]
 fn clicking_a_visible_slide_selects_it() {
     let mut app = app_at(140, 40);
     app.preview.slides = (0..4)

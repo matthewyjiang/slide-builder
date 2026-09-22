@@ -109,6 +109,17 @@ pub(crate) fn handle(app: &mut App, event: MouseEvent) -> Vec<AppAction> {
             selection.dragged |= selection.cursor != selection.anchor;
             app.mouse.selection = Some(selection);
             if !selection.dragged {
+                if contains(chat_body, point) {
+                    if let Some(text) = chat::code_at(app, chat_body, point) {
+                        app.mouse.selection = None;
+                        app.mouse.toast = Some(CopyToast {
+                            message: "Copied code".into(),
+                            expires_at: Instant::now() + TOAST_DURATION,
+                            location: point,
+                        });
+                        return vec![AppAction::CopyText(text)];
+                    }
+                }
                 return vec![];
             }
             let text = selected_text(app, chat_body, selection);

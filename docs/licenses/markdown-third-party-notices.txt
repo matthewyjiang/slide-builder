@@ -1,0 +1,43 @@
+Grok Build terminal Mermaid renderer
+====================================
+
+This product includes modified portions of the terminal Mermaid canvas,
+layout, routing, wrapping, and painter implementation from Grok Build:
+
+https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
+
+Copyright 2023-2026 SpaceXAI
+Licensed under the Apache License, Version 2.0. See Apache-2.0.txt.
+
+Rho's modifications replace the original Mermaid parser with adapters from
+mermaid-rs-renderer public parsed IR, separate validation and resource limits,
+and integrate the painter with Rho's panel, styling, caching, and fallback
+behavior. Slide-builder ports that renderer and adapts styling, wrapping,
+conversation placement, and tests to its terminal workspace.
+
+mermaid-rs-renderer
+===================
+
+Mermaid parsing uses mermaid-rs-renderer 0.3.1:
+https://github.com/1jehuang/mermaid-rs-renderer/tree/v0.3.1
+Copyright (c) 2026 mermaid-rs-renderer contributors
+Licensed under the MIT License.
+
+txm
+===
+
+Terminal math layout uses txm 0.1.6:
+https://github.com/thatmagicalcat/txm
+Copyright (c) 2026 thatmagicalcat
+Licensed under MIT OR Apache-2.0.
+
+two-face (bat syntax pack)
+==========================
+
+Code highlighting uses two-face 0.5.x:
+https://codeberg.org/CosmicHarper/two-face
+https://github.com/sharkdp/bat
+
+Licensed under MIT OR Apache-2.0. Embedded syntax assets retain their upstream
+licenses; see two-face's acknowledgement listing and bat's LICENSE and NOTICE
+files for the full set.

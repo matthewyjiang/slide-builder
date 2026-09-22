@@ -10,9 +10,20 @@ use super::{
     theme,
 };
 
+#[cfg(test)]
 pub(crate) fn render_message(message: &Message, width: usize) -> Vec<Line<'static>> {
+    render_message_content(message, width).lines
+}
+
+pub(crate) fn render_message_content(
+    message: &Message,
+    width: usize,
+) -> super::markdown::RenderedMarkdown {
     let width = width.max(1);
     let inner_width = padded_inner_width(width);
+    if message.role == Role::Assistant {
+        return super::conversation_markdown::render(message, width, inner_width);
+    }
     let style = match message.role {
         Role::User => theme::user_message(),
         Role::Assistant => theme::assistant_message(),
@@ -22,7 +33,12 @@ pub(crate) fn render_message(message: &Message, width: usize) -> Vec<Line<'stati
     if !message.complete {
         rows.push(("▌".into(), style.fg(theme::SUCCESS)));
     }
-    render_block(rows, width, style)
+    super::markdown::RenderedMarkdown {
+        lines: render_block(rows, width, style),
+        code_blocks: vec![],
+        image_sources: vec![],
+        image_rows: vec![],
+    }
 }
 
 pub(crate) fn render_tool(card: &ToolCard, width: usize) -> Vec<Line<'static>> {

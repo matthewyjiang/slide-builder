@@ -2,6 +2,40 @@ use super::*;
 use crate::tui::{App, Message, Role, ToolCard, ToolStatus, TranscriptItem};
 
 #[test]
+fn composer_growth_does_not_change_image_dimensions() {
+    for viewport in [Rect::new(0, 0, 140, 40), Rect::new(0, 0, 70, 30)] {
+        let mut app = App::default();
+        app.mouse.viewport = viewport;
+        let first_chat = super::super::layout::regions(viewport, &app).chat;
+        let initial = image_size(&app, usize::from(first_chat.width));
+        app.input.text = "one\ntwo\nthree\nfour".into();
+        let next_chat = super::super::layout::regions(viewport, &app).chat;
+        assert!(next_chat.height < first_chat.height);
+        assert_eq!(image_size(&app, usize::from(next_chat.width)), initial);
+    }
+}
+
+#[test]
+fn unchanged_messages_share_paint_across_frames_and_scrolling() {
+    super::super::syntax::warm_syntax_set();
+    let app = App {
+        transcript: vec![TranscriptItem::Message(Message {
+            role: Role::Assistant,
+            text: "unchanged\n".repeat(300),
+            complete: true,
+        })],
+        ..App::default()
+    };
+    let first = conversation_content(&app, 40);
+    let second = conversation_content(&app, 40);
+    assert!(Rc::ptr_eq(&first.chunks[0], &second.chunks[0]));
+    let area = Rect::new(0, 0, 40, 5);
+    let mut buffer = Buffer::empty(area);
+    second.render_text(area, &mut buffer, 100);
+    assert!(buffer_row_text(&buffer, 0, area.width).contains("unchanged"));
+}
+
+#[test]
 fn latest_rows_remain_visible_after_wrapped_tool_output() {
     let app = App {
         transcript: vec![

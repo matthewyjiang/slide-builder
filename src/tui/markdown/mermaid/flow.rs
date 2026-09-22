@@ -1,0 +1,57 @@
+use crate::tui::{
+    markdown::mermaid::{model::Graph, MermaidArt},
+    terminal_graph::{self, GraphStyles, Oversize},
+};
+
+mod class;
+mod groups;
+
+pub(super) fn render_class(
+    graph: &Graph,
+    infos: &[super::model::ClassInfo],
+    styles: &GraphStyles,
+    max_width: Option<usize>,
+) -> Result<MermaidArt, Oversize> {
+    class::render_class(graph, infos, styles, max_width)
+}
+
+pub(super) fn layout_flow(
+    graph: &Graph,
+    styles: &GraphStyles,
+    max_width: Option<usize>,
+) -> Result<MermaidArt, Oversize> {
+    match layout_flow_in(graph, styles, max_width) {
+        Err(Oversize::Width)
+            if matches!(
+                graph.dir,
+                terminal_graph::Direction::LeftRight | terminal_graph::Direction::RightLeft
+            ) =>
+        {
+            layout_flow_in(
+                &graph.with_dir(terminal_graph::Direction::TopDown),
+                styles,
+                max_width,
+            )
+        }
+        other => other,
+    }
+}
+
+fn layout_flow_in(
+    graph: &Graph,
+    styles: &GraphStyles,
+    max_width: Option<usize>,
+) -> Result<MermaidArt, Oversize> {
+    if graph.groups.is_empty() {
+        let art = terminal_graph::layout_flow(&graph.layout_graph(), styles, max_width)?;
+        return Ok(MermaidArt {
+            styled_lines: art.lines,
+            plain_lines: art.plain_lines,
+        });
+    }
+
+    let layout_graph = graph.layout_graph();
+    terminal_graph::over_wrap_rungs(&layout_graph, |wrap_width| {
+        groups::render_grouped(graph, styles, max_width, wrap_width)
+    })
+}

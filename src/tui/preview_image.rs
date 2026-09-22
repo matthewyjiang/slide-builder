@@ -63,6 +63,7 @@ pub enum ImageRenderStatus {
 /// Terminal-ready image protocols shared by the workspace preview and fullscreen presentation.
 /// All file IO, decoding, resizing, and terminal encoding happens on the worker thread.
 pub struct PreviewImage {
+    picker: Picker,
     jobs: SyncSender<EncodeJob>,
     completed: Receiver<EncodeResult>,
     generation: u64,
@@ -127,6 +128,7 @@ impl PreviewImage {
         let worker_available = worker_count > 0;
 
         Self {
+            picker,
             jobs: job_sender,
             completed: result_receiver,
             generation: 0,
@@ -142,6 +144,11 @@ impl PreviewImage {
             decoded_cache_budget,
             worker_available,
         }
+    }
+
+    /// Reuse the detected protocol and cell dimensions for other terminal images.
+    pub fn picker(&self) -> Picker {
+        self.picker.clone()
     }
 
     /// Replace the deck whose terminal encodings should be warmed. Actual work starts as soon as

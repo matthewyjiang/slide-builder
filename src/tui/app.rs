@@ -276,6 +276,11 @@ pub struct App {
     pub import_design_status: Option<ImportDesignStatus>,
     pub conversation_scroll_offset: u16,
     pub mouse: super::mouse::MouseState,
+    #[doc(hidden)]
+    pub markdown_cache: std::cell::RefCell<super::conversation_markdown::MessageCache>,
+    #[doc(hidden)]
+    pub conversation_images:
+        std::rc::Rc<std::cell::RefCell<super::conversation_images::ConversationImages>>,
     pub config: Config,
     /// Logged-in models discovered by main; feeds the config menu's model choice.
     pub available_models: Vec<AvailableModel>,
@@ -303,6 +308,8 @@ impl Default for App {
             import_design_status: None,
             conversation_scroll_offset: 0,
             mouse: super::mouse::MouseState::default(),
+            markdown_cache: Default::default(),
+            conversation_images: Default::default(),
             config: Config::default(),
             available_models: vec![],
         }
@@ -310,6 +317,19 @@ impl Default for App {
 }
 
 impl App {
+    /// Share terminal capabilities with conversation images without querying stdin again.
+    pub fn configure_conversation_rendering(
+        &mut self,
+        cwd: PathBuf,
+        picker: ratatui_image::picker::Picker,
+    ) {
+        self.conversation_images = std::rc::Rc::new(std::cell::RefCell::new(
+            super::conversation_images::ConversationImages::new(cwd, Some(picker)),
+        ));
+        // Grammar loading is independent of the UI. The cache notices when it finishes.
+        std::thread::spawn(super::syntax::warm_syntax_set);
+    }
+
     pub fn apply(&mut self, event: AppEvent) -> Vec<AppAction> {
         match event {
             AppEvent::Input(crossterm::event::Event::Key(key)) => self.handle_key(key),
@@ -343,6 +363,8 @@ impl App {
                 manifest,
             } => {
                 if generation >= self.preview.generation() {
+                    // Deck renders can overwrite image paths already referenced in the chat.
+                    self.conversation_images.borrow_mut().clear();
                     self.apply_manifest(generation, manifest);
                 }
                 vec![]

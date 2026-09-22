@@ -25,6 +25,7 @@ pub fn render_with_preview(
     let area = frame.area();
     if app.fullscreen {
         slideshow::render(frame, area, app, preview_image);
+        app.conversation_images.borrow_mut().end_frame();
         return;
     }
 
@@ -45,6 +46,7 @@ pub fn render_with_preview(
     statusline::render_actions(frame, regions.actions, app);
     super::mouse::render_feedback(frame, app);
     modal::render(frame, &app.modal);
+    app.conversation_images.borrow_mut().end_frame();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

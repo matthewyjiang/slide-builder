@@ -379,6 +379,7 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
     if let Some(session) = &saved_session {
         sessions::restore_app(&mut app, &session.state, slide_count);
     }
+    app.configure_conversation_rendering(cwd.clone(), preview_image.picker());
     warn_unknown_context_window(&mut app, &config);
     app.mouse.viewport = terminal.size()?.into();
     if render_service.is_some() {
