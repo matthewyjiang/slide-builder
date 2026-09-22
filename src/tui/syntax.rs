@@ -64,7 +64,6 @@ impl HighlightSegment {
 }
 
 /// Stateful highlighter for one source stream. Feed lines in order.
-#[derive(Clone)]
 pub(super) struct BlockHighlighter {
     parse: ParseState,
     stack: ScopeStack,
@@ -120,22 +119,6 @@ impl BlockHighlighter {
             });
         }
         segments
-    }
-
-    /// Advance a committed streaming row without allocating styled segments.
-    #[cfg(test)]
-    pub(super) fn advance_line(&mut self, line: &str) {
-        let mut text = String::with_capacity(line.len() + 1);
-        text.push_str(line);
-        text.push('\n');
-        let syntax_set = SYNTAX_SET
-            .get()
-            .expect("highlighter requires ready syntax set");
-        if let Ok(ops) = self.parse.parse_line(&text, syntax_set) {
-            for (_, op) in ops {
-                let _ = self.stack.apply(&op);
-            }
-        }
     }
 
     fn scope_role(&self) -> Option<SyntaxRole> {

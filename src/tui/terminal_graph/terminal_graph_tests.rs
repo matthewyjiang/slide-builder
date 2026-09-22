@@ -1,58 +1,39 @@
 use pretty_assertions::assert_eq;
-use ratatui::style::{Color, Style};
 
 use super::{
-    art_from_layout, layout_canvas, Compartment, Direction, Edge, EdgeHead, Graph, GraphArt,
-    GraphError, GraphStyles, Node, NodeExtra, NodeStyle, RankOrdering, TextAlignment, WRAP_WIDTH,
+    art_from_layout, layout_canvas, layout_flow, Canvas, Compartment, Direction, Edge, EdgeHead,
+    EdgeLine, Graph, GraphArt, GraphStyles, Node, NodeExtra, NodeShape, Oversize, TextAlignment,
+    WRAP_WIDTH,
 };
 
-// Covers: node-specific state colors must survive shared graph layout and painting.
-// Owner: terminal graph painter.
-#[test]
-fn preserves_per_node_styles_and_node_geometry() {
-    let waiting = NodeStyle::new(
-        Style::default().fg(Color::Blue),
-        Style::default().fg(Color::Cyan),
-    );
-    let running = NodeStyle::new(
-        Style::default().fg(Color::Red),
-        Style::default().fg(Color::Yellow),
-    );
-    let graph = Graph::top_down(
-        vec![
-            Node::rectangular("Waiting node", waiting),
-            Node::rectangular("Running node", running),
-        ],
-        vec![Edge::directed(0, 1)],
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
+fn node(label: &str) -> Node {
+    Node {
+        label: label.to_owned(),
+        shape: NodeShape::Rect,
+    }
+}
 
-    let art = graph.render(Style::default().fg(Color::DarkGray)).unwrap();
-    let waiting_text = text_style(&art.lines, "Waiting node");
-    let running_text = text_style(&art.lines, "Running node");
+fn directed(from: usize, to: usize) -> Edge {
+    Edge {
+        from,
+        to,
+        label: None,
+        head_to: EdgeHead::Arrow,
+        head_from: EdgeHead::None,
+        line: EdgeLine::Solid,
+    }
+}
 
-    assert_eq!(waiting_text, waiting.text);
-    assert_eq!(running_text, running.text);
-    assert_eq!(
-        art.plain_lines
-            .iter()
-            .flat_map(|line| line.chars())
-            .filter(|character| *character == '▼')
-            .count(),
-        1
-    );
-    assert!(art
-        .lines
-        .iter()
-        .flat_map(|line| &line.spans)
-        .any(|span| { span.style == waiting.border && span.content.chars().any(is_box_drawing) }));
-    assert!(art
-        .lines
-        .iter()
-        .flat_map(|line| &line.spans)
-        .any(|span| { span.style == running.border && span.content.chars().any(is_box_drawing) }));
-    assert!(art.node_rects[0].y < art.node_rects[1].y);
+fn top_down(nodes: Vec<Node>, edges: Vec<Edge>) -> Graph {
+    Graph {
+        nodes,
+        edges,
+        direction: Direction::TopDown,
+    }
+}
+
+fn render(graph: &Graph) -> GraphArt {
+    layout_flow(graph, &GraphStyles::default(), /*max_width*/ None).unwrap()
 }
 
 // Covers: one grapheme must consume its measured terminal width even when it
@@ -60,17 +41,9 @@ fn preserves_per_node_styles_and_node_geometry() {
 // Owner: terminal graph painter.
 #[test]
 fn paints_zwj_graphemes_without_shifting_node_borders() {
-    let graph = Graph::top_down(
-        vec![Node::rectangular("👩\u{200d}💻", NodeStyle::default())],
-        Vec::new(),
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
-
+    let graph = top_down(vec![node("👩\u{200d}💻")], Vec::new());
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             "┌────┐".to_owned(),
             "│ 👩\u{200d}💻 │".to_owned(),
@@ -83,20 +56,12 @@ fn paints_zwj_graphemes_without_shifting_node_borders() {
 // Owner: terminal graph painter.
 #[test]
 fn paints_self_loop_endpoint_decorations() {
-    let mut edge = Edge::directed(0, 0);
+    let mut edge = directed(0, 0);
     edge.head_to = EdgeHead::None;
     edge.head_from = EdgeHead::Circle;
-    let graph = Graph::top_down(
-        vec![Node::rectangular("Node", NodeStyle::default())],
-        vec![edge],
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
-
+    let graph = top_down(vec![node("Node")], vec![edge]);
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             "┌──────┐".to_owned(),
             "│ Node │".to_owned(),
@@ -112,12 +77,7 @@ fn paints_self_loop_endpoint_decorations() {
 // Owner: terminal graph painter.
 #[test]
 fn aligns_each_compartment_by_its_model() {
-    let graph = Graph::top_down(
-        vec![Node::rectangular("unused", NodeStyle::default())],
-        Vec::new(),
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
+    let graph = top_down(vec![node("unused")], Vec::new());
     let extras = [NodeExtra::Compartments(vec![
         Compartment {
             lines: Vec::new(),
@@ -132,10 +92,8 @@ fn aligns_each_compartment_by_its_model() {
             alignment: TextAlignment::Left,
         },
     ])];
-    let layout = layout_canvas(&graph, &extras, None, WRAP_WIDTH).unwrap();
-    let styles = GraphStyles::for_nodes(&graph.nodes, Style::default());
-    let art = art_from_layout(&graph, layout, &styles);
-
+    let canvas = layout_canvas(&graph, &extras, /*max_width*/ None, WRAP_WIDTH).unwrap();
+    let art = art_from_layout(&graph, canvas, &GraphStyles::default());
     assert_eq!(
         art.plain_lines,
         vec![
@@ -152,74 +110,51 @@ fn aligns_each_compartment_by_its_model() {
 // Owner: terminal graph layout.
 #[test]
 fn renders_an_empty_graph_as_empty_art() {
-    let art = Graph::top_down(Vec::new(), Vec::new(), RankOrdering::PreserveInput)
-        .unwrap()
-        .render(Style::default())
-        .unwrap();
-
     assert_eq!(
-        art,
+        render(&top_down(Vec::new(), Vec::new())),
         GraphArt {
-            lines: Vec::new(),
+            styled_lines: Vec::new(),
             plain_lines: Vec::new(),
-            width: 0,
-            height: 0,
-            node_rects: Vec::new(),
         }
     );
 }
 
-// Covers: workflow-sized layouts retain caller order while compact diagram
-// layouts can opt into crossing minimization.
-// Owner: terminal graph layout policy.
+// Covers: crossing minimization orders the lower rank by its parents rather
+// than by the input node order.
+// Owner: terminal graph layout.
 #[test]
-fn applies_the_requested_rank_ordering_policy() {
-    let nodes = vec![
-        Node::rectangular("A", NodeStyle::default()),
-        Node::rectangular("B", NodeStyle::default()),
-        Node::rectangular("X", NodeStyle::default()),
-        Node::rectangular("Y", NodeStyle::default()),
-    ];
-    let edges = vec![Edge::directed(0, 3), Edge::directed(1, 2)];
-    let preserved = Graph::top_down(nodes.clone(), edges.clone(), RankOrdering::PreserveInput)
-        .unwrap()
-        .render(Style::default())
-        .unwrap();
-    let minimized = Graph::top_down(nodes, edges, RankOrdering::MinimizeCrossings)
-        .unwrap()
-        .render(Style::default())
-        .unwrap();
-
-    assert!(preserved.node_rects[2].x < preserved.node_rects[3].x);
-    assert!(minimized.node_rects[3].x < minimized.node_rects[2].x);
-}
-
-// Covers: malformed adapters fail at the graph boundary instead of panicking
-// during rank or route indexing.
-// Owner: terminal graph model validation.
-#[test]
-fn rejects_invalid_edge_endpoints() {
-    let error = Graph::top_down(
-        vec![Node::rectangular("only", NodeStyle::default())],
-        vec![Edge::directed(0, 1)],
-        RankOrdering::PreserveInput,
-    )
-    .unwrap_err();
-
-    assert_eq!(error, GraphError::InvalidEdgeEndpoint);
-}
-
-fn text_style(lines: &[ratatui::text::Line<'_>], needle: &str) -> Style {
-    lines
+fn orders_rank_to_avoid_crossed_edges() {
+    let art = render(&top_down(
+        vec![node("A"), node("B"), node("X"), node("Y")],
+        vec![directed(0, 3), directed(1, 2)],
+    ));
+    let labels = art
+        .plain_lines
         .iter()
-        .flat_map(|line| &line.spans)
-        .find(|span| span.content == needle)
-        .map(|span| span.style)
-        .expect("node label is rendered")
+        .find(|line| line.contains(" Y "))
+        .unwrap();
+    assert!(labels.find(" Y ").unwrap() < labels.find(" X ").unwrap());
 }
 
-fn is_box_drawing(character: char) -> bool {
-    matches!(character, '┌' | '┐' | '└' | '┘' | '─' | '│')
+// Covers: every canvas caller gets checked allocation, including products
+// that overflow usize. Errors retain the requested dimensions for diagnosis.
+// Owner: terminal graph canvas allocation.
+#[test]
+fn rejects_oversize_canvas_before_allocating() {
+    for (width, height) in [(super::painter::MAX_CANVAS_CELLS + 1, 1), (usize::MAX, 2)] {
+        assert_eq!(
+            Canvas::new(width, height).err(),
+            Some(Oversize::Cells { width, height })
+        );
+    }
+    assert_eq!(
+        Oversize::Cells {
+            width: 2_000_001,
+            height: 1
+        }
+        .to_string(),
+        "graph canvas cell budget exceeded: limit 2000000, requested 2000001 (2000001 × 1)"
+    );
 }
 
 // Covers: every fan-in edge of one target shares a single bus row, so a
@@ -228,25 +163,17 @@ fn is_box_drawing(character: char) -> bool {
 // Owner: terminal graph bus track assignment.
 #[test]
 fn fan_in_edges_share_one_bus_row_per_target() {
-    let style = NodeStyle::default();
-    let nodes = vec![
-        Node::rectangular("first", style),
-        Node::rectangular("second", style),
-        Node::rectangular("left", style),
-        Node::rectangular("right", style),
-    ];
-    let edges = vec![
-        Edge::directed(0, 2),
-        Edge::directed(1, 2),
-        Edge::directed(0, 3),
-        Edge::directed(1, 3),
-    ];
-    let graph = Graph::top_down(nodes, edges, RankOrdering::PreserveInput).unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
-
+    let graph = top_down(
+        vec![node("first"), node("second"), node("left"), node("right")],
+        vec![
+            directed(0, 2),
+            directed(1, 2),
+            directed(0, 3),
+            directed(1, 3),
+        ],
+    );
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             " ┌───────┐  ┌────────┐".to_owned(),
             " │ first │  │ second │".to_owned(),
@@ -262,34 +189,21 @@ fn fan_in_edges_share_one_bus_row_per_target() {
 
 // Covers: a forward edge that skips a rank must reach its target through the
 // right lane and the target's own fan-in bus row, instead of running through
-// sibling boxes at the target's center row (detached arrow fragments) or a
-// separate approach row that crosses unrelated edges.
+// sibling boxes at the target's center row or crossing unrelated edges.
 // Owner: terminal graph skip-edge routing.
 #[test]
 fn rank_skipping_edge_drops_into_the_target_from_above() {
-    let style = NodeStyle::default();
-    let nodes = vec![
-        Node::rectangular("setup", style),
-        Node::rectangular("review", style),
-        Node::rectangular("apply", style),
-        Node::rectangular("skip", style),
-    ];
-    let edges = vec![
-        Edge::directed(0, 1),
-        Edge::directed(1, 2),
-        Edge::directed(1, 3),
-        Edge::directed(0, 3),
-    ];
-    let graph = Graph::top_down(nodes, edges, RankOrdering::PreserveInput).unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
-
-    assert!(art
-        .plain_lines
-        .iter()
-        .all(|line| !line.contains('\u{25c4}')));
+    let graph = top_down(
+        vec![node("setup"), node("review"), node("apply"), node("skip")],
+        vec![
+            directed(0, 1),
+            directed(1, 2),
+            directed(1, 3),
+            directed(0, 3),
+        ],
+    );
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             "         ┌───────┐".to_owned(),
             "         │ setup │".to_owned(),
@@ -315,34 +229,31 @@ fn rank_skipping_edge_drops_into_the_target_from_above() {
 // Owner: terminal graph skip-edge routing and bus track assignment.
 #[test]
 fn skip_edges_join_the_shared_fan_in_bus_row() {
-    let style = NodeStyle::default();
-    let nodes = vec![
-        Node::rectangular("collect", style),
-        Node::rectangular("boundaries", style),
-        Node::rectangular("spaghetti", style),
-        Node::rectangular("structure", style),
-        Node::rectangular("apply", style),
-        Node::rectangular("none", style),
-    ];
-    let edges = vec![
-        Edge::directed(0, 1),
-        Edge::directed(0, 2),
-        Edge::directed(0, 3),
-        Edge::directed(1, 4),
-        Edge::directed(2, 4),
-        Edge::directed(3, 4),
-        Edge::directed(0, 4),
-        Edge::directed(1, 5),
-        Edge::directed(2, 5),
-        Edge::directed(3, 5),
-        Edge::directed(0, 5),
-    ];
-    let graph = Graph::top_down(nodes, edges, RankOrdering::PreserveInput).unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
-
+    let graph = top_down(
+        vec![
+            node("collect"),
+            node("boundaries"),
+            node("spaghetti"),
+            node("structure"),
+            node("apply"),
+            node("none"),
+        ],
+        vec![
+            directed(0, 1),
+            directed(0, 2),
+            directed(0, 3),
+            directed(1, 4),
+            directed(2, 4),
+            directed(3, 4),
+            directed(0, 4),
+            directed(1, 5),
+            directed(2, 5),
+            directed(3, 5),
+            directed(0, 5),
+        ],
+    );
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             "                  ┌─────────┐".to_owned(),
             "                  │ collect │".to_owned(),
@@ -361,32 +272,22 @@ fn skip_edges_join_the_shared_fan_in_bus_row() {
     );
 }
 
-// Covers: skip (forward) and back (feedback) detours take opposite sides in
-// TD and LR so their stems cannot share ink or sit in adjacent same-side
-// columns.
-// Owner: terminal graph lane hierarchy
+// Covers: skip and back detours take opposite sides in TD and LR so their
+// stems cannot share ink or sit in adjacent same-side columns.
+// Owner: terminal graph lane hierarchy.
 #[test]
 fn skip_and_back_edges_use_opposite_side_lanes() {
-    let style = NodeStyle::default();
-    let graph = Graph::top_down(
+    let mut graph = top_down(
+        vec![node("start"), node("mid"), node("end")],
         vec![
-            Node::rectangular("start", style),
-            Node::rectangular("mid", style),
-            Node::rectangular("end", style),
-        ],
-        vec![
-            Edge::directed(0, 1),
-            Edge::directed(1, 2),
-            Edge::directed(0, 2),
+            directed(0, 1),
+            directed(1, 2),
+            directed(0, 2),
             labeled_edge(2, 1, "no"),
         ],
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
+    );
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             "      ┌───────┐".to_owned(),
             "      │ start │".to_owned(),
@@ -403,25 +304,9 @@ fn skip_and_back_edges_use_opposite_side_lanes() {
             "       └─────┘".to_owned(),
         ]
     );
-
-    let lr = Graph::from_parts(
-        vec![
-            Node::rectangular("start", style),
-            Node::rectangular("mid", style),
-            Node::rectangular("end", style),
-        ],
-        vec![
-            Edge::directed(0, 1),
-            Edge::directed(1, 2),
-            Edge::directed(0, 2),
-            labeled_edge(2, 1, "no"),
-        ],
-        Direction::LeftRight,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
+    graph.direction = Direction::LeftRight;
     assert_eq!(
-        lr.render(Style::default()).unwrap().plain_lines,
+        render(&graph).plain_lines,
         vec![
             "                ┌──────────┐    no".to_owned(),
             "                │          │".to_owned(),
@@ -437,33 +322,22 @@ fn skip_and_back_edges_use_opposite_side_lanes() {
 
 // Covers: a long skip must wrap outside a nested shorter skip instead of
 // taking the inner lane and crossing the short hop's stem.
-// Owner: terminal graph lane hierarchy
+// Owner: terminal graph lane hierarchy.
 #[test]
 fn nested_skips_use_outer_lane_for_the_longer_span() {
-    let style = NodeStyle::default();
-    let graph = Graph::top_down(
+    let mut graph = top_down(
+        vec![node("A"), node("B"), node("M"), node("C"), node("D")],
         vec![
-            Node::rectangular("A", style),
-            Node::rectangular("B", style),
-            Node::rectangular("M", style),
-            Node::rectangular("C", style),
-            Node::rectangular("D", style),
+            directed(0, 1),
+            directed(1, 2),
+            directed(2, 3),
+            directed(3, 4),
+            directed(0, 4),
+            directed(1, 3),
         ],
-        vec![
-            Edge::directed(0, 1),
-            Edge::directed(1, 2),
-            Edge::directed(2, 3),
-            Edge::directed(3, 4),
-            Edge::directed(0, 4),
-            Edge::directed(1, 3),
-        ],
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    let art = graph.render(Style::default()).unwrap();
+    );
     assert_eq!(
-        art.plain_lines,
+        render(&graph).plain_lines,
         vec![
             " ┌───┐".to_owned(),
             " │ A │".to_owned(),
@@ -490,29 +364,9 @@ fn nested_skips_use_outer_lane_for_the_longer_span() {
             " └───┘".to_owned(),
         ]
     );
-
-    let lr = Graph::from_parts(
-        vec![
-            Node::rectangular("A", style),
-            Node::rectangular("B", style),
-            Node::rectangular("M", style),
-            Node::rectangular("C", style),
-            Node::rectangular("D", style),
-        ],
-        vec![
-            Edge::directed(0, 1),
-            Edge::directed(1, 2),
-            Edge::directed(2, 3),
-            Edge::directed(3, 4),
-            Edge::directed(0, 4),
-            Edge::directed(1, 3),
-        ],
-        Direction::LeftRight,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
+    graph.direction = Direction::LeftRight;
     assert_eq!(
-        lr.render(Style::default()).unwrap().plain_lines,
+        render(&graph).plain_lines,
         vec![
             "".to_owned(),
             "┌───┐    ┌───┐    ┌───┐    ┌───┐    ┌───┐".to_owned(),
@@ -530,22 +384,15 @@ const WRAPPED_EDGE_LABEL: &str = "when the renderer reports a width failure";
 fn labeled_edge(from: usize, to: usize, label: &str) -> Edge {
     Edge {
         label: Some(label.to_owned()),
-        ..Edge::directed(from, to)
+        ..directed(from, to)
     }
 }
 
-fn art_text(graph: &Graph) -> String {
-    graph
-        .render(Style::default())
-        .unwrap()
-        .plain_lines
-        .join("\n")
-}
-
-fn assert_wrapped_label_visible(art: &str) {
+fn assert_wrapped_label_visible(art: &GraphArt) {
+    let text = art.plain_lines.join("\n");
     assert!(
-        art.contains("when the renderer") && art.contains("width failure"),
-        "expected every wrapped word to remain visible:\n{art}"
+        text.contains("when the renderer") && text.contains("width failure"),
+        "expected every wrapped word to remain visible:\n{text}"
     );
 }
 
@@ -554,20 +401,12 @@ fn assert_wrapped_label_visible(art: &str) {
 // Owner: terminal graph LR placement.
 #[test]
 fn wraps_lr_forward_edge_labels_without_dropping_words() {
-    let style = NodeStyle::default();
-    let graph = Graph::from_parts(
-        vec![
-            Node::rectangular("start", style),
-            Node::rectangular("top", style),
-            Node::rectangular("end", style),
-        ],
-        vec![Edge::directed(0, 1), labeled_edge(0, 2, WRAPPED_EDGE_LABEL)],
-        Direction::LeftRight,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    assert_wrapped_label_visible(&art_text(&graph));
+    let graph = Graph {
+        nodes: vec![node("start"), node("top"), node("end")],
+        edges: vec![directed(0, 1), labeled_edge(0, 2, WRAPPED_EDGE_LABEL)],
+        direction: Direction::LeftRight,
+    };
+    assert_wrapped_label_visible(&render(&graph));
 }
 
 // Covers: TD back-edge labels wrap in the left gutter without clipping
@@ -575,19 +414,11 @@ fn wraps_lr_forward_edge_labels_without_dropping_words() {
 // Owner: terminal graph TD placement.
 #[test]
 fn wraps_td_back_edge_labels_without_dropping_words() {
-    let style = NodeStyle::default();
-    let graph = Graph::from_parts(
-        vec![
-            Node::rectangular("start", style),
-            Node::rectangular("end", style),
-        ],
-        vec![Edge::directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)],
-        Direction::TopDown,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    assert_wrapped_label_visible(&art_text(&graph));
+    let graph = top_down(
+        vec![node("start"), node("end")],
+        vec![directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)],
+    );
+    assert_wrapped_label_visible(&render(&graph));
 }
 
 // Covers: LR back-route labels wrap above the top lane instead of stacking
@@ -595,17 +426,10 @@ fn wraps_td_back_edge_labels_without_dropping_words() {
 // Owner: terminal graph LR placement.
 #[test]
 fn wraps_lr_back_edge_labels_without_dropping_words() {
-    let style = NodeStyle::default();
-    let graph = Graph::from_parts(
-        vec![
-            Node::rectangular("start", style),
-            Node::rectangular("end", style),
-        ],
-        vec![Edge::directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)],
-        Direction::LeftRight,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    assert_wrapped_label_visible(&art_text(&graph));
+    let graph = Graph {
+        nodes: vec![node("start"), node("end")],
+        edges: vec![directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)],
+        direction: Direction::LeftRight,
+    };
+    assert_wrapped_label_visible(&render(&graph));
 }

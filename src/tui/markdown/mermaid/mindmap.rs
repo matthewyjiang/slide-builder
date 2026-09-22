@@ -4,7 +4,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::terminal_graph::{wrap_label, GraphStyles, Oversize};
 
-use super::MermaidArt;
+use super::GraphArt;
 
 const TEXT_FLOOR: usize = 12;
 const INDENT: usize = 3;
@@ -65,7 +65,7 @@ pub(super) fn layout_mindmap(
     model: &MindmapModel,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     if max_width.is_some_and(|width| width < TEXT_FLOOR + INDENT) {
         return Err(Oversize::Width);
     }

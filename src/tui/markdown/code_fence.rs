@@ -1,5 +1,3 @@
-use crate::tui::syntax::BlockHighlighter;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct CodeFence {
     pub(super) marker: char,
@@ -8,60 +6,6 @@ pub(in crate::tui) struct CodeFence {
 
 pub(super) struct MermaidOpeningFence {
     pub(super) fence: CodeFence,
-}
-
-/// Open/closed fence tracker for streaming markdown. Carries the info-string
-/// language and the syntect lexical state so live preview can keep highlighting
-/// continuation lines (including multi-line strings/comments) correctly.
-#[derive(Clone, Default)]
-pub(in crate::tui) struct CodeFenceState {
-    pub(super) active: Option<CodeFence>,
-    /// Lowercased first info-string token from the opening fence, when present.
-    pub(super) language: Option<String>,
-    /// Highlighter advanced through committed body lines of the open fence.
-    /// Cloned into live-preview renders; taken/restored by full renders.
-    pub(super) highlighter: Option<BlockHighlighter>,
-}
-
-impl CodeFenceState {
-    #[cfg(test)]
-    pub(in crate::tui) fn is_open(&self) -> bool {
-        self.active.is_some()
-    }
-
-    pub(super) fn clear_open(&mut self) {
-        self.active = None;
-        self.language = None;
-        self.highlighter = None;
-    }
-
-    /// Record an opening fence. Render paths move the highlighter onto an
-    /// active block and restore it after painting a continuation chunk.
-    pub(super) fn open_fence(&mut self, fence: CodeFence, language: Option<String>) {
-        self.highlighter = language.as_deref().and_then(BlockHighlighter::for_language);
-        self.active = Some(fence);
-        self.language = language;
-    }
-}
-
-#[cfg(test)]
-pub(in crate::tui) fn update_code_block_state(text: &str, state: &mut CodeFenceState) {
-    for line in text.lines() {
-        if state
-            .active
-            .is_some_and(|fence| is_closing_fence(line, fence))
-        {
-            state.clear_open();
-        } else if state.active.is_none() {
-            if let Some(fence) = parse_opening_fence(line) {
-                state.open_fence(fence, opening_fence_info_token(line));
-            }
-        } else if let Some(highlighter) = state.highlighter.as_mut() {
-            // Advance lexical state for committed body lines so a later
-            // preview/render chunk resumes inside multi-line tokens.
-            highlighter.advance_line(line);
-        }
-    }
 }
 
 pub(in crate::tui) fn parse_opening_fence(line: &str) -> Option<CodeFence> {

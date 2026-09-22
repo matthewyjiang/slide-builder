@@ -6,7 +6,7 @@
 //! time. Run before and after changing layout budgets so width limits keep
 //! receipts:
 //!
-//!   cargo test -p rho-coding-agent --lib mermaid_width_receipts -- \
+//!   cargo test --locked -j 8 --lib mermaid_width_receipts -- \
 //!     --ignored --nocapture
 
 use std::time::Instant;

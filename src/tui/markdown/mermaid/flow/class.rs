@@ -1,10 +1,7 @@
 use crate::tui::{
-    markdown::mermaid::{
-        model::{ClassInfo, Graph},
-        MermaidArt,
-    },
+    markdown::mermaid::model::{ClassInfo, Graph},
     terminal_graph::{
-        self, Compartment, GraphStyles, NodeExtra, Oversize, TextAlignment, WRAP_WIDTH,
+        self, Compartment, GraphArt, GraphStyles, NodeExtra, Oversize, TextAlignment, WRAP_WIDTH,
     },
 };
 
@@ -13,7 +10,7 @@ pub(super) fn render_class(
     infos: &[ClassInfo],
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     let extras: Vec<NodeExtra> = graph
         .nodes
         .iter()
@@ -42,9 +39,5 @@ pub(super) fn render_class(
         .collect();
     let graph = graph.layout_graph();
     let layout = terminal_graph::layout_canvas(&graph, &extras, max_width, WRAP_WIDTH)?;
-    let art = terminal_graph::art_from_layout(&graph, layout, styles);
-    Ok(MermaidArt {
-        styled_lines: art.lines,
-        plain_lines: art.plain_lines,
-    })
+    Ok(terminal_graph::art_from_layout(&graph, layout, styles))
 }

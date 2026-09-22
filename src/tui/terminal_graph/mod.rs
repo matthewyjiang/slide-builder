@@ -3,8 +3,6 @@
 //! Mermaid adapts its parsed model to this renderer. Layout and painting do not
 //! depend on Mermaid parsing or fallback policy.
 
-use ratatui::style::Style;
-
 mod canvas;
 mod drawing;
 mod flow;
@@ -18,25 +16,11 @@ pub(in crate::tui) use flow::{
     art_from_layout, layout_canvas, layout_flow, over_wrap_rungs, NodeExtra, Placed,
 };
 #[cfg(test)]
-pub(in crate::tui) use painter::{GraphArt, MAX_LINES};
-pub(in crate::tui) use painter::{GraphStyles, Oversize, MAX_CANVAS_CELLS, PAD, WRAP_WIDTH};
+pub(in crate::tui) use painter::MAX_LINES;
+pub(in crate::tui) use painter::{GraphArt, GraphStyles, Oversize, PAD, WRAP_WIDTH};
 
-/// A node's independent border and text styles.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::tui) struct NodeStyle {
-    pub(in crate::tui) border: Style,
-    pub(in crate::tui) text: Style,
-}
-
-impl NodeStyle {
-    pub(in crate::tui) const fn new(border: Style, text: Style) -> Self {
-        Self { border, text }
-    }
-}
-
-/// Shapes supported by the neutral painter. The workflow API uses rectangles;
-/// Mermaid keeps round and diamond boxes, plus borderless text for compact
-/// markers such as state start/end stubs.
+/// Shapes supported by the neutral painter, including borderless text for
+/// compact markers such as state start/end stubs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) enum NodeShape {
     Rect,
@@ -54,18 +38,6 @@ pub(in crate::tui) enum Direction {
     BottomUp,
     LeftRight,
     RightLeft,
-}
-
-/// How nodes within a rank are ordered before placement.
-///
-/// Crossing minimization improves small diagrams but performs pairwise edge
-/// scans. Stable input order avoids that work for large, frequently redrawn
-/// graphs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::tui) enum RankOrdering {
-    #[cfg(test)]
-    PreserveInput,
-    MinimizeCrossings,
 }
 
 /// Endpoint decorations used by Mermaid and preserved by the shared router.
@@ -103,24 +75,11 @@ pub(in crate::tui) struct Compartment {
     pub(in crate::tui) alignment: TextAlignment,
 }
 
-/// An ordered graph node. The vector order is retained by layout and by the
-/// node rectangles in [`GraphArt`].
+/// A graph node, addressed by its index in the graph's node vector.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct Node {
     pub(in crate::tui) label: String,
     pub(in crate::tui) shape: NodeShape,
-    pub(in crate::tui) style: NodeStyle,
-}
-
-impl Node {
-    #[cfg(test)]
-    pub(in crate::tui) fn rectangular(label: impl Into<String>, style: NodeStyle) -> Self {
-        Self {
-            label: label.into(),
-            shape: NodeShape::Rect,
-            style,
-        }
-    }
 }
 
 /// An explicit directed edge from `from` to `to`.
@@ -134,84 +93,14 @@ pub(in crate::tui) struct Edge {
     pub(in crate::tui) line: EdgeLine,
 }
 
-impl Edge {
-    #[cfg(test)]
-    pub(in crate::tui) fn directed(from: usize, to: usize) -> Self {
-        Self {
-            from,
-            to,
-            label: None,
-            head_to: EdgeHead::Arrow,
-            head_from: EdgeHead::None,
-            line: EdgeLine::Solid,
-        }
-    }
-}
-
-/// Errors found before or during graph layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::tui) enum GraphError {
-    InvalidEdgeEndpoint,
-}
-
 /// A graph with stable node order and explicit directed edges.
+/// Adapters must resolve both edge endpoints to indices in `nodes` before
+/// constructing this model. Layout minimizes crossings within each rank.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct Graph {
     pub(in crate::tui) nodes: Vec<Node>,
     pub(in crate::tui) edges: Vec<Edge>,
     pub(in crate::tui) direction: Direction,
-    pub(in crate::tui) rank_ordering: RankOrdering,
-}
-
-impl Graph {
-    /// Build a top-down graph with explicit rank-ordering policy.
-    #[cfg(test)]
-    pub(in crate::tui) fn top_down(
-        nodes: Vec<Node>,
-        edges: Vec<Edge>,
-        rank_ordering: RankOrdering,
-    ) -> Result<Self, GraphError> {
-        Self::from_parts(nodes, edges, Direction::TopDown, rank_ordering)
-    }
-
-    /// Build a graph with explicit direction and rank-ordering policy.
-    pub(in crate::tui) fn from_parts(
-        nodes: Vec<Node>,
-        edges: Vec<Edge>,
-        direction: Direction,
-        rank_ordering: RankOrdering,
-    ) -> Result<Self, GraphError> {
-        if edges
-            .iter()
-            .any(|edge| edge.from >= nodes.len() || edge.to >= nodes.len())
-        {
-            return Err(GraphError::InvalidEdgeEndpoint);
-        }
-        Ok(Self {
-            nodes,
-            edges,
-            direction,
-            rank_ordering,
-        })
-    }
-
-    /// Render the complete graph without clipping it to a viewport width.
-    /// Callers can clip the returned lines and use `node_rects` to follow a
-    /// selected node while retaining the full canvas dimensions.
-    #[cfg(test)]
-    pub(in crate::tui) fn render(&self, edge_style: Style) -> Result<GraphArt, Oversize> {
-        let styles = GraphStyles::for_nodes(&self.nodes, edge_style);
-        layout_flow(self, &styles, /*max_width*/ None)
-    }
-}
-
-/// Geometry for one node in the rendered canvas.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::tui) struct NodeRect {
-    pub(in crate::tui) x: usize,
-    pub(in crate::tui) y: usize,
-    pub(in crate::tui) width: usize,
-    pub(in crate::tui) height: usize,
 }
 
 #[cfg(test)]

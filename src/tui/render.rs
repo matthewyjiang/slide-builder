@@ -1,16 +1,13 @@
-//! Unicode wrapping helpers ported from Rho. See markdown/PROVENANCE.md.
+//! Grapheme-safe text measurement and wrapping shared by conversation rendering.
 use ratatui::{style::Style, text::Span};
 use std::borrow::Cow;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub(super) fn display_width(text: &str) -> usize {
     text.split(char::is_control)
         .map(UnicodeWidthStr::width)
         .sum()
-}
-
-pub(super) fn char_display_width(ch: char) -> usize {
-    UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
 pub(super) fn truncate_to_display_width(text: &str, max_width: usize) -> Cow<'_, str> {
@@ -19,15 +16,15 @@ pub(super) fn truncate_to_display_width(text: &str, max_width: usize) -> Cow<'_,
     }
     let mut end = 0;
     let mut width = 0;
-    for (index, ch) in text.char_indices() {
-        let ch_width = char_display_width(ch);
-        if width + ch_width > max_width {
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let grapheme_width = display_width(grapheme);
+        if width + grapheme_width > max_width {
             break;
         }
-        width += ch_width;
-        end = index + ch.len_utf8();
+        width += grapheme_width;
+        end = index + grapheme.len();
     }
-    Cow::Owned(text[..end].to_string())
+    Cow::Borrowed(&text[..end])
 }
 
 /// Wrap at whitespace without allowing the first break to strand a semantic prefix.
@@ -55,18 +52,24 @@ pub(super) fn wrap_line_at_whitespace_ranges_with_protected_prefix(
         let mut overflow = false;
         let mut prefer_width_split = false;
 
-        for (relative_index, ch) in line[start..].char_indices() {
-            let ch_width = char_display_width(ch);
-            if count > 0 && count + ch_width > width {
+        for (relative_index, grapheme) in line[start..].grapheme_indices(true) {
+            let grapheme_width = display_width(grapheme);
+            let whitespace = grapheme.chars().all(char::is_whitespace);
+            let next = start + relative_index + grapheme.len();
+            if count == 0 && grapheme_width > width {
+                last_fitting_split = Some(next);
                 overflow = true;
-                prefer_width_split = ch.is_whitespace();
+                break;
+            }
+            if count > 0 && count + grapheme_width > width {
+                overflow = true;
+                prefer_width_split = whitespace;
                 break;
             }
 
-            count += ch_width;
-            let next = start + relative_index + ch.len_utf8();
+            count += grapheme_width;
             last_fitting_split = Some(next);
-            if ch.is_whitespace() {
+            if whitespace {
                 if saw_non_whitespace {
                     whitespace_break = Some(next);
                 }
@@ -111,11 +114,11 @@ pub(super) fn soft_wrap_visible_ranges<'a>(
         let mut start = range.start;
         if prev_had_non_whitespace {
             while start < end {
-                let ch = line[start..].chars().next().expect("start < end");
-                if !ch.is_whitespace() {
+                let grapheme = line[start..].graphemes(true).next().expect("start < end");
+                if !grapheme.chars().all(char::is_whitespace) {
                     break;
                 }
-                start += ch.len_utf8();
+                start += grapheme.len();
             }
             if start >= end {
                 return None;
@@ -128,7 +131,7 @@ pub(super) fn soft_wrap_visible_ranges<'a>(
 
 /// Hard-wrap `text` into display-width columns as byte ranges into `text`.
 ///
-/// Empty input yields one empty range. Wide characters are never split. A
+/// Empty input yields one empty range. Grapheme clusters are never split. A
 /// chunk that exactly fills `width` breaks after it.
 pub(super) fn hard_wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
     let width = width.max(1);
@@ -139,15 +142,15 @@ pub(super) fn hard_wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<
     let mut chunk_start = 0usize;
     let mut offset = 0usize;
     let mut current_width = 0usize;
-    for ch in text.chars() {
-        let ch_width = char_display_width(ch);
-        if current_width > 0 && current_width + ch_width > width {
+    for grapheme in text.graphemes(true) {
+        let grapheme_width = display_width(grapheme);
+        if current_width > 0 && current_width + grapheme_width > width {
             ranges.push(chunk_start..offset);
             chunk_start = offset;
             current_width = 0;
         }
-        offset += ch.len_utf8();
-        current_width += ch_width;
+        offset += grapheme.len();
+        current_width += grapheme_width;
         if current_width >= width {
             ranges.push(chunk_start..offset);
             chunk_start = offset;
@@ -231,3 +234,7 @@ pub(super) fn slice_spans_by_bytes(
     }
     out
 }
+
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod tests;

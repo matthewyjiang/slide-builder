@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use crate::tui::{
-    markdown::mermaid::{model::Graph as ModelGraph, MermaidArt},
+    markdown::mermaid::model::Graph as ModelGraph,
     terminal_graph::{
-        self, Canvas, Direction, Edge, GraphStyles, Node, NodeExtra, NodeShape, NodeStyle,
-        Oversize, RankOrdering,
+        self, Canvas, Direction, Edge, GraphArt, GraphStyles, Node, NodeExtra, NodeShape, Oversize,
     },
 };
 
@@ -19,7 +18,7 @@ pub(super) fn render_grouped(
     styles: &GraphStyles,
     max_width: Option<usize>,
     wrap_width: usize,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     let mut proxy: HashMap<usize, usize> = HashMap::new();
     for (group_index, group) in graph.groups.iter().enumerate() {
         if let Some(&node_index) = graph.index.get(&group.id) {
@@ -107,11 +106,7 @@ pub(super) fn render_grouped(
         Direction::RightLeft => canvas.flip_horizontal(),
         Direction::TopDown | Direction::LeftRight => {}
     }
-    let (styled_lines, plain_lines) = canvas.to_lines(styles);
-    Ok(MermaidArt {
-        styled_lines,
-        plain_lines,
-    })
+    Ok(canvas.to_lines(styles))
 }
 
 fn build_scope(
@@ -133,7 +128,7 @@ fn build_scope(
     items.extend(child_groups.iter().map(|&group| Item::Group(group)));
 
     if items.is_empty() {
-        return Ok(Canvas::new(1, 1));
+        return Canvas::new(1, 1);
     }
 
     let mut index_of = HashMap::new();
@@ -146,7 +141,6 @@ fn build_scope(
                 nodes.push(Node {
                     label: graph.nodes[*node].label.clone(),
                     shape: graph.nodes[*node].shape,
-                    style: graph.nodes[*node].style,
                 });
                 extras.push(NodeExtra::Plain);
             }
@@ -163,7 +157,6 @@ fn build_scope(
                 nodes.push(Node {
                     label: graph.groups[*group].label.clone(),
                     shape: NodeShape::Rect,
-                    style: NodeStyle::default(),
                 });
                 extras.push(NodeExtra::Frame(sub));
             }
@@ -187,9 +180,11 @@ fn build_scope(
             });
         }
     }
-    let synth =
-        terminal_graph::Graph::from_parts(nodes, edges, graph.dir, RankOrdering::MinimizeCrossings)
-            .expect("group graph endpoints come from the local item index");
-    let layout = terminal_graph::layout_canvas(&synth, &extras, max_width, wrap_width)?;
-    Ok(layout.canvas)
+    // Every endpoint came from `index_of`, which indexes this scope's nodes.
+    let synth = terminal_graph::Graph {
+        nodes,
+        edges,
+        direction: graph.dir,
+    };
+    terminal_graph::layout_canvas(&synth, &extras, max_width, wrap_width)
 }

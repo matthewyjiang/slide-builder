@@ -6,7 +6,9 @@ use ratatui::text::{Line, Span};
 use super::{
     app::{Message, Role},
     conversation_entry,
-    markdown::{self, CodeFenceState, RenderedMarkdown},
+    conversation_images::ConversationImages,
+    conversation_media::MediaLayout,
+    markdown::{self, RenderedMarkdown},
     syntax, theme,
 };
 
@@ -25,20 +27,18 @@ fn safe_message_text(text: &str) -> String {
     safe
 }
 
-fn visible_text(text: &str, complete: bool, inner_width: usize) -> &str {
+fn visible_text(text: &str, complete: bool) -> &str {
     if complete {
         text
     } else {
-        let bounds =
-            markdown::markdown_stream_bounds(text, inner_width, /*in_code_block*/ false);
-        &text[..bounds.preview_end.unwrap_or(bounds.drain.byte_index)]
+        &text[..markdown::markdown_preview_end(text)]
     }
 }
 
 pub(super) fn render(message: &Message, width: usize, inner_width: usize) -> RenderedMarkdown {
     let safe = safe_message_text(&message.text);
-    let text = visible_text(&safe, message.complete, inner_width);
-    let mut rendered = markdown::render_markdown(text, inner_width, &mut CodeFenceState::default());
+    let text = visible_text(&safe, message.complete);
+    let mut rendered = markdown::render_markdown(text, inner_width);
     if rendered.lines.is_empty() {
         rendered.lines.push(Line::default());
     }
@@ -95,7 +95,7 @@ impl StreamPrefix {
         rendered.image_sources.truncate(self.images);
         rendered.image_rows.truncate(self.images);
         let remaining = &self.safe[self.bytes..];
-        let visible = visible_text(remaining, message.complete, inner_width);
+        let visible = visible_text(remaining, message.complete);
         // Keep the last complete block as lookbehind too: a partial next line
         // may yet become a table separator or a pipe-containing table row.
         let complete_end = visible.rfind('\n').map_or(0, |index| index + 1);
@@ -135,7 +135,7 @@ fn empty_rendered() -> RenderedMarkdown {
 }
 
 fn append_fragment(rendered: &mut RenderedMarkdown, text: &str, width: usize, inner_width: usize) {
-    let mut fragment = markdown::render_markdown(text, inner_width, &mut CodeFenceState::default());
+    let mut fragment = markdown::render_markdown(text, inner_width);
     pad(&mut fragment, width, inner_width);
     let offset = rendered.lines.len();
     for block in &mut fragment.code_blocks {
@@ -155,6 +155,7 @@ struct CachedMessage {
     message: Message,
     rendered: Rc<RenderedMarkdown>,
     stream: Option<StreamPrefix>,
+    media: MediaLayout,
 }
 
 /// One entry per transcript slot, invalidated by content, width or syntax readiness.
@@ -189,6 +190,7 @@ impl MessageCache {
                 && message.text.starts_with(&entry.message.text)
                 && entry.stream.is_some()
             {
+                entry.media = MediaLayout::default();
                 let stream = entry.stream.as_mut().expect("stream checked above");
                 let appended = &message.text[entry.message.text.len()..];
                 stream.safe.push_str(&safe_message_text(appended));
@@ -219,8 +221,24 @@ impl MessageCache {
             message: message.clone(),
             rendered: Rc::clone(&rendered),
             stream,
+            media: MediaLayout::default(),
         });
         rendered
+    }
+
+    pub(super) fn message_with_images(
+        &mut self,
+        index: usize,
+        message: &Message,
+        images: &ConversationImages,
+        available: ratatui::layout::Size,
+    ) -> Rc<RenderedMarkdown> {
+        let original = self.message(index, message);
+        self.entries[index]
+            .as_mut()
+            .expect("message cached above")
+            .media
+            .render(original, images, available, usize::from(self.width >= 3))
     }
 }
 

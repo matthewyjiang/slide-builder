@@ -8,8 +8,8 @@ use super::{
     canvas::{Canvas, Cls, D, L, R, U},
     flow::Placed,
     painter::{LABEL_BREAK_CHARS, MAX_LABEL, PAD},
-    Compartment, Direction, Edge, EdgeHead as Head, EdgeLine as LineKind, Graph, NodeRect,
-    NodeShape as Shape, TextAlignment,
+    Compartment, Edge, EdgeHead as Head, EdgeLine as LineKind, Graph, NodeShape as Shape,
+    TextAlignment,
 };
 pub(in crate::tui) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<String> {
     let width = width.max(1);
@@ -100,18 +100,12 @@ pub(in crate::tui) fn fit_label(label: &str, inner: usize) -> String {
     out
 }
 
-pub(in crate::tui) fn draw_box(
-    canvas: &mut Canvas,
-    p: &Placed,
-    lines: &[String],
-    shape: Shape,
-    node_index: Option<usize>,
-) {
+pub(in crate::tui) fn draw_box(canvas: &mut Canvas, p: &Placed, lines: &[String], shape: Shape) {
     let (x, y, w, h) = (p.x, p.y, p.w, p.h);
     let right = x + w - 1;
     let bottom = y + h - 1;
-    let border = node_index.map(Cls::NodeBorder).unwrap_or(Cls::Border);
-    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
+    let border = Cls::Border;
+    let text_class = Cls::Text;
 
     let (tl, tr, bl, br) = match shape {
         Shape::Text => {
@@ -584,12 +578,11 @@ pub(in crate::tui) fn draw_compartment_box(
     canvas: &mut Canvas,
     placed: &Placed,
     compartments: &[Compartment],
-    node_index: Option<usize>,
 ) {
-    draw_box(canvas, placed, &[], Shape::Rect, node_index);
+    draw_box(canvas, placed, &[], Shape::Rect);
     let inner = placed.w.saturating_sub(2 * PAD + 2).max(1);
-    let border = node_index.map(Cls::NodeBorder).unwrap_or(Cls::Border);
-    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
+    let border = Cls::Border;
+    let text_class = Cls::Text;
     let mut row = placed.y + 1;
     let mut first = true;
     for compartment in compartments {
@@ -619,43 +612,17 @@ pub(in crate::tui) fn draw_compartment_box(
     }
 }
 
-pub(in crate::tui) fn draw_frame(
-    canvas: &mut Canvas,
-    placed: &Placed,
-    title: &str,
-    sub: &Canvas,
-    node_index: Option<usize>,
-) {
-    draw_box(canvas, placed, &[], Shape::Rect, node_index);
-    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
+pub(in crate::tui) fn draw_frame(canvas: &mut Canvas, placed: &Placed, title: &str, sub: &Canvas) {
+    draw_box(canvas, placed, &[], Shape::Rect);
     let title = fit_label(title, placed.w.saturating_sub(4));
     draw_seq_text(
         canvas,
         &format!(" {title} "),
         placed.x + 1,
         placed.y,
-        text_class,
+        Cls::Text,
     );
     let ox = placed.x + 1 + (placed.w - 2 - sub.w) / 2;
     let oy = placed.y + 1 + (placed.h - 2 - sub.h) / 2;
     canvas.blit(sub, ox, oy);
-}
-
-pub(in crate::tui) fn art_node_rect(
-    placed: Placed,
-    canvas_w: usize,
-    canvas_h: usize,
-    direction: Direction,
-) -> NodeRect {
-    let (x, y) = match direction {
-        Direction::BottomUp => (placed.x, canvas_h.saturating_sub(placed.y + placed.h)),
-        Direction::RightLeft => (canvas_w.saturating_sub(placed.x + placed.w), placed.y),
-        Direction::TopDown | Direction::LeftRight => (placed.x, placed.y),
-    };
-    NodeRect {
-        x,
-        y,
-        width: placed.w,
-        height: placed.h,
-    }
 }

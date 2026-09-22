@@ -13,10 +13,8 @@ mod stream;
 mod table;
 
 use code_fence::mermaid_opening_fence;
-#[cfg(test)]
-use code_fence::update_code_block_state;
 pub(in crate::tui) use code_fence::{
-    is_closing_fence, opening_fence_info_token, parse_opening_fence, CodeFence, CodeFenceState,
+    is_closing_fence, opening_fence_info_token, parse_opening_fence, CodeFence,
 };
 
 use super::markdown_image::standalone_markdown_image;
@@ -24,10 +22,10 @@ use super::syntax::BlockHighlighter;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
 use panel::ClosedPanel;
 
+use heading::parse_atx_heading;
 pub(in crate::tui) use heading::HeadingLevel;
-use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
 pub(super) use stream::incremental_markdown_tail_start;
-pub(super) use stream::markdown_stream_bounds;
+pub(super) use stream::markdown_preview_end;
 #[cfg(test)]
 use table::streaming_table;
 
@@ -38,9 +36,8 @@ mod table_tests;
 use super::{
     markdown_theme::Theme,
     render::{
-        char_display_width, display_width, hard_wrap_styled_spans, slice_spans_by_bytes,
-        soft_wrap_visible_ranges, truncate_to_display_width,
-        wrap_line_at_whitespace_ranges_with_protected_prefix,
+        display_width, hard_wrap_styled_spans, slice_spans_by_bytes, soft_wrap_visible_ranges,
+        truncate_to_display_width, wrap_line_at_whitespace_ranges_with_protected_prefix,
     },
 };
 
@@ -76,32 +73,17 @@ struct ActiveCopyCapture<'a> {
 }
 
 #[cfg(test)]
-pub(super) fn markdown_lines(
-    text: &str,
-    width: usize,
-    state: &mut CodeFenceState,
-) -> Vec<Line<'static>> {
-    render_markdown(text, width, state).lines
+pub(super) fn markdown_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    render_markdown(text, width).lines
 }
 
-pub(super) fn render_markdown(
-    text: &str,
-    width: usize,
-    state: &mut CodeFenceState,
-) -> RenderedMarkdown {
+pub(super) fn render_markdown(text: &str, width: usize) -> RenderedMarkdown {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut code_blocks = Vec::new();
     let mut image_sources = Vec::new();
     let mut image_rows = Vec::new();
-    // Continue an open fence from a prior chunk (live preview). No header row:
-    // that belongs to the opening line already committed above. Reuse the
-    // stored highlighter so multi-line tokens keep their lexical state.
-    let mut active = state.active.map(|fence| ActiveBlock {
-        fence,
-        highlighter: state.highlighter.take(),
-        copy: None,
-    });
+    let mut active: Option<ActiveBlock<'_>> = None;
 
     let raw_lines = text.lines().collect::<Vec<_>>();
     let mut line_index = 0;
@@ -131,9 +113,6 @@ pub(super) fn render_markdown(
                     mermaid::render_open_prefix(&complete_body, &copy_source, width)
                 {
                     push_closed_panel(&mut lines, &mut code_blocks, width, panel);
-                    // Source fence is still open; later chunks re-render from the
-                    // opener rather than continuing this panel as highlighted code.
-                    state.open_fence(opening.fence, opening_fence_info_token(raw_line));
                     line_index = raw_lines.len();
                     continue;
                 }
@@ -182,10 +161,7 @@ pub(super) fn render_markdown(
                         copy_columns: capture.copy_columns,
                         text: capture.content.join("\n"),
                     });
-                } else {
-                    active = None;
                 }
-                state.clear_open();
             } else {
                 let fence = opening_fence.expect("opening branch");
                 let language = opening_fence_info_token(raw_line);
@@ -197,10 +173,7 @@ pub(super) fn render_markdown(
                     copy_columns,
                     content: Vec::new(),
                 });
-                // Seed language/active; take the highlighter onto the render-local
-                // block so body lines advance one shared ParseState.
-                state.open_fence(fence, language);
-                let highlighter = state.highlighter.take();
+                let highlighter = language.as_deref().and_then(BlockHighlighter::for_language);
                 active = Some(ActiveBlock {
                     fence,
                     highlighter,
@@ -272,26 +245,16 @@ pub(super) fn render_markdown(
         line_index += 1;
     }
 
-    // Persist highlighter lexical state when the fence stays open across chunks.
-    match active {
-        Some(ActiveBlock {
-            highlighter,
-            copy: Some(capture),
-            ..
-        }) => {
-            state.highlighter = highlighter;
-            code_blocks.push(MarkdownCodeBlock {
-                top_line: capture.top_line,
-                copy_columns: capture.copy_columns,
-                text: capture.content.join("\n"),
-            });
-        }
-        Some(ActiveBlock { highlighter, .. }) => {
-            state.highlighter = highlighter;
-        }
-        None => {
-            // Closed path already cleared state; leave highlighter unset.
-        }
+    if let Some(ActiveBlock {
+        copy: Some(capture),
+        ..
+    }) = active
+    {
+        code_blocks.push(MarkdownCodeBlock {
+            top_line: capture.top_line,
+            copy_columns: capture.copy_columns,
+            text: capture.content.join("\n"),
+        });
     }
 
     if lines.is_empty() && text.is_empty() {
@@ -387,44 +350,27 @@ fn push_copyable_code_block(
 /// COPY right-aligned at the geometry [`code_block_copy_columns`] promises to
 /// hit-testing. Always one row, including panes too narrow for the button.
 fn code_block_header(width: usize, label: Option<&str>) -> Line<'static> {
-    copyable_header_line(label.unwrap_or_default(), width, Theme::dim(), Some(false)).0
-}
-
-/// Label on the left, optional COPY on the right. `copy_hovered` is `None`
-/// when the button is hidden, `Some(hovered)` when it is visible.
-pub(in crate::tui) fn copyable_header_line(
-    label: &str,
-    width: usize,
-    label_style: Style,
-    copy_hovered: Option<bool>,
-) -> (Line<'static>, Option<std::ops::Range<usize>>) {
     let width = width.max(1);
-    let copy_columns = copy_hovered.and_then(|_| code_block_copy_columns(width));
-    let copy_label = copy_columns
-        .as_ref()
-        .and_then(|_| code_block_copy_label(width));
+    let copy_columns = code_block_copy_columns(width);
     // Keep at least one blank column between the label and COPY.
     let label_budget = copy_columns
         .as_ref()
         .map_or(width, |columns| columns.start.saturating_sub(1));
-    let label = truncate_to_display_width(label, label_budget);
+    let label = truncate_to_display_width(label.unwrap_or_default(), label_budget);
     let mut spans = Vec::new();
     if let Some(columns) = &copy_columns {
         let filler = columns.start.saturating_sub(display_width(&label));
         spans.push(Span::styled(
             format!("{label}{}", " ".repeat(filler)),
-            label_style,
+            Theme::dim(),
         ));
     } else {
-        spans.push(Span::styled(label.into_owned(), label_style));
+        spans.push(Span::styled(label.into_owned(), Theme::dim()));
     }
-    if let Some(copy_label) = copy_label {
-        spans.push(Span::styled(
-            copy_label,
-            Theme::markdown_code_copy_button(/*hovered*/ copy_hovered.unwrap_or(false)),
-        ));
+    if let Some(copy_label) = code_block_copy_label(width) {
+        spans.push(Span::styled(copy_label, Theme::dim()));
     }
-    (Line::from(spans), copy_columns)
+    Line::from(spans)
 }
 
 fn code_block_copy_label(width: usize) -> Option<&'static str> {

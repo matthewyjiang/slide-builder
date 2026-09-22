@@ -55,14 +55,6 @@ impl Theme {
         }
     }
 
-    pub(super) fn markdown_code_copy_button(hovered: bool) -> Style {
-        if hovered {
-            theme::hover_block()
-        } else {
-            Self::dim()
-        }
-    }
-
     pub(super) fn syntax(role: SyntaxRole) -> Style {
         let color = match role {
             SyntaxRole::Function => Color::Blue,

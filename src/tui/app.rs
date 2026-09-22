@@ -279,6 +279,8 @@ pub struct App {
     #[doc(hidden)]
     pub markdown_cache: std::cell::RefCell<super::conversation_markdown::MessageCache>,
     #[doc(hidden)]
+    pub painted_conversation: std::cell::RefCell<Option<super::chat::PaintedConversation>>,
+    #[doc(hidden)]
     pub conversation_images:
         std::rc::Rc<std::cell::RefCell<super::conversation_images::ConversationImages>>,
     pub config: Config,
@@ -309,6 +311,7 @@ impl Default for App {
             conversation_scroll_offset: 0,
             mouse: super::mouse::MouseState::default(),
             markdown_cache: Default::default(),
+            painted_conversation: Default::default(),
             conversation_images: Default::default(),
             config: Config::default(),
             available_models: vec![],

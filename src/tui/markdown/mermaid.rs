@@ -7,7 +7,7 @@ use super::super::{
     render::{display_width, truncate_to_display_width},
 };
 use super::panel::ClosedPanel;
-use crate::tui::terminal_graph::{GraphStyles, Oversize};
+use crate::tui::terminal_graph::{GraphArt, GraphStyles, Oversize};
 
 mod flow;
 mod gantt;
@@ -17,11 +17,6 @@ mod model;
 mod policy;
 mod security;
 mod sequence;
-
-pub(super) struct MermaidArt {
-    pub(super) styled_lines: Vec<Line<'static>>,
-    pub(super) plain_lines: Vec<String>,
-}
 
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_SOURCE_LINES: usize = 2_048;
@@ -200,7 +195,6 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         node_text: style,
         edge: style,
         edge_label: style,
-        node_styles: Vec::new(),
     };
     let result = layout_model(&model, &styles, Some(inner_width));
     let art = match result {
@@ -208,7 +202,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         Err(Oversize::Width) => {
             return render_clipped(&model, &styles, inner_width);
         }
-        Err(Oversize::Cells) => {
+        Err(Oversize::Cells { .. }) => {
             return MermaidRender::Fallback(MermaidFallback::OutputCells);
         }
     };
@@ -240,7 +234,9 @@ fn render_clipped(
         // Unbounded layout cannot fail on width; anything else keeps the
         // pre-clip fallback taxonomy.
         Err(Oversize::Width) => return MermaidRender::Fallback(MermaidFallback::TooWide),
-        Err(Oversize::Cells) => return MermaidRender::Fallback(MermaidFallback::OutputCells),
+        Err(Oversize::Cells { .. }) => {
+            return MermaidRender::Fallback(MermaidFallback::OutputCells)
+        }
     };
     let full_width = art
         .plain_lines
@@ -303,7 +299,7 @@ fn layout_model(
     model: &model::TerminalModel,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     match model {
         model::TerminalModel::Sequence(sequence) => {
             sequence::layout_sequence(sequence, styles, max_width)
@@ -320,12 +316,12 @@ fn layout_model(
     }
 }
 
-pub(super) fn art_from_plain(plain_lines: Vec<String>, styles: &GraphStyles) -> MermaidArt {
+pub(super) fn art_from_plain(plain_lines: Vec<String>, styles: &GraphStyles) -> GraphArt {
     let styled_lines = plain_lines
         .iter()
         .map(|line| Line::from(Span::styled(line.clone(), styles.node_text)))
         .collect();
-    MermaidArt {
+    GraphArt {
         styled_lines,
         plain_lines,
     }

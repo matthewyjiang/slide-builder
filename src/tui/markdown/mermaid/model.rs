@@ -5,9 +5,7 @@ use mermaid_rs_renderer::{
     NodeShape as MermaidNodeShape,
 };
 
-use crate::tui::terminal_graph::{
-    Direction, Edge, EdgeHead, EdgeLine, Node, NodeShape, NodeStyle, RankOrdering,
-};
+use crate::tui::terminal_graph::{Direction, Edge, EdgeHead, EdgeLine, Node, NodeShape};
 
 use super::{gantt, gitgraph, mindmap, sequence::Sequence};
 
@@ -37,13 +35,13 @@ impl Graph {
     }
 
     pub(super) fn layout_graph(&self) -> crate::tui::terminal_graph::Graph {
-        crate::tui::terminal_graph::Graph::from_parts(
-            self.nodes.clone(),
-            self.edges.clone(),
-            self.dir,
-            RankOrdering::MinimizeCrossings,
-        )
-        .expect("Mermaid model validates edge endpoints before layout")
+        // `flow_graph_with_ids` resolves both endpoints through the index of
+        // this node vector, omitting edges with missing nodes.
+        crate::tui::terminal_graph::Graph {
+            nodes: self.nodes.clone(),
+            edges: self.edges.clone(),
+            direction: self.dir,
+        }
     }
 }
 
@@ -185,11 +183,7 @@ fn node_from_ir(ir: &mermaid_rs_renderer::Graph, id: &str) -> Node {
             label.push(')');
         }
     }
-    Node {
-        label,
-        shape,
-        style: NodeStyle::default(),
-    }
+    Node { label, shape }
 }
 
 /// Start/end `[*]` in the IR is an empty circle / double-circle. Fork/join
@@ -385,3 +379,7 @@ fn merge_labels(left: Option<String>, right: Option<String>) -> Option<String> {
         (Some(left), Some(right)) => Some(format!("{left} / {right}")),
     }
 }
+
+#[cfg(test)]
+#[path = "model_tests.rs"]
+mod tests;

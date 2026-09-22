@@ -6,17 +6,17 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     canvas::{Canvas, STY_DOT, STY_SOLID, STY_THICK},
     drawing::{
-        art_node_rect, compute_ranks, draw_box, draw_compartment_box, draw_frame, route_back,
-        route_back_lr, route_forward, route_forward_lr, route_self, route_skip, route_skip_lr,
-        wrap_label, SkipPath,
+        compute_ranks, draw_box, draw_compartment_box, draw_frame, route_back, route_back_lr,
+        route_forward, route_forward_lr, route_self, route_skip, route_skip_lr, wrap_label,
+        SkipPath,
     },
     ordering::order_ranks,
     painter::{
-        GraphArt, GraphStyles, Oversize, EDGE_LABEL_MAX_LINES, MAX_CANVAS_CELLS, MAX_LABEL,
-        MAX_LINES, PAD, WRAP_WIDTH,
+        GraphArt, GraphStyles, Oversize, EDGE_LABEL_MAX_LINES, MAX_LABEL, MAX_LINES, PAD,
+        WRAP_WIDTH,
     },
     placement::{edge_route, place_lr, place_td, EdgeRoute},
-    Compartment, Direction, EdgeLine, Graph, NodeShape, RankOrdering,
+    Compartment, Direction, EdgeLine, Graph, NodeShape,
 };
 
 const MIN_FLOW_WRAP_WIDTH: usize = 12;
@@ -69,13 +69,6 @@ pub(super) struct NodeSizes {
     pub(super) self_label_w: Vec<usize>,
 }
 
-/// Intermediate layout output. The canvas is full-size and the placement
-/// vector stays in stable input-node order for clipping and follow behavior.
-pub(in crate::tui) struct LayoutCanvas {
-    pub(in crate::tui) canvas: Canvas,
-    pub(in crate::tui) placed: Vec<Placed>,
-}
-
 /// Walk wrap-width rungs from wide to tight, skipping any width that cannot
 /// hold node labels, until a layout succeeds.
 pub(in crate::tui) fn over_wrap_rungs<T>(
@@ -89,7 +82,7 @@ pub(in crate::tui) fn over_wrap_rungs<T>(
         match try_rung(wrap_width) {
             Ok(value) => return Ok(value),
             Err(Oversize::Width) => continue,
-            Err(Oversize::Cells) => return Err(Oversize::Cells),
+            Err(error @ Oversize::Cells { .. }) => return Err(error),
         }
     }
     Err(Oversize::Width)
@@ -138,18 +131,15 @@ pub(in crate::tui) fn layout_canvas(
     extras: &[NodeExtra],
     max_width: Option<usize>,
     wrap_width: usize,
-) -> Result<LayoutCanvas, Oversize> {
+) -> Result<Canvas, Oversize> {
     let n = graph.nodes.len();
     assert_eq!(
         extras.len(),
         n,
-        "node extras must match the validated graph node count"
+        "node extras must match the graph node count"
     );
     if n == 0 {
-        return Ok(LayoutCanvas {
-            canvas: Canvas::new(0, 0),
-            placed: Vec::new(),
-        });
+        return Canvas::new(0, 0);
     }
 
     let ranks = compute_ranks(graph);
@@ -159,11 +149,7 @@ pub(in crate::tui) fn layout_canvas(
     for (idx, &r) in ranks.iter().enumerate() {
         by_rank[r].push(idx);
     }
-    match graph.rank_ordering {
-        #[cfg(test)]
-        RankOrdering::PreserveInput => {}
-        RankOrdering::MinimizeCrossings => order_ranks(&mut by_rank, &graph.edges, &ranks),
-    }
+    order_ranks(&mut by_rank, &graph.edges, &ranks);
 
     let wrapped: Vec<Vec<String>> = graph
         .nodes
@@ -303,36 +289,20 @@ pub(in crate::tui) fn layout_canvas(
     if max_width.is_some_and(|width| canvas_w > width) {
         return Err(Oversize::Width);
     }
-    if canvas_w.saturating_mul(canvas_h) > MAX_CANVAS_CELLS {
-        return Err(Oversize::Cells);
-    }
-
-    let mut canvas = Canvas::new(canvas_w, canvas_h);
+    let mut canvas = Canvas::new(canvas_w, canvas_h)?;
     for idx in 0..n {
         match &extras[idx] {
             NodeExtra::Frame(sub) => {
-                draw_frame(
-                    &mut canvas,
-                    &placed[idx],
-                    &graph.nodes[idx].label,
-                    sub,
-                    /*node_index*/ Some(idx),
-                );
+                draw_frame(&mut canvas, &placed[idx], &graph.nodes[idx].label, sub);
             }
             NodeExtra::Compartments(sections) => {
-                draw_compartment_box(
-                    &mut canvas,
-                    &placed[idx],
-                    sections,
-                    /*node_index*/ Some(idx),
-                );
+                draw_compartment_box(&mut canvas, &placed[idx], sections);
             }
             NodeExtra::Plain => draw_box(
                 &mut canvas,
                 &placed[idx],
                 &wrapped[idx],
                 graph.nodes[idx].shape,
-                /*node_index*/ Some(idx),
             ),
         }
     }
@@ -395,32 +365,18 @@ pub(in crate::tui) fn layout_canvas(
     }
 
     canvas.finalize_mask();
-    Ok(LayoutCanvas { canvas, placed })
+    Ok(canvas)
 }
 
 pub(in crate::tui) fn art_from_layout(
     graph: &Graph,
-    mut layout: LayoutCanvas,
+    mut canvas: Canvas,
     styles: &GraphStyles,
 ) -> GraphArt {
-    let mut rects = layout
-        .placed
-        .iter()
-        .map(|placed| art_node_rect(*placed, layout.canvas.w, layout.canvas.h, graph.direction))
-        .collect::<Vec<_>>();
     match graph.direction {
-        Direction::BottomUp => layout.canvas.flip_vertical(),
-        Direction::RightLeft => layout.canvas.flip_horizontal(),
+        Direction::BottomUp => canvas.flip_vertical(),
+        Direction::RightLeft => canvas.flip_horizontal(),
         Direction::TopDown | Direction::LeftRight => {}
     }
-    // The conversion above already accounts for direction; retain input order.
-    rects.shrink_to_fit();
-    let (lines, plain_lines) = layout.canvas.to_lines(styles);
-    GraphArt {
-        width: layout.canvas.w,
-        height: layout.canvas.h,
-        lines,
-        plain_lines,
-        node_rects: rects,
-    }
+    canvas.to_lines(styles)
 }

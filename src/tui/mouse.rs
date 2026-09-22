@@ -68,12 +68,14 @@ pub(crate) fn handle(app: &mut App, event: MouseEvent) -> Vec<AppAction> {
         y: event.row,
     };
     let regions = layout::regions(app.mouse.viewport, app);
-    let chat_body = Rect::new(
-        regions.chat.x,
-        regions.chat.y.saturating_add(1),
-        regions.chat.width,
-        regions.chat.height.saturating_sub(1),
-    );
+    let chat_body = chat::painted_area(app).unwrap_or_else(|| {
+        Rect::new(
+            regions.chat.x,
+            regions.chat.y.saturating_add(1),
+            regions.chat.width,
+            regions.chat.height.saturating_sub(1),
+        )
+    });
 
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
@@ -110,7 +112,7 @@ pub(crate) fn handle(app: &mut App, event: MouseEvent) -> Vec<AppAction> {
             app.mouse.selection = Some(selection);
             if !selection.dragged {
                 if contains(chat_body, point) {
-                    if let Some(text) = chat::code_at(app, chat_body, point) {
+                    if let Some(text) = chat::code_at(app, point) {
                         app.mouse.selection = None;
                         app.mouse.toast = Some(CopyToast {
                             message: "Copied code".into(),
@@ -136,12 +138,12 @@ pub(crate) fn handle(app: &mut App, event: MouseEvent) -> Vec<AppAction> {
         }
         MouseEventKind::ScrollUp if contains(regions.chat, point) => {
             app.mouse.selection = None;
-            chat::scroll_up(app, chat_body, WHEEL_SCROLL_LINES);
+            chat::scroll_up(app, WHEEL_SCROLL_LINES);
             vec![]
         }
         MouseEventKind::ScrollDown if contains(regions.chat, point) => {
             app.mouse.selection = None;
-            chat::scroll_down(app, chat_body, WHEEL_SCROLL_LINES);
+            chat::scroll_down(app, WHEEL_SCROLL_LINES);
             vec![]
         }
         MouseEventKind::Moved => {
@@ -192,15 +194,11 @@ pub(crate) fn render_feedback(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn render_selection(frame: &mut Frame<'_>, app: &App, selection: TextSelection) {
-    let regions = layout::regions(frame.area(), app);
-    let body = Rect::new(
-        regions.chat.x,
-        regions.chat.y.saturating_add(1),
-        regions.chat.width,
-        regions.chat.height.saturating_sub(1),
-    );
+    let Some(body) = chat::painted_area(app) else {
+        return;
+    };
     let (start, end) = ordered(selection.anchor, selection.cursor);
-    let rows = chat::visible_text_rows(regions.chat, app);
+    let rows = chat::painted_text_rows(app);
     for y in start.y..=end.y {
         if y < body.y || y >= body.bottom() {
             continue;
@@ -225,15 +223,16 @@ fn render_selection(frame: &mut Frame<'_>, app: &App, selection: TextSelection) 
 }
 
 fn selected_text(app: &App, body: Rect, selection: TextSelection) -> String {
-    let regions = layout::regions(app.mouse.viewport, app);
-    let rows = chat::visible_text_rows(regions.chat, app);
+    let rows = chat::painted_text_rows(app);
     let (start, end) = ordered(selection.anchor, selection.cursor);
     let mut selected = Vec::new();
     for y in start.y..=end.y {
         if y < body.y || y >= body.bottom() {
             continue;
         }
-        let row = &rows[(y - body.y) as usize];
+        let Some(row) = rows.get((y - body.y) as usize) else {
+            continue;
+        };
         let from = if y == start.y {
             start.x.saturating_sub(body.x) as usize
         } else {
@@ -291,8 +290,12 @@ fn contains(area: Rect, point: ScreenPoint) -> bool {
 
 fn clamp_to(area: Rect, point: ScreenPoint) -> ScreenPoint {
     ScreenPoint {
-        x: point.x.clamp(area.x, area.right().saturating_sub(1)),
-        y: point.y.clamp(area.y, area.bottom().saturating_sub(1)),
+        x: point
+            .x
+            .clamp(area.x, area.right().saturating_sub(1).max(area.x)),
+        y: point
+            .y
+            .clamp(area.y, area.bottom().saturating_sub(1).max(area.y)),
     }
 }
 

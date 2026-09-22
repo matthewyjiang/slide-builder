@@ -1,8 +1,5 @@
 use super::*;
-use crate::tui::{
-    markdown::{markdown_lines, CodeFenceState},
-    markdown_theme::Theme,
-};
+use crate::tui::{markdown::markdown_lines, markdown_theme::Theme};
 use pretty_assertions::assert_eq;
 use ratatui::text::Line;
 
@@ -66,35 +63,9 @@ fn rejects_lines_that_are_not_atx_headings() {
 }
 
 #[test]
-fn classifies_streaming_heading_prefixes_without_committing_early() {
-    for source in ["", " ", "   ", "#", "   ###"] {
-        assert_eq!(
-            heading_stream_state(source),
-            HeadingStreamState::Potential,
-            "source: {source:?}"
-        );
-    }
-    for source in ["# ", "## heading", "   ####\theading"] {
-        assert_eq!(
-            heading_stream_state(source),
-            HeadingStreamState::Heading,
-            "source: {source:?}"
-        );
-    }
-    for source in ["#hashtag", "####### ", "    # heading", "ordinary"] {
-        assert_eq!(
-            heading_stream_state(source),
-            HeadingStreamState::NotHeading,
-            "source: {source:?}"
-        );
-    }
-}
-
-#[test]
 fn preserves_heading_style_across_unicode_wrapping() {
     let content = "你🙂".repeat(20);
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines(&format!("### {content}"), 7, &mut fence_state);
+    let lines = markdown_lines(&format!("### {content}"), 7);
 
     assert_eq!(lines.iter().map(line_text).collect::<String>(), content);
     assert!(lines
@@ -105,11 +76,9 @@ fn preserves_heading_style_across_unicode_wrapping() {
 
 #[test]
 fn leaves_heading_like_text_literal_when_invalid_or_inside_code() {
-    let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
         "#hashtag\n####### nope\n    # indented\n```md\n# literal\n```",
         80,
-        &mut fence_state,
     );
     let text = lines.iter().map(line_text).collect::<Vec<_>>();
 

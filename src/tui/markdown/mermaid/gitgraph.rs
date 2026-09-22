@@ -6,10 +6,10 @@ use mermaid_rs_renderer::Direction as MermaidDirection;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::terminal_graph::{
-    draw_seq_text, fit_label, Canvas, CellClass as Cls, GraphStyles, Oversize, MAX_CANVAS_CELLS,
+    draw_seq_text, fit_label, Canvas, CellClass as Cls, GraphStyles, Oversize,
 };
 
-use super::MermaidArt;
+use super::GraphArt;
 
 const TEXT_FLOOR: usize = 12;
 
@@ -142,7 +142,7 @@ pub(super) fn layout_gitgraph(
     model: &GitGraphModel,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     let lane_count = model.lane_count.max(1);
     let text_x = 2 * lane_count;
     let longest = model
@@ -192,11 +192,7 @@ pub(super) fn layout_gitgraph(
         y += 1;
     }
     let canvas_h = y.max(1);
-    if canvas_w.saturating_mul(canvas_h) > MAX_CANVAS_CELLS {
-        return Err(Oversize::Cells);
-    }
-
-    let mut canvas = Canvas::new(canvas_w, canvas_h);
+    let mut canvas = Canvas::new(canvas_w, canvas_h)?;
     let mut lane_min = vec![usize::MAX; lane_count];
     let mut lane_max = vec![0usize; lane_count];
     let touch = |lane_min: &mut [usize], lane_max: &mut [usize], lane: usize, row_y: usize| {
@@ -234,11 +230,7 @@ pub(super) fn layout_gitgraph(
     }
 
     canvas.finalize_mask();
-    let (styled_lines, plain_lines) = canvas.to_lines(styles);
-    Ok(MermaidArt {
-        styled_lines,
-        plain_lines,
-    })
+    Ok(canvas.to_lines(styles))
 }
 
 fn connector_y(row: &GitRow, commit_y: usize) -> Option<(usize, usize)> {

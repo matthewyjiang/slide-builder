@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 
 use super::super::{markdown_theme::Theme, render::display_width};
@@ -216,18 +214,6 @@ fn visible_rows(math: &Math) -> Vec<String> {
     rows
 }
 
-const INLINE_CACHE_MAX_ENTRIES: usize = 256;
-
-thread_local! {
-    /// Memoized inline renders. The streaming wrap scan re-renders every closed
-    /// `$...$` span in a line once per candidate cut, so an uncached txm pass
-    /// there is quadratic in line length and stalls the TUI on long math
-    /// paragraphs. Keys are capped at `MAX_INLINE_SOURCE_BYTES`, so the cache
-    /// stays small; on overflow it is cleared rather than evicted piecewise.
-    static INLINE_MATH_CACHE: RefCell<HashMap<String, Option<String>>> =
-        RefCell::new(HashMap::new());
-}
-
 /// Single-row rendering of an inline `$...$` formula.
 ///
 /// Returns `None` when the formula needs more than one terminal row (fractions,
@@ -237,21 +223,7 @@ pub(super) fn render_inline_math(source: &str) -> Option<String> {
     if source.trim().is_empty() || source.len() > MAX_INLINE_SOURCE_BYTES || source.contains('\n') {
         return None;
     }
-    INLINE_MATH_CACHE.with(|cache| {
-        if let Some(rendered) = cache.borrow().get(source) {
-            return rendered.clone();
-        }
-        // Panics are cached as `None` too, so a pathological formula fails once
-        // instead of unwinding on every candidate cut.
-        let rendered = std::panic::catch_unwind(AssertUnwindSafe(|| render_inline_inner(source)))
-            .unwrap_or_default();
-        let mut cache = cache.borrow_mut();
-        if cache.len() >= INLINE_CACHE_MAX_ENTRIES {
-            cache.clear();
-        }
-        cache.insert(source.to_owned(), rendered.clone());
-        rendered
-    })
+    std::panic::catch_unwind(AssertUnwindSafe(|| render_inline_inner(source))).unwrap_or_default()
 }
 
 fn render_inline_inner(source: &str) -> Option<String> {

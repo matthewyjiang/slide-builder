@@ -69,6 +69,30 @@ fn wrapping_preserves_whitespace_and_unicode_graphemes() {
 }
 
 #[test]
+fn narrow_assistant_frames_preserve_combining_marks_and_joined_emoji() {
+    use crate::tui::{App, TranscriptItem};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    for (width, source, row, expected) in
+        [(3, "```\ne\u{301}\n```", 3, "e\u{301}"), (4, "👩‍💻", 2, "👩‍💻")]
+    {
+        let app = App {
+            transcript: vec![TranscriptItem::Message(message(Role::Assistant, source))],
+            ..App::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(width, 10)).unwrap();
+        terminal
+            .draw(|frame| crate::tui::chat::render(frame, frame.area(), &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        pretty_assertions::assert_eq!(
+            (buffer[(1, row)].symbol(), buffer[(1, row + 1)].symbol()),
+            (expected, " ")
+        );
+    }
+}
+
+#[test]
 fn tool_headings_wrap_with_a_semantic_status_glyph() {
     let mut card = shape_card(ToolStatus::Succeeded);
     card.detail = "updated the shape geometry".into();

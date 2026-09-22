@@ -14,13 +14,6 @@ pub(super) struct AtxHeading<'a> {
     pub(super) content: &'a str,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum HeadingStreamState {
-    Potential,
-    Heading,
-    NotHeading,
-}
-
 pub(super) fn parse_atx_heading(line: &str) -> Option<AtxHeading<'_>> {
     let (hashes, after_hashes) = opening_hashes(line)?;
     if let Some(first) = after_hashes.chars().next() {
@@ -34,23 +27,6 @@ pub(super) fn parse_atx_heading(line: &str) -> Option<AtxHeading<'_>> {
         level: heading_level(hashes),
         content: trim_closing_hashes(body),
     })
-}
-
-pub(super) fn heading_stream_state(line: &str) -> HeadingStreamState {
-    let Some((hashes, after_hashes)) = opening_hashes(line) else {
-        return if line.len() <= 3 && line.bytes().all(|byte| byte == b' ') {
-            HeadingStreamState::Potential
-        } else {
-            HeadingStreamState::NotHeading
-        };
-    };
-    debug_assert!((1..=6).contains(&hashes));
-
-    match after_hashes.chars().next() {
-        None => HeadingStreamState::Potential,
-        Some(' ' | '\t') => HeadingStreamState::Heading,
-        Some(_) => HeadingStreamState::NotHeading,
-    }
 }
 
 fn opening_hashes(line: &str) -> Option<(usize, &str)> {

@@ -67,7 +67,6 @@ fn styles() -> GraphStyles {
         node_text: Style::default(),
         edge: Style::default(),
         edge_label: Style::default(),
-        node_styles: Vec::new(),
     }
 }
 

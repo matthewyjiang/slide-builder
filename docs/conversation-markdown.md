@@ -37,6 +37,8 @@ The math renderer is TXM, not full LaTeX. Use compact equations and supported co
 
 Styles use slide-builder's terminal-derived palette. Code tokens have semantic ANSI colors; headings use weight rather than decorative accent color. Responses wrap inside the existing conversation padding. Resizing recalculates wrapping, tables, panels, and image sizing.
 
+Wrapping and truncation preserve Unicode grapheme clusters, including combining accents and joined emoji. Literal messages and markdown share the same wrapping helpers, so neither splits a visible character between rows.
+
 Incomplete inline markup waits for a stable prefix during streaming. Open fenced code stays visible, and supported Mermaid prefixes can render before the closing fence arrives. An open display-math block shows literal TeX until its closing delimiter arrives. A cursor marks an unfinished response. Completed message rendering is shared between frames. During streaming, completed blocks remain cached while the mutable tail is repainted. Content replacement, width changes, and syntax-grammar readiness invalidate the relevant paint. Unsafe control and bidirectional-format characters are escaped before rendering or code copying.
 
 Image reads, decoding, resizing, and terminal encoding run on a worker thread. Images share the preview's detected graphics protocol and fit the conversation width, with terminal height as their stable height constraint. Growing the prompt does not reload them. PNG, JPEG, GIF, and WebP are supported by the image decoder. Missing files, unsupported paths, or unavailable graphics retain the alt-text fallback. Images partially scrolled offscreen are clipped, not resized. Decode and cache allocation budgets protect the UI from large files. Successful deck renders invalidate cached conversation images so overwritten slide previews can reload.
@@ -52,6 +54,8 @@ The engine comes from `../rho` at revision `0c919640124e6795e7aea9c0d5180687b631
 - `src/tui/conversation_markdown.rs` adds padding, streaming preview, and message caching.
 - `src/tui/conversation_images.rs` owns local image loading and terminal protocols.
 - `src/tui/chat.rs` combines message and tool rows and resolves copy targets.
+
+Streaming preview selects a stable source prefix independently of terminal width. It does not map wrapped output back to source offsets. The cache retains each mutable block from its opener, so fenced-code highlighting lives within a render call rather than carrying state between calls. Inline math renders directly; there is no separate formula cache for preview scans.
 
 This is parity with Rho's custom terminal renderer, not a claim of complete CommonMark or browser HTML support. Rho's append-only scrollback cache and application-specific tool widgets are not part of the port; slide-builder retains its own fullscreen conversation and tool-activity UI.
 

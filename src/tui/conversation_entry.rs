@@ -2,7 +2,6 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -115,62 +114,12 @@ pub(crate) fn plain_rows(text: &str, width: usize, style: Style) -> Vec<Line<'st
 }
 
 fn wrap_line(line: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    if line.is_empty() {
-        return vec![String::new()];
-    }
-
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    while start < line.len() {
-        let mut used_width = 0;
-        let mut last_fitting_split = None;
-        let mut whitespace_break = None;
-        let mut saw_non_whitespace = false;
-        let mut overflow = false;
-        let mut prefer_width_split = false;
-
-        for (relative_index, grapheme) in line[start..].grapheme_indices(true) {
-            let grapheme_width = grapheme.width();
-            let next = start + relative_index + grapheme.len();
-            if used_width == 0 && grapheme_width > width {
-                last_fitting_split = Some(next);
-                overflow = true;
-                break;
-            }
-            if used_width > 0 && used_width + grapheme_width > width {
-                overflow = true;
-                prefer_width_split = grapheme.chars().all(char::is_whitespace);
-                break;
-            }
-
-            used_width += grapheme_width;
-            last_fitting_split = Some(next);
-            if grapheme.chars().all(char::is_whitespace) {
-                if saw_non_whitespace {
-                    whitespace_break = Some(next);
-                }
-            } else {
-                saw_non_whitespace = true;
-            }
-        }
-
-        if !overflow {
-            chunks.push(line[start..].to_owned());
-            break;
-        }
-
-        let split = if prefer_width_split {
-            last_fitting_split.expect("overflow requires a fitting split")
-        } else {
-            whitespace_break
-                .filter(|split| *split > start)
-                .unwrap_or_else(|| last_fitting_split.expect("overflow requires a fitting split"))
-        };
-        chunks.push(line[start..split].to_owned());
-        start = split;
-    }
-    chunks
+    super::render::wrap_line_at_whitespace_ranges_with_protected_prefix(
+        line, width, /*protected_prefix_end*/ 0,
+    )
+    .into_iter()
+    .map(|range| line[range].to_owned())
+    .collect()
 }
 
 fn padded_line(content: String, width: usize, style: Style) -> Line<'static> {

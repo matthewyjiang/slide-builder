@@ -133,8 +133,10 @@ fn assert_same_render(actual: &RenderedMarkdown, expected: &RenderedMarkdown) {
 fn incremental_render_matches_fresh_at_every_character_and_completion() {
     syntax::warm_syntax_set();
     let source = "# Résumé\n\n**Done** with $x^2$.\n\n| Name | Value |\n| --- | ---: |\nresult | 42\nnext | 1234567\n\n```rust\nlet x = \"你好\";\n```\n\n$$\n\\frac{1}{2}\n$$\n\n```mermaid\nflowchart TD\n A[Start] --> B[Done]\n```\n\n![plot](plot.png)\n\nfinal **answer**";
-    for width in [1, 12, 40, 100] {
+    for width in [1_usize, 12, 40, 100] {
         let mut cache = MessageCache::default();
+        let images = ConversationImages::default();
+        let available = ratatui::layout::Size::new(width.saturating_sub(2).max(1) as u16, 30);
         cache.prepare(width, 1);
         for end in source
             .char_indices()
@@ -142,13 +144,13 @@ fn incremental_render_matches_fresh_at_every_character_and_completion() {
             .chain([source.len()])
         {
             let message = assistant(&source[..end], false);
-            let actual = cache.message(0, &message);
+            let actual = cache.message_with_images(0, &message, &images, available);
             let expected = conversation_entry::render_message_content(&message, width);
             assert_same_render(&actual, &expected);
         }
         let completed = assistant(source, true);
         assert_same_render(
-            &cache.message(0, &completed),
+            &cache.message_with_images(0, &completed, &images, available),
             &conversation_entry::render_message_content(&completed, width),
         );
     }

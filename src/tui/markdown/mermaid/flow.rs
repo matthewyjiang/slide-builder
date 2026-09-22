@@ -1,6 +1,6 @@
 use crate::tui::{
-    markdown::mermaid::{model::Graph, MermaidArt},
-    terminal_graph::{self, GraphStyles, Oversize},
+    markdown::mermaid::model::Graph,
+    terminal_graph::{self, GraphArt, GraphStyles, Oversize},
 };
 
 mod class;
@@ -11,7 +11,7 @@ pub(super) fn render_class(
     infos: &[super::model::ClassInfo],
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     class::render_class(graph, infos, styles, max_width)
 }
 
@@ -19,7 +19,7 @@ pub(super) fn layout_flow(
     graph: &Graph,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     match layout_flow_in(graph, styles, max_width) {
         Err(Oversize::Width)
             if matches!(
@@ -41,13 +41,9 @@ fn layout_flow_in(
     graph: &Graph,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     if graph.groups.is_empty() {
-        let art = terminal_graph::layout_flow(&graph.layout_graph(), styles, max_width)?;
-        return Ok(MermaidArt {
-            styled_lines: art.lines,
-            plain_lines: art.plain_lines,
-        });
+        return terminal_graph::layout_flow(&graph.layout_graph(), styles, max_width);
     }
 
     let layout_graph = graph.layout_graph();

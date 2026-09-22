@@ -8,10 +8,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::terminal_graph::{
     draw_box, draw_seq_text, fit_label, Canvas, CellClass as Cls, GraphStyles, NodeShape, Oversize,
-    Placed, D, L, MAX_CANVAS_CELLS, PAD, R, STY_SOLID, STY_THICK, U, WRAP_WIDTH,
+    Placed, D, L, PAD, R, STY_SOLID, STY_THICK, U, WRAP_WIDTH,
 };
 
-use super::MermaidArt;
+use super::GraphArt;
 const SEQ_GAP: usize = 5;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -246,7 +246,7 @@ pub(super) fn layout_sequence(
     seq: &Sequence,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     let n = seq.labels.len();
     let labels: Vec<String> = seq
         .labels
@@ -353,11 +353,7 @@ pub(super) fn layout_sequence(
     if max_width.is_some_and(|max_width| canvas_w > max_width) {
         return Err(Oversize::Width);
     }
-    if canvas_w.saturating_mul(canvas_h) > MAX_CANVAS_CELLS {
-        return Err(Oversize::Cells);
-    }
-
-    let mut canvas = Canvas::new(canvas_w, canvas_h);
+    let mut canvas = Canvas::new(canvas_w, canvas_h)?;
     for i in 0..n {
         for by in [0, bottom_top] {
             let p = Placed {
@@ -374,7 +370,6 @@ pub(super) fn layout_sequence(
                 &p,
                 std::slice::from_ref(&labels[i]),
                 NodeShape::Rect,
-                /*node_index*/ None,
             );
         }
     }
@@ -390,13 +385,7 @@ pub(super) fn layout_sequence(
                 cy: r + 1,
                 rank: 0,
             };
-            draw_box(
-                &mut canvas,
-                &p,
-                std::slice::from_ref(text),
-                NodeShape::Rect,
-                /*node_index*/ None,
-            );
+            draw_box(&mut canvas, &p, std::slice::from_ref(text), NodeShape::Rect);
         }
     }
     for &x in &xs {
@@ -483,9 +472,5 @@ pub(super) fn layout_sequence(
     }
 
     canvas.finalize_mask();
-    let (styled_lines, plain_lines) = canvas.to_lines(styles);
-    Ok(MermaidArt {
-        styled_lines,
-        plain_lines,
-    })
+    Ok(canvas.to_lines(styles))
 }

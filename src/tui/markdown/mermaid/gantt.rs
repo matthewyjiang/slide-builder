@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::terminal_graph::{fit_label, GraphStyles, Oversize};
 
-use super::MermaidArt;
+use super::GraphArt;
 
 const LABEL_CAP: usize = 20;
 const LABEL_FLOOR: usize = 8;
@@ -162,7 +162,7 @@ pub(super) fn layout_gantt(
     model: &GanttModel,
     styles: &GraphStyles,
     max_width: Option<usize>,
-) -> Result<MermaidArt, Oversize> {
+) -> Result<GraphArt, Oversize> {
     let longest_label = model
         .rows
         .iter()

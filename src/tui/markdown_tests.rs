@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 use ratatui::style::Style;
 
 fn line_text(line: &Line<'_>) -> String {
@@ -17,8 +18,7 @@ fn keeps_list_markers_with_a_long_path_in_narrow_output() {
     for marker in ["-", "1.", "2)"] {
         let markdown =
             format!("{marker} fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0");
-        let mut fence_state = CodeFenceState::default();
-        let lines = markdown_lines(&markdown, 39, &mut fence_state);
+        let lines = markdown_lines(&markdown, 39);
 
         let first_line_suffix_len = 39 - marker.len() - 1;
         let path = "fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0";
@@ -33,23 +33,8 @@ fn keeps_list_markers_with_a_long_path_in_narrow_output() {
 }
 
 #[test]
-fn streams_list_lines_at_the_same_wrap_boundary_as_final_rendering() {
-    let markdown = "- fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0";
-
-    let bounds = markdown_stream_bounds(markdown, 39, false);
-
-    assert_eq!(bounds.drain.byte_index, 39);
-    assert!(bounds.drain.ends_with_wrap);
-}
-
-#[test]
 fn preserves_underscores_inside_identifiers() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines(
-        "keep foo_bar_baz literal but style _this_",
-        120,
-        &mut fence_state,
-    );
+    let lines = markdown_lines("keep foo_bar_baz literal but style _this_", 120);
 
     assert_eq!(
         line_text(&lines[0]),
@@ -65,9 +50,7 @@ fn wraps_long_unicode_styled_lines_without_losing_text_or_styles() {
     let plain_suffix = "界ß".repeat(256);
     let markdown = format!("{plain_prefix} **{bold}** {plain_suffix}");
     let expected = format!("{plain_prefix} {bold} {plain_suffix}");
-    let mut fence_state = CodeFenceState::default();
-
-    let lines = markdown_lines(&markdown, 17, &mut fence_state);
+    let lines = markdown_lines(&markdown, 17);
     let rendered = lines.iter().map(line_text).collect::<String>();
     let rendered_bold = lines
         .iter()
@@ -85,8 +68,7 @@ fn wraps_long_unicode_styled_lines_without_losing_text_or_styles() {
 
 #[test]
 fn code_block_rows_use_the_full_pane_width_without_borders() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines("```\n你好你好\n```", 6, &mut fence_state);
+    let lines = markdown_lines("```\n你好你好\n```", 6);
 
     // Header row plus content rows, no bottom border.
     assert_eq!(lines.len(), 3);
@@ -99,12 +81,7 @@ fn code_block_rows_use_the_full_pane_width_without_borders() {
 
 #[test]
 fn code_blocks_preserve_markdown_markers_as_literal_text() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines(
-        "```\nfn __init__() { println!(\"*ok*\"); }\n```",
-        80,
-        &mut fence_state,
-    );
+    let lines = markdown_lines("```\nfn __init__() { println!(\"*ok*\"); }\n```", 80);
 
     assert!(line_text(&lines[1]).contains("fn __init__() { println!(\"*ok*\"); }"));
     assert_eq!(line_styles(&lines[1]), vec![Theme::code_text()]);
@@ -112,8 +89,7 @@ fn code_blocks_preserve_markdown_markers_as_literal_text() {
 
 #[test]
 fn code_block_header_shows_language_label_and_copy_button() {
-    let mut fence_state = CodeFenceState::default();
-    let rendered = render_markdown("```rust\nlet x = 1;\n```", 40, &mut fence_state);
+    let rendered = render_markdown("```rust\nlet x = 1;\n```", 40);
 
     let header = &rendered.lines[0];
     // COPY keeps one blank column of inset from the right pane edge.
@@ -121,18 +97,12 @@ fn code_block_header_shows_language_label_and_copy_button() {
     assert!(line_text(header).starts_with("RUST"));
     assert!(line_text(header).ends_with(" COPY "));
     assert!(line_styles(header).contains(&Theme::dim()));
-    assert!(line_styles(header).contains(&Theme::markdown_code_copy_button(/*hovered*/ false)));
 }
 
 #[test]
 fn highlighted_code_blocks_style_tokens_and_keep_literal_text() {
     crate::tui::syntax::warm_syntax_set();
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines(
-        "```rust\nlet answer = 42; // note\n```",
-        80,
-        &mut fence_state,
-    );
+    let lines = markdown_lines("```rust\nlet answer = 42; // note\n```", 80);
 
     assert_eq!(line_text(&lines[1]), "let answer = 42; // note");
     let styles = line_styles(&lines[1]);
@@ -142,12 +112,7 @@ fn highlighted_code_blocks_style_tokens_and_keep_literal_text() {
 
 #[test]
 fn unknown_language_code_blocks_fall_back_to_plain_styling() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines(
-        "```no-such-language\nplain text body\n```",
-        80,
-        &mut fence_state,
-    );
+    let lines = markdown_lines("```no-such-language\nplain text body\n```", 80);
 
     assert!(line_text(&lines[0]).starts_with("NO-SUCH-LANGUAGE"));
     assert_eq!(line_text(&lines[1]), "plain text body");
@@ -168,113 +133,27 @@ fn code_fence_closers_match_marker_length_and_allow_only_whitespace() {
 }
 
 #[test]
-fn streamed_code_fence_state_preserves_marker_length_and_language_across_chunks() {
-    let mut state = CodeFenceState::default();
-    update_code_block_state("````mermaid\nflowchart TD", &mut state);
-    assert!(state.is_open());
-    assert_eq!(state.language.as_deref(), Some("mermaid"));
-    update_code_block_state("```", &mut state);
-    assert!(state.is_open());
-    assert_eq!(state.language.as_deref(), Some("mermaid"));
-    update_code_block_state("````", &mut state);
-    assert!(!state.is_open());
-    assert_eq!(state.language, None);
-
-    update_code_block_state("~~~~rust", &mut state);
-    assert!(state.is_open());
-    assert_eq!(state.language.as_deref(), Some("rust"));
-    update_code_block_state("```", &mut state);
-    assert!(state.is_open());
-    update_code_block_state("~~~~", &mut state);
-    assert!(!state.is_open());
-    assert_eq!(state.language, None);
-}
-
-// Covers: live preview continuation lines must highlight when fence language
-// is carried on CodeFenceState from an earlier opening chunk.
-// Owner: pure unit (markdown fence-state render path)
-#[test]
-fn fence_state_continuation_highlights_with_carried_language() {
+fn open_code_block_preserves_multiline_string_highlighting_and_copy_source() {
     crate::tui::syntax::warm_syntax_set();
-    let mut state = CodeFenceState::default();
-    update_code_block_state("```rust\n", &mut state);
-    assert!(state.is_open());
-    assert_eq!(state.language.as_deref(), Some("rust"));
-
-    // Body-only chunk, as the live preview receives after the opening fence
-    // has already been committed above.
-    let lines = markdown_lines("let answer = 42; // note", 80, &mut state);
-    assert_eq!(lines.len(), 1);
-    assert_eq!(line_text(&lines[0]), "let answer = 42; // note");
-    let styles = line_styles(&lines[0]);
-    assert!(
-        styles.len() > 1,
-        "continuation must be highlighted, got {styles:?}"
-    );
-    assert!(styles.iter().any(|style| *style != Theme::code_text()));
-    assert!(state.is_open());
-}
-
-// Covers: multi-line string lexical state survives a committed→preview split.
-// Owner: pure unit (markdown streamed fence highlight)
-#[test]
-fn streamed_fence_preserves_multiline_string_highlight_across_chunks() {
-    crate::tui::syntax::warm_syntax_set();
-    let mut state = CodeFenceState::default();
-    // Production path: committed fragment advances fence + highlighter state.
-    update_code_block_state("```rust\nlet text = \"open\n", &mut state);
-    assert!(state.is_open());
-    assert!(
-        state.highlighter.is_some(),
-        "committed open fence must keep a highlighter"
-    );
-
-    // Live-preview fragment continues inside the open string.
-    let lines = markdown_lines("still inside", 80, &mut state);
-    assert_eq!(lines.len(), 1);
-    assert_eq!(line_text(&lines[0]), "still inside");
+    let source = "let text = \"open\nstill inside\nmore";
+    let rendered = render_markdown(&format!("```rust\n{source}\n"), 80);
     let string_style = Theme::syntax(crate::tui::markdown_theme::SyntaxRole::String);
-    assert!(
-        lines[0].spans.iter().all(|span| span.style == string_style),
-        "continuation inside multi-line string must stay string-styled: {:?}",
-        line_styles(&lines[0])
+    assert_eq!(
+        rendered.lines[2],
+        Line::from(Span::styled("still inside", string_style))
     );
-    assert!(state.is_open());
-    assert!(state.highlighter.is_some());
-}
-
-// Covers: renderer-to-renderer split also preserves multi-line token state.
-// Owner: pure unit (markdown fence render path)
-#[test]
-fn render_chunks_preserve_multiline_string_highlight() {
-    crate::tui::syntax::warm_syntax_set();
-    let mut state = CodeFenceState::default();
-    let first = markdown_lines("```rust\nlet text = \"open\n", 80, &mut state);
-    assert!(first.iter().any(|line| line_text(line).contains("open")));
-    assert!(state.is_open());
-
-    let second = markdown_lines("still inside\nmore\n", 80, &mut state);
-    let string_style = Theme::syntax(crate::tui::markdown_theme::SyntaxRole::String);
-    assert!(
-        second.iter().any(|line| {
-            line_text(line) == "still inside"
-                && line.spans.iter().all(|span| span.style == string_style)
-        }),
-        "second chunk must keep string styling: {:?}",
-        second
-            .iter()
-            .map(|line| (line_text(line), line_styles(line)))
-            .collect::<Vec<_>>()
+    assert_eq!(
+        rendered.lines[3],
+        Line::from(Span::styled("more", string_style))
     );
+    assert_eq!(rendered.code_blocks[0].text, source);
 }
 
 #[test]
 fn mermaid_scanner_keeps_an_invalid_closer_inside_the_raw_block() {
-    let mut fence_state = CodeFenceState::default();
     let rendered = render_markdown(
         "````mermaid\nflowchart TD\nA[one]\n```not-a-close\nA --> B[two]\n````",
         80,
-        &mut fence_state,
     );
     let text = rendered
         .lines
@@ -289,29 +168,20 @@ fn mermaid_scanner_keeps_an_invalid_closer_inside_the_raw_block() {
 
 #[test]
 fn open_mermaid_fence_paints_complete_line_prefix() {
-    let mut fence_state = CodeFenceState::default();
-    let open = render_markdown("```mermaid\nflowchart LR\nA --> B\n", 60, &mut fence_state);
+    let open = render_markdown("```mermaid\nflowchart LR\nA --> B\n", 60);
     let open_text = open.lines.iter().map(line_text).collect::<Vec<_>>();
 
-    assert!(fence_state.is_open());
     assert!(open_text[0].starts_with("MERMAID"));
     assert!(
         !open_text.iter().any(|line| line.contains("flowchart LR")),
         "open complete-line prefix should already be art: {open_text:?}"
     );
 
-    let mut fence_state = CodeFenceState::default();
-    let sticky = render_markdown("```mermaid\npie\n\"Dogs\" : 5\n", 60, &mut fence_state);
+    let sticky = render_markdown("```mermaid\npie\n\"Dogs\" : 5\n", 60);
     let sticky_text = sticky.lines.iter().map(line_text).collect::<Vec<_>>();
     assert!(sticky_text.iter().any(|line| line.contains("pie")));
 
-    let mut fence_state = CodeFenceState::default();
-    let closed = render_markdown(
-        "```mermaid\nflowchart LR\nA --> B\n```",
-        60,
-        &mut fence_state,
-    );
-    assert!(!fence_state.is_open());
+    let closed = render_markdown("```mermaid\nflowchart LR\nA --> B\n```", 60);
     assert!(line_text(&closed.lines[0]).contains("MERMAID"));
     assert!(!closed
         .lines
@@ -323,10 +193,8 @@ fn open_mermaid_fence_paints_complete_line_prefix() {
 #[test]
 fn mermaid_render_reflows_to_the_requested_transcript_width() {
     let markdown = "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n```";
-    let mut wide_state = CodeFenceState::default();
-    let wide = markdown_lines(markdown, 80, &mut wide_state);
-    let mut narrow_state = CodeFenceState::default();
-    let narrow = markdown_lines(markdown, 36, &mut narrow_state);
+    let wide = markdown_lines(markdown, 80);
+    let narrow = markdown_lines(markdown, 36);
 
     assert!(wide
         .iter()
@@ -342,13 +210,44 @@ fn mermaid_render_reflows_to_the_requested_transcript_width() {
 
 #[test]
 fn image_syntax_inside_code_fence_stays_literal() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines("```\n![diagram](arch.png)\n```", 120, &mut fence_state);
+    let lines = markdown_lines("```\n![diagram](arch.png)\n```", 120);
     let text: Vec<String> = lines.iter().map(line_text).collect();
 
     assert!(text
         .iter()
         .any(|line| line.contains("![diagram](arch.png)")));
+}
+
+#[test]
+fn preview_keeps_complete_lines_and_only_the_stable_open_line_prefix() {
+    for (source, visible) in [
+        ("", ""),
+        ("done\n", "done\n"),
+        ("done\nbefore **bold", "done\nbefore "),
+        ("done\n**bold", "done\n"),
+        ("done\nbefore **bold** tail", "done\nbefore **bold** tail"),
+        ("## heading *pending", "## heading "),
+        ("see [label](https://ex", "see "),
+        ("math $x^2$ then $y", "math $x^2$ then "),
+        ("done\n`", "done\n"),
+        ("done\n  ``", "done\n"),
+        ("done\n```rust", "done\n"),
+        ("done\n\u{200b}", "done\n"),
+        ("done\n**\u{200b}**", "done\n"),
+        ("done\n  ", "done\n  "),
+        ("```rust\n**literal", "```rust\n**literal"),
+        ("~~~rust\n**literal", "~~~rust\n**literal"),
+        ("````rust\n```\n**literal", "````rust\n```\n**literal"),
+        ("```rust\n~~~\n**literal", "```rust\n~~~\n**literal"),
+        ("```rust\n\u{200b}", "```rust\n"),
+        ("```rust\n```\n**pending", "```rust\n```\n"),
+    ] {
+        assert_eq!(
+            &source[..markdown_preview_end(source)],
+            visible,
+            "{source:?}"
+        );
+    }
 }
 
 #[test]
@@ -446,18 +345,15 @@ fn stable_prefix_holds_open_inline_math_but_not_currency() {
 // Owner: pure unit (markdown inline math integration)
 #[test]
 fn renders_single_row_inline_math_in_prose() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines("energy $E = mc^2$ done", 80, &mut fence_state);
+    let lines = markdown_lines("energy $E = mc^2$ done", 80);
     let text = lines.iter().map(line_text).collect::<Vec<_>>();
     assert_eq!(text, vec!["energy E = mc² done"]);
 
-    let mut fence_state = CodeFenceState::default();
-    let currency = markdown_lines("that costs $5 and $10 total", 80, &mut fence_state);
+    let currency = markdown_lines("that costs $5 and $10 total", 80);
     let currency_text = currency.iter().map(line_text).collect::<Vec<_>>();
     assert_eq!(currency_text, vec!["that costs $5 and $10 total"]);
 
-    let mut fence_state = CodeFenceState::default();
-    let tall = markdown_lines(r"half is $\frac{1}{2}$ here", 80, &mut fence_state);
+    let tall = markdown_lines(r"half is $\frac{1}{2}$ here", 80);
     let tall_text = tall.iter().map(line_text).collect::<Vec<_>>();
     assert_eq!(
         tall_text,
@@ -465,8 +361,7 @@ fn renders_single_row_inline_math_in_prose() {
         "multi-row inline math must keep its literal source"
     );
 
-    let mut fence_state = CodeFenceState::default();
-    let code = markdown_lines("run `echo $x^2$` now", 80, &mut fence_state);
+    let code = markdown_lines("run `echo $x^2$` now", 80);
     let code_text = code.iter().map(line_text).collect::<Vec<_>>();
     assert!(
         code_text.iter().any(|line| line.contains("echo $x^2$")),
@@ -478,8 +373,7 @@ fn renders_single_row_inline_math_in_prose() {
 // Owner: pure unit (markdown display math integration)
 #[test]
 fn renders_closed_display_math_blocks_in_markdown() {
-    let mut fence_state = CodeFenceState::default();
-    let multi = markdown_lines("before\n$$\n\\frac{a}{b}\n$$\nafter", 40, &mut fence_state);
+    let multi = markdown_lines("before\n$$\n\\frac{a}{b}\n$$\nafter", 40);
     let multi_text = multi.iter().map(line_text).collect::<Vec<_>>();
     assert!(
         multi_text.iter().any(|line| line.contains("MATH")),
@@ -495,10 +389,7 @@ fn renders_closed_display_math_blocks_in_markdown() {
         multi_text.iter().any(|line| line == "after"),
         "{multi_text:?}"
     );
-    assert!(!fence_state.is_open());
-
-    let mut fence_state = CodeFenceState::default();
-    let single = markdown_lines("$$x^2 + y^2$$", 40, &mut fence_state);
+    let single = markdown_lines("$$x^2 + y^2$$", 40);
     let single_text = single.iter().map(line_text).collect::<Vec<_>>();
     assert!(
         single_text.iter().any(|line| line.contains("MATH")),
@@ -514,8 +405,7 @@ fn renders_closed_display_math_blocks_in_markdown() {
 // Owner: pure unit (markdown display math streaming bounds)
 #[test]
 fn keeps_fenced_and_open_display_math_literal() {
-    let mut fence_state = CodeFenceState::default();
-    let fenced = markdown_lines("```text\n$$x^2$$\n```", 40, &mut fence_state);
+    let fenced = markdown_lines("```text\n$$x^2$$\n```", 40);
     let fenced_text = fenced.iter().map(line_text).collect::<Vec<_>>();
     assert!(
         fenced_text.iter().any(|line| line.contains("$$x^2$$")),
@@ -527,7 +417,7 @@ fn keeps_fenced_and_open_display_math_literal() {
     );
 
     let open = "intro\n$$\n\\frac{a}{b}";
-    let open_render = render_markdown("$$\na_i * b_j\n", 40, &mut CodeFenceState::default());
+    let open_render = render_markdown("$$\na_i * b_j\n", 40);
     assert!(open_render
         .lines
         .iter()

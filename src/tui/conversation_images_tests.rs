@@ -24,6 +24,159 @@ fn fixture_image(path: &Path) {
 }
 
 #[test]
+fn image_completion_between_paint_and_mouse_up_uses_painted_copy_and_selection() {
+    use crate::tui::{App, AppAction, AppEvent, Message, Role, TranscriptItem};
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    for drag in [false, true] {
+        let mut app = App::default();
+        app.mouse.viewport = Rect::new(0, 0, 140, 60);
+        app.transcript = vec![TranscriptItem::Message(Message {
+            role: Role::Assistant,
+            text: "![plot](image.png)\n```rust\nlet value = 1;\n```".into(),
+            complete: true,
+        })];
+        let (sender, receiver) = mpsc::sync_channel(1);
+        app.conversation_images.borrow_mut().completed = receiver;
+        let mut terminal = Terminal::new(TestBackend::new(140, 60)).unwrap();
+        terminal
+            .draw(|frame| crate::tui::render(frame, &app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (x, y) = (0..60)
+            .find_map(|y| {
+                (0..136).find_map(|x| {
+                    ((0..4)
+                        .map(|i| buffer[(x + i, y)].symbol())
+                        .collect::<String>()
+                        == "COPY")
+                        .then_some((x, y))
+                })
+            })
+            .expect("fallback frame has a copy header");
+        let mouse = |kind, column| {
+            AppEvent::Input(Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        app.apply(mouse(MouseEventKind::Down(MouseButton::Left), x));
+        let width = crate::tui::layout::regions(app.mouse.viewport, &app)
+            .chat
+            .width
+            - 2;
+        let available = Size::new(width, 60);
+        let image = encode_image(
+            &Picker::halfblocks(),
+            image::DynamicImage::new_rgb8(120, 240),
+            available,
+        )
+        .unwrap();
+        sender
+            .send(Completed {
+                generation: 0,
+                key: Key {
+                    path: PathBuf::from("image.png"),
+                    available,
+                },
+                result: Ok(image),
+            })
+            .unwrap();
+        let end = if drag { x + 3 } else { x };
+        if drag {
+            app.apply(mouse(MouseEventKind::Drag(MouseButton::Left), end));
+        }
+        let actions = app.apply(mouse(MouseEventKind::Up(MouseButton::Left), end));
+        assert_eq!(
+            actions,
+            vec![AppAction::CopyText(
+                if drag { "COPY" } else { "let value = 1;" }.into()
+            )]
+        );
+        assert!(
+            app.conversation_images.borrow().ready.is_empty(),
+            "input must not poll completions"
+        );
+        app.mouse.selection = None;
+        app.mouse.toast = None;
+        terminal
+            .draw(|frame| crate::tui::render(frame, &app))
+            .unwrap();
+        assert!(app
+            .conversation_images
+            .borrow()
+            .cached_image("image.png", available)
+            .is_some());
+        assert_ne!(terminal.backend().buffer()[(x, y)].symbol(), "C");
+    }
+}
+
+#[test]
+fn retained_media_layout_tracks_ready_error_and_clear_without_pinning_images() {
+    use crate::tui::{conversation_markdown::MessageCache, Message, Role};
+    use std::rc::Rc;
+
+    crate::tui::syntax::warm_syntax_set();
+    let available = Size::new(12, 10);
+    let key = Key {
+        path: PathBuf::from("image.png"),
+        available,
+    };
+    let image = encode_image(
+        &Picker::halfblocks(),
+        image::DynamicImage::new_rgb8(120, 120),
+        available,
+    )
+    .unwrap();
+    let protocol = Arc::downgrade(&image.protocol);
+    let mut images = ConversationImages::default();
+    images.ready.insert(key.clone(), image);
+    let message = Message {
+        role: Role::Assistant,
+        text: "![plot](image.png)\n```rust\nlet x = 1;\n```".into(),
+        complete: true,
+    };
+    let mut messages = MessageCache::default();
+    messages.prepare(14, 1);
+    let first = messages.message_with_images(0, &message, &images, available);
+    assert_eq!(first.code_blocks[0].top_line, 7);
+    let second = messages.message_with_images(0, &message, &images, available);
+    assert!(Rc::ptr_eq(&first, &second));
+    // A different image's completion cannot invalidate this message's layout.
+    images.failed.insert(
+        Key {
+            path: PathBuf::from("other.png"),
+            available,
+        },
+        "missing".into(),
+    );
+    assert!(Rc::ptr_eq(
+        &first,
+        &messages.message_with_images(0, &message, &images, available)
+    ));
+    images.clear();
+    assert!(
+        protocol.upgrade().is_none(),
+        "text snapshots cannot pin evicted protocols"
+    );
+    let fallback = messages.message_with_images(0, &message, &images, available);
+    assert_eq!(fallback.code_blocks[0].top_line, 2);
+    assert_eq!(
+        first.code_blocks[0].top_line, 7,
+        "old painted anchors stay immutable"
+    );
+    images.failed.insert(key, "missing".into());
+    let failed = messages.message_with_images(0, &message, &images, available);
+    assert!(failed.code_blocks[0].top_line > fallback.code_blocks[0].top_line);
+    assert!(Rc::ptr_eq(
+        &failed,
+        &messages.message_with_images(0, &message, &images, available)
+    ));
+}
+
+#[test]
 fn resolves_local_references_and_rejects_remote_or_control_paths() {
     let cwd = Path::new("/workspace");
     let home = Some(Path::new("/home/test"));
@@ -130,23 +283,15 @@ fn reserves_only_ready_source_rows_and_crops_without_resizing() {
         },
         image.clone(),
     );
-    let mut rendered = crate::tui::markdown::render_markdown(
+    let rendered = crate::tui::markdown::render_markdown(
         "![missing](missing.png)\n![ready](image.png)\n```\nafter\n```",
         12,
-        &mut Default::default(),
     );
-    let placements = crate::tui::conversation_media::place_images(
-        &mut rendered,
-        &mut cache,
+    let rendered = crate::tui::conversation_media::MediaLayout::default().render(
+        std::rc::Rc::new(rendered),
+        &cache,
         Size::new(12, 6),
-        0,
-    );
-    assert_eq!(
-        placements
-            .iter()
-            .map(|p| p.rows.clone())
-            .collect::<Vec<_>>(),
-        vec![1..7]
+        /*padding*/ 0,
     );
     assert!(rendered
         .lines
@@ -186,14 +331,13 @@ fn image_budget_diagnostics_wrap_and_preserve_following_copy_targets() {
         },
         "decoded image budget 256 bytes exceeded: requested 512 bytes".into(),
     );
-    let mut rendered = crate::tui::markdown::render_markdown(
-        "![large](large.png)\n```rust\nlet x = 1;\n```",
-        20,
-        &mut Default::default(),
-    );
-    assert!(
-        crate::tui::conversation_media::place_images(&mut rendered, &mut cache, available, 0,)
-            .is_empty()
+    let rendered =
+        crate::tui::markdown::render_markdown("![large](large.png)\n```rust\nlet x = 1;\n```", 20);
+    let rendered = crate::tui::conversation_media::MediaLayout::default().render(
+        std::rc::Rc::new(rendered),
+        &cache,
+        available,
+        /*padding*/ 0,
     );
     let copy = &rendered.code_blocks[0];
     let diagnostics = rendered.lines[1..copy.top_line]

@@ -31,8 +31,33 @@ fn unchanged_messages_share_paint_across_frames_and_scrolling() {
     assert!(Rc::ptr_eq(&first.chunks[0], &second.chunks[0]));
     let area = Rect::new(0, 0, 40, 5);
     let mut buffer = Buffer::empty(area);
-    second.render_text(area, &mut buffer, 100);
+    render_text(&second.chunks, area, &mut buffer, 100);
     assert!(buffer_row_text(&buffer, 0, area.width).contains("unchanged"));
+}
+
+#[test]
+fn image_markers_share_retained_paint_including_offscreen_messages() {
+    super::super::syntax::warm_syntax_set();
+    let app = App {
+        transcript: (0..10)
+            .map(|_| {
+                TranscriptItem::Message(Message {
+                    role: Role::Assistant,
+                    text: format!("![plot](image.png)\n{}", "unchanged\n".repeat(1000)),
+                    complete: true,
+                })
+            })
+            .collect(),
+        ..App::default()
+    };
+    let first = conversation_content(&app, 40);
+    let second = conversation_content(&app, 40);
+    for (first, second) in first.chunks.iter().zip(&second.chunks) {
+        assert!(
+            Rc::ptr_eq(first, second),
+            "unchanged image layout must be retained"
+        );
+    }
 }
 
 #[test]

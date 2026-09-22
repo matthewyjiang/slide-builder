@@ -5,7 +5,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::painter::{GraphStyles, CONT};
+use super::painter::{GraphArt, GraphStyles, Oversize, CONT, MAX_CANVAS_CELLS};
 pub(in crate::tui) const U: u8 = 1;
 pub(in crate::tui) const D: u8 = 2;
 pub(in crate::tui) const L: u8 = 4;
@@ -18,8 +18,6 @@ pub(in crate::tui) enum Cls {
     Text,
     Edge,
     EdgeLabel,
-    NodeBorder(usize),
-    NodeText(usize),
 }
 
 pub(in crate::tui) const STY_DOT: u8 = 1;
@@ -39,9 +37,16 @@ pub(in crate::tui) struct Canvas {
 }
 
 impl Canvas {
-    pub(in crate::tui) fn new(w: usize, h: usize) -> Self {
-        let n = w * h;
-        Self {
+    /// Check the shared cell budget before any backing buffers are allocated.
+    pub(in crate::tui) fn new(w: usize, h: usize) -> Result<Self, Oversize> {
+        let n = w
+            .checked_mul(h)
+            .filter(|&cells| cells <= MAX_CANVAS_CELLS)
+            .ok_or(Oversize::Cells {
+                width: w,
+                height: h,
+            })?;
+        Ok(Self {
             w,
             h,
             ch: vec![' '; n],
@@ -51,7 +56,7 @@ impl Canvas {
             style: vec![0; n],
             occupied: vec![false; n],
             cur_style: STY_SOLID,
-        }
+        })
     }
 
     pub(in crate::tui) fn idx(&self, x: usize, y: usize) -> usize {
@@ -62,10 +67,7 @@ impl Canvas {
         if x >= self.w || y >= self.h {
             return;
         }
-        if c != CONT
-            && c.width().unwrap_or(0) == 0
-            && matches!(cls, Cls::Text | Cls::EdgeLabel | Cls::NodeText(_))
-        {
+        if c != CONT && c.width().unwrap_or(0) == 0 && matches!(cls, Cls::Text | Cls::EdgeLabel) {
             let mut previous = x.checked_sub(1);
             while let Some(px) = previous {
                 let i = self.idx(px, y);
@@ -128,7 +130,7 @@ impl Canvas {
         }
         self.mask[i] |= bits;
         self.style[i] |= self.cur_style;
-        if !is_border_class(self.cls[i]) {
+        if self.cls[i] != Cls::Border {
             self.cls[i] = class;
         }
     }
@@ -159,7 +161,7 @@ impl Canvas {
         let i = self.idx(x, y);
         self.mask[i] |= bits;
         self.style[i] |= self.cur_style;
-        if !is_border_class(self.cls[i]) {
+        if self.cls[i] != Cls::Border {
             self.cls[i] = Cls::Edge;
         }
     }
@@ -237,7 +239,7 @@ impl Canvas {
             let mut x = 0;
             while x < self.w {
                 let cls = self.cls[self.idx(x, y)];
-                if matches!(cls, Cls::Text | Cls::EdgeLabel | Cls::NodeText(_)) {
+                if matches!(cls, Cls::Text | Cls::EdgeLabel) {
                     let start = x;
                     while x < self.w && self.cls[self.idx(x, y)] == cls {
                         x += 1;
@@ -287,10 +289,7 @@ impl Canvas {
         }
     }
 
-    pub(in crate::tui) fn to_lines(
-        &self,
-        styles: &GraphStyles,
-    ) -> (Vec<Line<'static>>, Vec<String>) {
+    pub(in crate::tui) fn to_lines(&self, styles: &GraphStyles) -> GraphArt {
         let mut styled = Vec::with_capacity(self.h);
         let mut plain = Vec::with_capacity(self.h);
         for y in 0..self.h {
@@ -331,7 +330,10 @@ impl Canvas {
             styled.push(Line::from(spans));
             plain.push(plain_row.trim_end().to_string());
         }
-        (styled, plain)
+        GraphArt {
+            styled_lines: styled,
+            plain_lines: plain,
+        }
     }
 }
 
@@ -342,13 +344,7 @@ fn style_for(cls: Cls, styles: &GraphStyles) -> Style {
         Cls::Text => styles.node_text,
         Cls::Edge => styles.edge,
         Cls::EdgeLabel => styles.edge_label,
-        Cls::NodeBorder(index) => styles.node_style(index).border,
-        Cls::NodeText(index) => styles.node_style(index).text,
     }
-}
-
-fn is_border_class(cls: Cls) -> bool {
-    matches!(cls, Cls::Border | Cls::NodeBorder(_))
 }
 
 fn mask_char(mask: u8) -> char {

@@ -25,6 +25,17 @@ fn app_at(width: u16, height: u16) -> App {
     }
 }
 
+fn draw(app: &App) {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+        app.mouse.viewport.width,
+        app.mouse.viewport.height,
+    ))
+    .unwrap();
+    terminal
+        .draw(|frame| crate::tui::render(frame, app))
+        .unwrap();
+}
+
 #[test]
 fn clicking_code_copy_uses_unwrapped_source_after_scroll_and_resize() {
     for width in [140, 70] {
@@ -39,7 +50,8 @@ fn clicking_code_copy_uses_unwrapped_source_after_scroll_and_resize() {
             ..app_at(width, 40)
         };
         let chat = layout::regions(app.mouse.viewport, &app).chat;
-        let rows = chat::visible_text_rows(chat, &app);
+        draw(&app);
+        let rows = chat::painted_text_rows(&app);
         let (row, column) = rows
             .iter()
             .enumerate()
@@ -56,6 +68,61 @@ fn clicking_code_copy_uses_unwrapped_source_after_scroll_and_resize() {
         assert_eq!(actions, vec![AppAction::CopyText(source.into())]);
         assert!(app.mouse.selection.is_none());
     }
+}
+
+#[test]
+fn copy_uses_painted_source_until_streaming_and_resize_are_drawn() {
+    let mut app = App {
+        transcript: vec![TranscriptItem::Message(Message {
+            role: Role::Assistant,
+            text: "```rust\nlet first = 1;\n".into(),
+            complete: false,
+        })],
+        ..app_at(140, 40)
+    };
+    draw(&app);
+    let body = chat::painted_area(&app).unwrap();
+    let (row, column) = chat::painted_text_rows(&app)
+        .iter()
+        .enumerate()
+        .find_map(|(row, text)| {
+            text.find("COPY")
+                .map(|column| (row, text[..column].width()))
+        })
+        .unwrap();
+    let x = body.x + column as u16;
+    let y = body.y + row as u16;
+    app.apply(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    let TranscriptItem::Message(message) = &mut app.transcript[0] else {
+        unreachable!()
+    };
+    message.text.push_str("let second = 2;\n```");
+    message.complete = true;
+    app.apply(AppEvent::Input(crossterm::event::Event::Resize(70, 30)));
+    assert_eq!(
+        app.apply(mouse(MouseEventKind::Up(MouseButton::Left), x, y)),
+        vec![AppAction::CopyText("let first = 1;".into())]
+    );
+    app.mouse.toast = None;
+    draw(&app);
+    let body = chat::painted_area(&app).unwrap();
+    let (row, column) = chat::painted_text_rows(&app)
+        .iter()
+        .enumerate()
+        .find_map(|(row, text)| {
+            text.find("COPY")
+                .map(|column| (row, text[..column].width()))
+        })
+        .unwrap();
+    let x = body.x + column as u16;
+    let y = body.y + row as u16;
+    app.apply(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(
+        app.apply(mouse(MouseEventKind::Up(MouseButton::Left), x, y)),
+        vec![AppAction::CopyText(
+            "let first = 1;\nlet second = 2;".into()
+        )]
+    );
 }
 
 #[test]
@@ -91,6 +158,7 @@ fn dragging_visible_conversation_text_copies_it_and_shows_feedback() {
     };
     let chat = layout::regions(app.mouse.viewport, &app).chat;
     let text_y = chat.y + 2;
+    draw(&app);
 
     assert!(app
         .apply(mouse(
@@ -129,6 +197,7 @@ fn dragging_from_a_wide_grapheme_uses_terminal_columns() {
     };
     let chat = layout::regions(app.mouse.viewport, &app).chat;
     let text_y = chat.y + 2;
+    draw(&app);
 
     app.apply(mouse(
         MouseEventKind::Down(MouseButton::Left),
@@ -166,15 +235,18 @@ fn scrolling_over_the_conversation_moves_through_history() {
     let x = chat.x + chat.width / 2;
     let y = chat.y + chat.height / 2;
 
-    let latest_rows = chat::visible_text_rows(chat, &app);
+    draw(&app);
+    let latest_rows = chat::painted_text_rows(&app);
 
     app.apply(mouse(MouseEventKind::ScrollUp, x, y));
     assert_eq!(app.conversation_scroll_offset, 3);
-    assert_ne!(chat::visible_text_rows(chat, &app), latest_rows);
+    draw(&app);
+    assert_ne!(chat::painted_text_rows(&app), latest_rows);
 
     app.apply(mouse(MouseEventKind::ScrollDown, x, y));
     assert_eq!(app.conversation_scroll_offset, 0);
-    assert_eq!(chat::visible_text_rows(chat, &app), latest_rows);
+    draw(&app);
+    assert_eq!(chat::painted_text_rows(&app), latest_rows);
 }
 
 #[test]
