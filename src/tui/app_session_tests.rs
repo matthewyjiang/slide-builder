@@ -30,6 +30,18 @@ fn session_commands_request_picker_without_sending_a_prompt() {
 }
 
 #[test]
+fn new_command_requests_a_fresh_session_without_sending_a_prompt() {
+    let mut app = App::default();
+    app.input.set_text("/new");
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter)),
+        vec![AppAction::NewSession]
+    );
+    assert!(app.transcript.is_empty());
+    assert!(app.input.text.is_empty());
+}
+
+#[test]
 fn session_picker_filters_selects_and_keeps_failures_visible_until_cancelled() {
     let entries = ["Research", "Launch"]
         .into_iter()

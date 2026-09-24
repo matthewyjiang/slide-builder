@@ -20,6 +20,7 @@ pub enum Command {
     ChangeModel,
     Login,
     Logout,
+    NewSession,
     Sessions,
     ResumeSession,
     ToggleAttachment,
@@ -50,7 +51,7 @@ pub struct SlashCommand {
     pub detail: &'static str,
 }
 
-const COMMANDS: [CommandItem; 15] = [
+const COMMANDS: [CommandItem; 16] = [
     CommandItem {
         command: Command::OpenDeck,
         slash_name: "/open",
@@ -105,6 +106,13 @@ const COMMANDS: [CommandItem; 15] = [
         slash_name: "/logout",
         label: "Log out of provider",
         detail: "Remove a saved provider connection",
+        shortcut: "",
+    },
+    CommandItem {
+        command: Command::NewSession,
+        slash_name: "/new",
+        label: "New session",
+        detail: "Start a fresh conversation on this deck and design",
         shortcut: "",
     },
     CommandItem {

@@ -12,7 +12,7 @@ use slide_builder::{
         deck_engine::DeckEngine,
         policy::{PermissionMode, SlidePolicy},
         runtime::{build_rho, AgentHandle},
-        session_store::{SessionStore, StoredSession},
+        session_store::SessionStore,
         tools::UiToolCommand,
     },
     config::{Config, PermissionMode as ConfigPermissionMode},
@@ -94,14 +94,14 @@ async fn run_app() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&e.inspect(None).await?)?);
         return Ok(());
     }
-    let mut restored = None;
+    let mut start = sessions::Start::Fresh;
     let first = if first.as_deref() == Some(Path::new("sessions")) {
         match sessions::run(sessions::Command::parse(args)?).await? {
             sessions::Launch::Exit => return Ok(()),
             sessions::Launch::Fresh(deck) => Some(deck),
             sessions::Launch::Continue(session) => {
                 let deck = session.state.deck.clone();
-                restored = Some(*session);
+                start = sessions::Start::Resume(session);
                 Some(deck)
             }
         }
@@ -119,7 +119,7 @@ async fn run_app() -> Result<()> {
             return Ok(());
         }
     };
-    let mut engine = if restored.is_some() {
+    let mut engine = if start.saved().is_some() {
         DeckEngine::new(&deck)?
     } else {
         open_engine(&deck).await?
@@ -130,14 +130,14 @@ async fn run_app() -> Result<()> {
             println!("Deck loaded successfully.");
             return Ok(());
         }
-        match run_tui(engine, restored.take()).await? {
+        match run_tui(engine, std::mem::take(&mut start)).await? {
             SessionOutcome::Exit => return Ok(()),
             SessionOutcome::Reopen(next) => engine = open_engine(&next).await?,
-            SessionOutcome::Resume {
-                session,
+            SessionOutcome::Switch {
+                start: next_start,
                 engine: next,
             } => {
-                restored = Some(*session);
+                start = next_start;
                 engine = next;
             }
         }
@@ -158,9 +158,10 @@ enum SessionOutcome {
     Exit,
     /// The user chose another deck via `/open`; start a fresh session on it.
     Reopen(PathBuf),
-    /// The destination has been validated; the current session saves before handoff.
-    Resume {
-        session: Box<StoredSession>,
+    /// `/resume` or `/new`. A resumed destination has been validated; the current
+    /// session saves before handoff.
+    Switch {
+        start: sessions::Start,
         engine: DeckEngine,
     },
 }
@@ -221,15 +222,15 @@ fn missing_provider_credential(error: &anyhow::Error) -> bool {
     )
 }
 
-async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<SessionOutcome> {
+async fn run_tui(engine: DeckEngine, start: sessions::Start) -> Result<SessionOutcome> {
     let paths = AppPaths::discover()?;
     let config_exists = paths.config_file().exists();
     let mut config = Config::load()?;
     let mut global_config = config.clone();
-    if let Some(session) = &restored {
-        config.provider = session.state.provider.clone();
-        config.auth = session.state.auth.clone();
-        config.model = session.state.model.clone();
+    if let Some(state) = start.state() {
+        config.provider = state.provider.clone();
+        config.auth = state.auth.clone();
+        config.model = state.model.clone();
     }
     if std::env::var_os(FORCE_FIRST_RUN_ENV).as_deref() == Some(std::ffi::OsStr::new("1"))
         || !config_exists
@@ -238,8 +239,8 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         onboarding::run(&mut config).await?;
         global_config = config.clone();
     }
-    let cwd = match &restored {
-        Some(session) => session.state.cwd.clone(),
+    let cwd = match start.state() {
+        Some(state) => state.cwd.clone(),
         None => std::env::current_dir()?,
     };
     paths.create_app_dirs()?;
@@ -261,12 +262,8 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         app_data_dir: &paths.data_dir,
         design: None,
         skills: &skills,
-        slide_index: restored.as_ref().map_or(1, |session| {
-            session
-                .state
-                .active_slide
-                .min(slide_count.saturating_sub(1))
-                + 1
+        slide_index: start.state().map_or(1, |state| {
+            state.active_slide.min(slide_count.saturating_sub(1)) + 1
         }),
         slide_count,
         deck_generation: snapshot.generation,
@@ -323,16 +320,15 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         }
         Err(error) => return Err(error),
     };
-    let agent = match &restored {
+    let agent = match start.saved() {
         Some(session) => AgentHandle::restore(rho, session.snapshot.clone(), prompt).await?,
         None => AgentHandle::new(rho).await?,
     };
     let store = SessionStore::open(&paths.database_file())?;
-    if let Some(session) = &restored {
+    if let Some(session) = start.saved() {
         store.check_revision(session)?;
     }
     let session_id = agent.snapshot().session_id().to_string();
-    let mut saved_session = restored;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let design_import = DesignImportWorkflow::default();
@@ -378,8 +374,8 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         available_models: slide_builder::models::discover_available_models(&config),
         ..App::default()
     };
-    if let Some(session) = &saved_session {
-        sessions::restore_app(&mut app, &session.state, slide_count);
+    if let Some(state) = start.state() {
+        sessions::restore_app(&mut app, state, slide_count);
     }
     app.configure_conversation_rendering(cwd.clone(), preview_image.picker());
     warn_unknown_context_window(&mut app, &config);
@@ -397,11 +393,12 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
 
     let mut pending_design_context = design_selection::restore(
         &mut app,
-        saved_session.as_ref().map(|session| &session.state),
+        start.design_prior(),
         &store,
         engine.path(),
         Sources::new(&config, Some(&managed_design_packages)),
     );
+    let mut saved_session = start.into_saved();
     let mut import_picker_directory = cwd.clone();
     let mut run_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut export_task: Option<tokio::task::JoinHandle<()>> = None;
@@ -622,6 +619,20 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             }
                         }
                     }
+                    AppAction::NewSession => {
+                        if app.run_active || agent.is_active() || design_import.is_active() {
+                            push_system_message(
+                                &mut app,
+                                "Finish the current operation before starting a new session.".into(),
+                            );
+                        } else {
+                            let state = sessions::carryover(engine.path(), &cwd, &config, &app);
+                            return Ok(SessionOutcome::Switch {
+                                start: sessions::Start::Carryover(Box::new(state)),
+                                engine: engine.clone(),
+                            });
+                        }
+                    }
                     AppAction::RenameSession { id, name } => {
                         let result = if app.run_active || agent.is_active() || design_import.is_active() {
                             Err(anyhow::anyhow!("Finish the current operation before managing sessions."))
@@ -653,8 +664,8 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                             app.apply(AppEvent::SessionResumeFailed("This session is already open.".into()));
                         } else {
                             match sessions::prepare_resume(&store, &id).await {
-                                Ok((session, engine)) => return Ok(SessionOutcome::Resume {
-                                    session: Box::new(session), engine,
+                                Ok((session, engine)) => return Ok(SessionOutcome::Switch {
+                                    start: sessions::Start::Resume(Box::new(session)), engine,
                                 }),
                                 Err(error) => { app.apply(AppEvent::SessionResumeFailed(format!("Could not resume session: {error:#}"))); }
                             }

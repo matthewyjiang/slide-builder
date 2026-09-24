@@ -901,6 +901,7 @@ impl App {
             Command::ChangeModel => vec![AppAction::OpenModelPicker],
             Command::Login => vec![AppAction::Login],
             Command::Logout => vec![AppAction::Logout],
+            Command::NewSession => vec![AppAction::NewSession],
             Command::Sessions => vec![AppAction::OpenSessionManager],
             Command::ResumeSession => vec![AppAction::OpenSessionPicker],
             Command::ToggleAttachment => {

@@ -18,6 +18,22 @@ returns. Resumed sessions keep the design saved with them.
 
 The `/design` picker opens on the active design and marks it as current.
 
+## Start a new session
+
+Use `/new` to start a fresh conversation on the deck you're working on,
+without leaving the workspace. The new conversation keeps the active design
+(including Default, even if the deck remembers a different one), the active
+slide, the workspace directory, and the current provider/model. Because the new
+conversation has never seen the design's guidelines, they're sent again with
+your first message. The system prompt is rebuilt from the deck and workspace as
+usual.
+
+Conversation history, the transcript, and any unsent draft stay with the
+previous session. If that session was already saved, it's checkpointed and
+remains available in `/resume`. Like a resumed model, a kept model is
+session-local and doesn't become the global default. Finish any active run or
+design import before starting a new session.
+
 ## Resume inside the TUI
 
 Use `/resume` for a quick picker of saved sessions, most recently updated first.

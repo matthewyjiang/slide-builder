@@ -76,7 +76,7 @@ fn picking_a_design_remembers_it_so_a_fresh_session_restores_it() {
     let mut fresh = App::default();
     let context = restore(
         &mut fresh,
-        /*session*/ None,
+        Prior::Deck,
         &fixture.store,
         &fixture.deck,
         fixture.sources(),
@@ -103,7 +103,7 @@ fn unavailable_remembered_design_falls_back_without_being_forgotten() {
 
     let context = restore(
         &mut app,
-        /*session*/ None,
+        Prior::Deck,
         &fixture.store,
         &fixture.deck,
         fixture.sources(),
@@ -137,7 +137,7 @@ fn saved_sessions_keep_their_design_over_the_decks_remembered_one() {
 
     let context = restore(
         &mut app,
-        Some(&state),
+        Prior::Saved(&state),
         &fixture.store,
         &fixture.deck,
         fixture.sources(),
@@ -147,6 +147,54 @@ fn saved_sessions_keep_their_design_over_the_decks_remembered_one() {
         (context, app.design),
         (Some("pending".into()), active("Acme", &acme))
     );
+    assert!(app.transcript.is_empty());
+}
+
+#[test]
+fn new_sessions_keep_the_previous_design_and_owe_its_guidelines_again() {
+    let fixture = Fixture::new();
+    let acme = fixture.package("Acme");
+    let studio = fixture.package("Studio");
+    fixture
+        .store
+        .remember_deck_design(&fixture.deck, &studio)
+        .unwrap();
+    let kept = active("Acme", &acme);
+    let mut app = App::default();
+
+    let context = restore(
+        &mut app,
+        Prior::Kept(kept.as_ref()),
+        &fixture.store,
+        &fixture.deck,
+        fixture.sources(),
+    )
+    .unwrap();
+
+    assert_eq!(app.design, kept);
+    assert!(context.contains("This new session keeps the user's selected design 'Acme'"));
+    assert_eq!(system_messages(&app), vec!["Keeping design 'Acme'."]);
+}
+
+#[test]
+fn new_sessions_keep_default_even_when_the_deck_remembers_a_design() {
+    let fixture = Fixture::new();
+    let studio = fixture.package("Studio");
+    fixture
+        .store
+        .remember_deck_design(&fixture.deck, &studio)
+        .unwrap();
+    let mut app = App::default();
+
+    let context = restore(
+        &mut app,
+        Prior::Kept(/*design*/ None),
+        &fixture.store,
+        &fixture.deck,
+        fixture.sources(),
+    );
+
+    assert_eq!((context, app.design.clone()), (None, None));
     assert!(app.transcript.is_empty());
 }
 
@@ -162,7 +210,7 @@ fn sessions_saved_with_only_a_design_name_find_the_package_by_name() {
 
     restore(
         &mut app,
-        Some(&state),
+        Prior::Saved(&state),
         &fixture.store,
         &fixture.deck,
         fixture.sources(),

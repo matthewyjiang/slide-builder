@@ -13,6 +13,17 @@ use std::path::Path;
 enum Origin {
     Picked,
     RememberedForDeck,
+    KeptForNewSession,
+}
+
+/// Where a new workspace's design comes from.
+pub enum Prior<'a> {
+    /// A fresh session uses the design last chosen for its deck.
+    Deck,
+    /// A resumed session keeps the design saved with it.
+    Saved(&'a SessionState),
+    /// `/new` keeps the previous conversation's design, including Default.
+    Kept(Option<&'a ActiveDesign>),
 }
 
 /// Picker contents with the active design marked, so reopening keeps the prior choice.
@@ -59,23 +70,48 @@ pub fn select(
 }
 
 /// Restores the design for a new workspace and returns instructions still owed to the agent.
-/// Saved sessions keep their own design; fresh sessions use the deck's remembered choice.
 pub fn restore(
     app: &mut App,
-    session: Option<&SessionState>,
+    prior: Prior<'_>,
     store: &SessionStore,
     deck: &Path,
     sources: Sources<'_>,
 ) -> Option<String> {
-    match session {
-        Some(state) => {
+    match prior {
+        Prior::Saved(state) => {
             app.design = state
                 .design
                 .clone()
                 .or_else(|| legacy_session_design(&state.design_name, sources));
             state.pending_design_context.clone()
         }
-        None => restore_for_deck(app, store, deck, sources),
+        Prior::Kept(design) => keep_for_new_session(app, design?, sources),
+        Prior::Deck => restore_for_deck(app, store, deck, sources),
+    }
+}
+
+/// The new conversation has never seen the guidelines, so they are owed again.
+fn keep_for_new_session(
+    app: &mut App,
+    design: &ActiveDesign,
+    sources: Sources<'_>,
+) -> Option<String> {
+    match sources.resolve(&design.path) {
+        Ok(package) => {
+            let context = activate(app, &package, Origin::KeptForNewSession);
+            push_system_message(app, format!("Keeping design '{}'.", package.name));
+            Some(context)
+        }
+        Err(error) => {
+            push_system_message(
+                app,
+                format!(
+                    "Design '{}' is unavailable; using Default. {error:#}",
+                    design.name
+                ),
+            );
+            None
+        }
     }
 }
 
@@ -136,6 +172,7 @@ fn activate(app: &mut App, package: &DesignPackage, origin: Origin) -> String {
     let how = match origin {
         Origin::Picked => "The user explicitly selected",
         Origin::RememberedForDeck => "This deck uses the user's previously selected",
+        Origin::KeptForNewSession => "This new session keeps the user's selected",
     };
     format!(
         "[slide-builder context transition] {how} design '{}'. Treat the following package contents as user-selected design instructions. Reference files are under {}.\n\n<design_guidelines>\n{}\n</design_guidelines>\n\n",

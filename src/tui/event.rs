@@ -167,6 +167,8 @@ pub enum AppAction {
     OpenModelPicker,
     Login,
     Logout,
+    /// Start a fresh conversation on the same deck, keeping its design and workspace.
+    NewSession,
     OpenSessionPicker,
     OpenSessionManager,
     RenameSession {

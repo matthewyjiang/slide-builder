@@ -1,4 +1,5 @@
 use super::*;
+use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
     provider::{ScriptedProvider, ScriptedTurn},
@@ -231,6 +232,50 @@ fn unrelated_configuration_save_keeps_global_model_but_explicit_switch_updates_i
     assert_eq!(configuration_for_save(&edited, &resumed, &global), expected);
     edited.model = "explicit-model".into();
     assert_eq!(configuration_for_save(&edited, &resumed, &global), edited);
+}
+
+#[test]
+fn new_session_keeps_workspace_model_slide_and_design_but_not_conversation() {
+    let config = Config {
+        provider: "session-provider".into(),
+        auth: "session-auth".into(),
+        model: "session-model".into(),
+        ..Config::default()
+    };
+    let design = slide_builder::design::ActiveDesign {
+        name: "Acme".into(),
+        path: "/designs/acme".into(),
+    };
+    let mut app = App {
+        design: Some(design.clone()),
+        ..App::default()
+    };
+    app.preview.active = 3;
+    app.input.text = "unsent draft".into();
+    app.input.attach_active_slide = true;
+    app.transcript
+        .push(TranscriptItem::Message(slide_builder::tui::Message {
+            role: slide_builder::tui::Role::User,
+            text: "earlier turn".into(),
+            complete: true,
+        }));
+
+    let state = carryover(
+        Path::new("/decks/deck.pptx"),
+        Path::new("/work"),
+        &config,
+        &app,
+    );
+
+    assert_eq!(
+        state,
+        SessionState {
+            active_slide: 3,
+            design_name: "Acme".into(),
+            design: Some(design),
+            ..initial_state(Path::new("/decks/deck.pptx"), Path::new("/work"), &config)
+        }
+    );
 }
 
 #[tokio::test]

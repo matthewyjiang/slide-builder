@@ -1,4 +1,5 @@
 //! CLI session commands and the persisted subset of the interactive workspace.
+use crate::design_selection::Prior;
 use anyhow::{bail, Context, Result};
 use slide_builder::{
     agent::{
@@ -28,6 +29,62 @@ pub enum Launch {
     Exit,
     Fresh(PathBuf),
     Continue(Box<StoredSession>),
+}
+
+/// How an interactive workspace begins.
+#[derive(Default)]
+pub enum Start {
+    /// A new conversation in the current directory with the deck's remembered design.
+    #[default]
+    Fresh,
+    /// A new conversation started with `/new`, inheriting the previous workspace's setup.
+    Carryover(Box<SessionState>),
+    /// A saved conversation restored with its own state.
+    Resume(Box<StoredSession>),
+}
+
+impl Start {
+    /// Workspace state the new session inherits: model, workspace, slide, and design.
+    pub fn state(&self) -> Option<&SessionState> {
+        match self {
+            Self::Fresh => None,
+            Self::Carryover(state) => Some(state),
+            Self::Resume(session) => Some(&session.state),
+        }
+    }
+
+    pub fn saved(&self) -> Option<&StoredSession> {
+        match self {
+            Self::Fresh | Self::Carryover(_) => None,
+            Self::Resume(session) => Some(session),
+        }
+    }
+
+    pub fn into_saved(self) -> Option<StoredSession> {
+        match self {
+            Self::Fresh | Self::Carryover(_) => None,
+            Self::Resume(session) => Some(*session),
+        }
+    }
+
+    pub fn design_prior(&self) -> Prior<'_> {
+        match self {
+            Self::Fresh => Prior::Deck,
+            Self::Carryover(state) => Prior::Kept(state.design.as_ref()),
+            Self::Resume(session) => Prior::Saved(&session.state),
+        }
+    }
+}
+
+/// `/new` keeps the model, workspace, active slide, and design, but not the history,
+/// transcript, or draft. The design's guidelines are sent again on the first message.
+pub fn carryover(deck: &Path, cwd: &Path, config: &Config, app: &App) -> SessionState {
+    SessionState {
+        active_slide: app.preview.active,
+        design_name: slide_builder::design::display_name(app.design.as_ref()).into(),
+        design: app.design.clone(),
+        ..initial_state(deck, cwd, config)
+    }
 }
 
 /// Apply manager actions without allowing deletion of the live checkpoint record.
