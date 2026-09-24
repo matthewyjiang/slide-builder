@@ -24,7 +24,7 @@ pub fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 Style::default().fg(theme::TEXT),
             ),
             Span::styled(
-                format!("  /  {}", app.design_name),
+                format!("  /  {}", crate::design::display_name(app.design.as_ref())),
                 Style::default().fg(theme::MUTED),
             ),
         ]))

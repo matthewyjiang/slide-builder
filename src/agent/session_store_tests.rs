@@ -20,6 +20,10 @@ fn state() -> SessionState {
         model: "test".into(),
         active_slide: 2,
         design_name: "Studio".into(),
+        design: Some(crate::design::ActiveDesign {
+            name: "Studio".into(),
+            path: "/designs/studio".into(),
+        }),
         pending_design_context: Some("selected guidelines".into()),
         transcript: vec![],
         draft: "next edit".into(),
@@ -132,4 +136,42 @@ fn most_recent_uses_write_order_even_when_timestamps_tie() {
         .execute("UPDATE sessions SET updated_at=1", [])
         .unwrap();
     assert_eq!(store.list().unwrap()[0].id, second.id);
+}
+
+#[test]
+fn deck_designs_persist_per_deck_and_survive_reopening() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("app.sqlite3");
+    let deck = Path::new("/decks/example.pptx");
+    let store = SessionStore::open(&path).unwrap();
+    assert_eq!(store.deck_design(deck).unwrap(), None);
+    store
+        .remember_deck_design(deck, Path::new("/designs/acme"))
+        .unwrap();
+    store
+        .remember_deck_design(deck, Path::new("/designs/studio"))
+        .unwrap();
+    drop(store);
+    let reopened = SessionStore::open(&path).unwrap();
+    assert_eq!(
+        [deck, Path::new("/decks/other.pptx")].map(|deck| reopened.deck_design(deck).unwrap()),
+        [Some(PathBuf::from("/designs/studio")), None]
+    );
+}
+
+#[test]
+fn sessions_saved_before_active_designs_load_without_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::open(&directory.path().join("app.sqlite3")).unwrap();
+    let session = store.create(snapshot(), state()).unwrap();
+    let mut legacy = serde_json::to_value(&session.state).unwrap();
+    legacy.as_object_mut().unwrap().remove("design");
+    store
+        .connection
+        .execute(
+            "UPDATE sessions SET state=?1 WHERE id=?2",
+            params![legacy.to_string(), session.id],
+        )
+        .unwrap();
+    assert_eq!(store.load(&session.id).unwrap().state.design, None);
 }

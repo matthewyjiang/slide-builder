@@ -113,8 +113,10 @@ pub enum AppEvent {
         error: String,
     },
     ImportDesignCancelled,
+    /// Discovered packages; `current` indexes the active design if listed.
     DesignPickerOpened {
         entries: Vec<(String, PathBuf)>,
+        current: Option<usize>,
     },
     /// Keyring-discovered models; `current` indexes the active one if listed.
     ModelPickerOpened {

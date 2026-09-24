@@ -14,7 +14,11 @@ pub struct SessionState {
     pub auth: String,
     pub model: String,
     pub active_slide: usize,
+    /// Display name only; kept so older builds can still read sessions. Sessions saved
+    /// before `design` existed carry only this name.
     pub design_name: String,
+    #[serde(default)]
+    pub design: Option<crate::design::ActiveDesign>,
     pub pending_design_context: Option<String>,
     pub transcript: Vec<crate::tui::TranscriptItem>,
     pub draft: String,
@@ -90,6 +94,13 @@ impl SessionStore {
             1 => {}
             _ => bail!("unsupported application database version {version}; update slide-builder"),
         }
+        // Additive table: older builds on schema version 1 keep working and ignore it.
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS deck_designs (
+                deck TEXT PRIMARY KEY, design TEXT NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );",
+        )?;
         transaction.commit()?;
         Ok(Self { connection })
     }
@@ -216,6 +227,32 @@ impl SessionStore {
             bail!("session {id} not found");
         }
         Ok(())
+    }
+}
+
+/// Per-deck preferences share the application database but outlive any single session.
+impl SessionStore {
+    /// Remember the design package the user explicitly chose for a deck, independent of
+    /// any session, so opening the deck again starts with that design.
+    pub fn remember_deck_design(&self, deck: &Path, design: &Path) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO deck_designs(deck,design) VALUES (?1,?2)
+             ON CONFLICT(deck) DO UPDATE SET design=excluded.design,updated_at=unixepoch()",
+            params![deck.to_string_lossy(), design.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
+    pub fn deck_design(&self, deck: &Path) -> Result<Option<PathBuf>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT design FROM deck_designs WHERE deck=?1",
+                [deck.to_string_lossy()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(PathBuf::from))
     }
 }
 

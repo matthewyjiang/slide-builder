@@ -172,6 +172,7 @@ async fn automatic_compaction_flows_through_agent_ui_and_saved_snapshot() {
                 model: "model".into(),
                 active_slide: 0,
                 design_name: "Studio".into(),
+                design: None,
                 pending_design_context: None,
                 transcript: app.transcript.clone(),
                 draft: String::new(),

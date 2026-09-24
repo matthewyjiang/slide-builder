@@ -7,6 +7,17 @@ or browsing settings does not create a saved session.
 The conversation area stays blank until it has messages or tool activity, except
 for setup warnings such as an unknown model context window.
 
+## Remembered deck designs
+
+Choosing a package with `/design` also remembers it for that deck, whether or not
+a message was sent. A fresh conversation on the same deck starts with that design
+selected and sends its guidelines with your first message; the conversation
+notes which design was restored. If the package is missing or invalid, the
+session uses Default and keeps the remembered choice for when the package
+returns. Resumed sessions keep the design saved with them.
+
+The `/design` picker opens on the active design and marks it as current.
+
 ## Resume inside the TUI
 
 Use `/resume` for a quick picker of saved sessions, most recently updated first.
@@ -65,7 +76,7 @@ new ID without authenticating or starting a model request. The existing
 
 Resume restores SDK conversation history, the selected provider/model and auth
 mode, transcript and tool results, active slide, draft and attachment toggle,
-design name, and pending design instructions. Credentials still come from the
+selected design package, and pending design instructions. Credentials still come from the
 credential store, not the session database. Current configuration supplies
 permissions and renderer settings.
 

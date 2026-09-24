@@ -196,3 +196,18 @@ fn workspace_uses_separators_without_numbered_panel_labels() {
         );
     }
 }
+
+#[test]
+fn design_picker_marks_the_current_design_apart_from_the_selection() {
+    let mut app = App::default();
+    app.apply(crate::tui::AppEvent::DesignPickerOpened {
+        entries: vec![
+            ("Acme".into(), PathBuf::from("/designs/acme")),
+            ("Studio".into(), PathBuf::from("/designs/studio")),
+        ],
+        current: Some(1),
+    });
+    let content = render_at(100, 30, &app);
+    assert!(content.contains("    Acme"));
+    assert!(content.contains("› ● Studio  current"));
+}

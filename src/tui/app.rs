@@ -269,7 +269,8 @@ pub struct App {
     pub export_active: bool,
     pub should_quit: bool,
     pub deck_name: String,
-    pub design_name: String,
+    /// `None` is the built-in default design.
+    pub design: Option<crate::design::ActiveDesign>,
     pub mode: String,
     pub model: String,
     pub token_usage: Option<(u64, u64)>,
@@ -303,7 +304,7 @@ impl Default for App {
             export_active: false,
             should_quit: false,
             deck_name: "No deck".into(),
-            design_name: "Default".into(),
+            design: None,
             mode: "supervised".into(),
             model: "-".into(),
             token_usage: None,
@@ -465,11 +466,10 @@ impl App {
                 });
                 vec![]
             }
-            AppEvent::DesignPickerOpened { entries } if !self.run_active => {
-                self.modal = ModalState::DesignPicker(super::modal::DesignPickerState {
-                    entries,
-                    ..Default::default()
-                });
+            AppEvent::DesignPickerOpened { entries, current } if !self.run_active => {
+                self.modal = ModalState::DesignPicker(super::modal::DesignPickerState::new(
+                    entries, current,
+                ));
                 vec![]
             }
             AppEvent::DesignPickerOpened { .. } => vec![],

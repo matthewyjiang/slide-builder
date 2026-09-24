@@ -67,7 +67,7 @@ pub(crate) fn popup(frame: &mut Frame<'_>, width: u16, height: u16) -> Rect {
 
 use ratatui::{
     style::{Color, Style},
-    text::{Line, Text},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
@@ -85,12 +85,14 @@ pub fn render(frame: &mut Frame<'_>, state: &ModalState) {
                 .map(|p| p.display().to_string())
                 .collect(),
             state.selected,
+            /*current*/ None,
         ),
         ModalState::DesignPicker(state) => render_list(
             frame,
             "Design package",
             state.entries.iter().map(|(name, _)| name.clone()).collect(),
             state.selected,
+            state.current,
         ),
         ModalState::ImportDesignPicker(state) => filesystem_picker::render(frame, state),
         ModalState::ModelPicker(state) => model_picker::render(frame, state),
@@ -120,7 +122,15 @@ pub fn render(frame: &mut Frame<'_>, state: &ModalState) {
     }
 }
 
-fn render_list(frame: &mut Frame<'_>, title: &str, entries: Vec<String>, selected: usize) {
+/// Renders a plain choice list. `current` marks the entry already in effect, matching the
+/// model picker's badge, independently of the keyboard selection.
+fn render_list(
+    frame: &mut Frame<'_>,
+    title: &str,
+    entries: Vec<String>,
+    selected: usize,
+    current: Option<usize>,
+) {
     let lines = if entries.is_empty() {
         vec![Line::styled(
             "No entries found",
@@ -131,14 +141,31 @@ fn render_list(frame: &mut Frame<'_>, title: &str, entries: Vec<String>, selecte
             .into_iter()
             .enumerate()
             .map(|(i, entry)| {
-                Line::styled(
-                    format!("{} {entry}", if i == selected { "›" } else { " " }),
-                    if i == selected {
-                        Style::default().fg(Color::Cyan)
-                    } else {
-                        Style::default()
-                    },
-                )
+                let is_current = current == Some(i);
+                let mut spans = vec![
+                    Span::raw(if i == selected { "› " } else { "  " }),
+                    Span::styled(
+                        match (is_current, current) {
+                            (true, _) => "● ",
+                            // Keep names aligned with the marked row.
+                            (false, Some(_)) => "  ",
+                            (false, None) => "",
+                        },
+                        Style::default().fg(crate::tui::theme::SUCCESS),
+                    ),
+                    Span::raw(entry),
+                ];
+                if is_current {
+                    spans.push(Span::styled(
+                        "  current",
+                        Style::default().fg(crate::tui::theme::SUCCESS),
+                    ));
+                }
+                Line::from(spans).style(if i == selected {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default()
+                })
             })
             .collect()
     };

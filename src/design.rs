@@ -1,5 +1,5 @@
 use crate::config::{Config, DesignPackageConfig};
-use crate::paths::{expand_tilde, AppPaths};
+use crate::paths::expand_tilde;
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,18 @@ pub struct DesignPackage {
     pub templates: Vec<DeckTemplate>,
 }
 
+/// The package currently guiding a workspace. Absence means the built-in default design.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ActiveDesign {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+/// The name shown for a workspace, falling back to the built-in default design.
+pub fn display_name(design: Option<&ActiveDesign>) -> &str {
+    design.map_or("Default", |design| design.name.as_str())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeckTemplate {
     pub path: PathBuf,
@@ -21,6 +33,13 @@ pub struct DeckTemplate {
 }
 
 impl DesignPackage {
+    pub fn active(&self) -> ActiveDesign {
+        ActiveDesign {
+            name: self.name.clone(),
+            path: self.path.clone(),
+        }
+    }
+
     pub fn load(path: &Path, configured_name: Option<&str>) -> Result<Self> {
         let path = expand_tilde(path)?;
         if !path.is_dir() {
@@ -68,62 +87,88 @@ impl DesignPackage {
     }
 }
 
-/// Discovers explicit packages first, then the scan directory itself and its immediate children.
-/// Invalid scanned candidates are ignored; invalid explicit entries are reported to the user.
-pub fn discover(config: &Config) -> Result<Vec<DesignPackage>> {
-    let managed = AppPaths::discover()?.design_packages_dir();
-    discover_with_managed(config, Some(&managed))
+/// Where design packages come from: explicit configuration, the managed import directory,
+/// and configured scan roots.
+#[derive(Clone, Copy)]
+pub struct Sources<'a> {
+    config: &'a Config,
+    managed_root: Option<&'a Path>,
 }
 
-pub fn discover_with_managed(
-    config: &Config,
-    managed_root: Option<&Path>,
-) -> Result<Vec<DesignPackage>> {
-    let mut packages = Vec::new();
-    let mut seen = HashSet::new();
-    for entry in &config.design_packages {
-        let package = load_configured(entry)?;
-        if seen.insert(path_identity(&package.path)) {
-            packages.push(package);
+impl<'a> Sources<'a> {
+    pub fn new(config: &'a Config, managed_root: Option<&'a Path>) -> Self {
+        Self {
+            config,
+            managed_root,
         }
     }
-    let mut scan_roots = Vec::new();
-    if let Some(managed_root) = managed_root {
-        scan_roots.push(managed_root.to_path_buf());
-    }
-    scan_roots.extend(config.expanded_design_scan_dirs()?);
-    for root in scan_roots {
-        let mut candidates = Vec::new();
-        if root.join("DESIGN.md").is_file() {
-            candidates.push(root.clone());
-        }
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            candidates.extend(
-                entries
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.path())
-                    .filter(|path| {
-                        path.is_dir()
-                            && path.join("DESIGN.md").is_file()
-                            && !path
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .is_some_and(|name| name.starts_with('.'))
-                    }),
-            );
-        }
-        candidates.sort();
-        for candidate in candidates {
-            if seen.contains(&path_identity(&candidate)) {
-                continue;
-            }
-            if let Ok(package) = DesignPackage::load(&candidate, None) {
-                seen.insert(path_identity(&package.path));
+
+    /// Discovers explicit packages first, then each scan root itself and its immediate children.
+    /// Invalid scanned candidates are ignored; invalid explicit entries are reported to the user.
+    pub fn discover(&self) -> Result<Vec<DesignPackage>> {
+        let mut packages = Vec::new();
+        let mut seen = HashSet::new();
+        for entry in &self.config.design_packages {
+            let package = load_configured(entry)?;
+            if seen.insert(path_identity(&package.path)) {
                 packages.push(package);
             }
         }
+        let mut scan_roots = Vec::new();
+        if let Some(managed_root) = self.managed_root {
+            scan_roots.push(managed_root.to_path_buf());
+        }
+        scan_roots.extend(self.config.expanded_design_scan_dirs()?);
+        for root in scan_roots {
+            let mut candidates = Vec::new();
+            if root.join("DESIGN.md").is_file() {
+                candidates.push(root.clone());
+            }
+            if let Ok(entries) = std::fs::read_dir(&root) {
+                candidates.extend(
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.is_dir()
+                                && path.join("DESIGN.md").is_file()
+                                && !path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .is_some_and(|name| name.starts_with('.'))
+                        }),
+                );
+            }
+            candidates.sort();
+            for candidate in candidates {
+                if seen.contains(&path_identity(&candidate)) {
+                    continue;
+                }
+                if let Ok(package) = DesignPackage::load(&candidate, None) {
+                    seen.insert(path_identity(&package.path));
+                    packages.push(package);
+                }
+            }
+        }
+        Ok(packages)
     }
-    Ok(packages)
+
+    /// Resolves a remembered package path through discovery so configured display names
+    /// survive, falling back to loading the directory directly when it is no longer discoverable.
+    pub fn resolve(&self, path: &Path) -> Result<DesignPackage> {
+        // An invalid configured entry must not hide a remembered package that still loads.
+        self.discover()
+            .ok()
+            .into_iter()
+            .flatten()
+            .find(|package| is_same_package(&package.path, path))
+            .map_or_else(|| DesignPackage::load(path, None), Ok)
+    }
+}
+
+/// Compares package locations by filesystem identity rather than spelling.
+pub fn is_same_package(left: &Path, right: &Path) -> bool {
+    path_identity(left) == path_identity(right)
 }
 
 fn load_configured(entry: &DesignPackageConfig) -> Result<DesignPackage> {
@@ -243,10 +288,32 @@ mod tests {
             design_scan_dirs: vec![root.clone()],
             ..Config::default()
         };
-        let found = discover_with_managed(&config, None).unwrap();
+        let found = Sources::new(&config, None).discover().unwrap();
         assert_eq!(
             found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
             vec!["Configured", "scanned"]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolving_remembered_packages_keeps_configured_names_and_loads_undiscovered_paths() {
+        let root = temp_dir();
+        let configured = package(&root.join("configured"), "explicit");
+        let undiscovered = package(&root.join("elsewhere"), "Loose Design");
+        let config = Config {
+            design_packages: vec![DesignPackageConfig {
+                name: "Configured".into(),
+                path: configured.clone(),
+            }],
+            design_scan_dirs: vec![],
+            ..Config::default()
+        };
+        let resolved = [configured, undiscovered]
+            .map(|path| Sources::new(&config, None).resolve(&path).unwrap().name);
+        assert_eq!(
+            resolved,
+            ["Configured".to_owned(), "Loose Design".to_owned()]
         );
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -263,7 +330,7 @@ mod tests {
             design_scan_dirs: vec![scanned],
             ..Config::default()
         };
-        let found = discover_with_managed(&config, Some(&managed)).unwrap();
+        let found = Sources::new(&config, Some(&managed)).discover().unwrap();
         assert_eq!(
             found
                 .iter()

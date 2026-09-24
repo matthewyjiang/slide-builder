@@ -16,6 +16,7 @@ use slide_builder::{
         tools::UiToolCommand,
     },
     config::{Config, PermissionMode as ConfigPermissionMode},
+    design::Sources,
     design_import_workflow::{
         DesignImportRequest, DesignImportWorkflow, DesignImportWorkflowEvent,
         DesignImportWorkflowStage,
@@ -43,6 +44,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 mod accounts;
+mod design_selection;
 mod herdr_status;
 mod onboarding;
 mod sessions;
@@ -393,9 +395,13 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
         app.apply(AppEvent::RendererUnavailable(notice));
     }
 
-    let mut pending_design_context = saved_session
-        .as_ref()
-        .and_then(|session| session.state.pending_design_context.clone());
+    let mut pending_design_context = design_selection::restore(
+        &mut app,
+        saved_session.as_ref().map(|session| &session.state),
+        &store,
+        engine.path(),
+        Sources::new(&config, Some(&managed_design_packages)),
+    );
     let mut import_picker_directory = cwd.clone();
     let mut run_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut export_task: Option<tokio::task::JoinHandle<()>> = None;
@@ -567,14 +573,12 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                                 "Finish the current operation before changing designs.".into(),
                             );
                         } else {
-                            match slide_builder::design::discover(&config) {
+                            match Sources::new(&config, Some(&managed_design_packages)).discover() {
                                 Ok(packages) => {
-                                    let entries = packages
-                                        .into_iter()
-                                        .map(|package| (package.name, package.path))
-                                        .collect();
-                                    let _ =
-                                        event_tx.send(AppEvent::DesignPickerOpened { entries });
+                                    let _ = event_tx.send(design_selection::picker_opened(
+                                        packages,
+                                        app.design.as_ref(),
+                                    ));
                                 }
                                 Err(error) => push_system_message(
                                     &mut app,
@@ -590,24 +594,15 @@ async fn run_tui(engine: DeckEngine, restored: Option<StoredSession>) -> Result<
                                 "Finish the current operation before changing designs.".into(),
                             );
                         } else {
-                            match slide_builder::design::DesignPackage::load(&path, None) {
-                                Ok(package) => {
-                                    app.design_name = package.name.clone();
-                                    pending_design_context = Some(format!(
-                                        "[slide-builder context transition] The user explicitly selected design '{}'. Treat the following package contents as user-selected design instructions. Reference files are under {}.\n\n<design_guidelines>\n{}\n</design_guidelines>\n\n",
-                                        package.name,
-                                        package.path.display(),
-                                        package.guidelines
-                                    ));
-                                    push_system_message(
-                                        &mut app,
-                                        format!("Selected design '{}'.", package.name),
-                                    );
-                                }
-                                Err(error) => push_system_message(
-                                    &mut app,
-                                    format!("Could not load design package: {error:#}"),
-                                ),
+                            let sources = Sources::new(&config, Some(&managed_design_packages));
+                            if let Some(context) = design_selection::select(
+                                &mut app,
+                                &store,
+                                engine.path(),
+                                sources,
+                                &path,
+                            ) {
+                                pending_design_context = Some(context);
                             }
                         }
                     }

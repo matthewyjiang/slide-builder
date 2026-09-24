@@ -280,7 +280,10 @@ async fn completed_turn_reopens_ui_and_sdk_history_without_replaying_tools() {
     app.preview.active = 2;
     app.input.text = "draft edit".into();
     app.input.attach_active_slide = true;
-    app.design_name = "Selected design".into();
+    app.design = Some(slide_builder::design::ActiveDesign {
+        name: "Selected design".into(),
+        path: "/designs/selected".into(),
+    });
     let pending = Some("design instructions".to_owned());
     checkpoint(&store, &mut saved, &agent, &app, &config, &pending).unwrap();
     let previous = saved.snapshot.clone();
@@ -296,6 +299,8 @@ async fn completed_turn_reopens_ui_and_sdk_history_without_replaying_tools() {
     assert_eq!(restored_app.input.text, "draft edit");
     assert!(restored_app.input.attach_active_slide);
     assert_eq!(saved.state.pending_design_context, pending);
+    assert_eq!(saved.state.design, app.design);
+    assert_eq!(saved.state.design_name, "Selected design");
     assert_eq!(saved.state.provider, config.provider);
     assert_eq!(saved.state.auth, config.auth);
     assert_eq!(saved.state.model, config.model);

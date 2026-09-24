@@ -200,7 +200,8 @@ pub fn initial_state(deck: &Path, cwd: &Path, config: &Config) -> SessionState {
         auth: config.auth.clone(),
         model: config.model.clone(),
         active_slide: 0,
-        design_name: "Default".into(),
+        design_name: slide_builder::design::display_name(None).into(),
+        design: None,
         pending_design_context: None,
         transcript: Vec::new(),
         draft: String::new(),
@@ -212,7 +213,6 @@ pub fn restore_app(app: &mut App, state: &SessionState, slide_count: usize) {
     app.transcript = state.transcript.clone();
     settle_transcript(&mut app.transcript);
     app.preview.active = state.active_slide.min(slide_count.saturating_sub(1));
-    app.design_name = state.design_name.clone();
     app.input.text = state.draft.clone();
     app.input.cursor = app.input.text.len();
     app.input.attach_active_slide = state.attach_active_slide;
@@ -248,7 +248,8 @@ pub fn checkpoint(
     session.state.auth = config.auth.clone();
     session.state.model = config.model.clone();
     session.state.active_slide = app.preview.active;
-    session.state.design_name = app.design_name.clone();
+    session.state.design_name = slide_builder::design::display_name(app.design.as_ref()).into();
+    session.state.design = app.design.clone();
     session.state.pending_design_context = pending_design_context.clone();
     session.state.transcript = app.transcript.clone();
     settle_transcript(&mut session.state.transcript);

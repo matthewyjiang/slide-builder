@@ -84,8 +84,27 @@ fn design_changes_are_blocked_during_active_runs() {
 
     app.apply(AppEvent::DesignPickerOpened {
         entries: vec![("Acme".into(), PathBuf::from("/designs/acme"))],
+        current: None,
     });
     assert_eq!(app.modal, ModalState::None);
+}
+
+#[test]
+fn design_picker_reopens_on_the_current_design() {
+    let studio = PathBuf::from("/designs/studio");
+    let mut app = App::default();
+    app.apply(AppEvent::DesignPickerOpened {
+        entries: vec![
+            ("Acme".into(), PathBuf::from("/designs/acme")),
+            ("Studio".into(), studio.clone()),
+        ],
+        current: Some(1),
+    });
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter)),
+        vec![AppAction::SelectDesign(studio)]
+    );
 }
 
 #[test]
@@ -94,6 +113,7 @@ fn design_picker_selects_a_package() {
     let mut app = App::default();
     app.apply(AppEvent::DesignPickerOpened {
         entries: vec![("Acme".into(), path.clone())],
+        current: None,
     });
 
     assert_eq!(
