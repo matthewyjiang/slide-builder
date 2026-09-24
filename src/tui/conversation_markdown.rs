@@ -188,16 +188,16 @@ impl MessageCache {
             if entry.message.role == message.role
                 && !entry.message.complete
                 && message.text.starts_with(&entry.message.text)
-                && entry.stream.is_some()
             {
-                entry.media = MediaLayout::default();
-                let stream = entry.stream.as_mut().expect("stream checked above");
-                let appended = &message.text[entry.message.text.len()..];
-                stream.safe.push_str(&safe_message_text(appended));
-                stream.update(Rc::make_mut(&mut entry.rendered), message, self.width);
-                entry.message.text.push_str(appended);
-                entry.message.complete = message.complete;
-                return Rc::clone(&entry.rendered);
+                if let Some(stream) = entry.stream.as_mut() {
+                    entry.media = MediaLayout::default();
+                    let appended = &message.text[entry.message.text.len()..];
+                    stream.safe.push_str(&safe_message_text(appended));
+                    stream.update(Rc::make_mut(&mut entry.rendered), message, self.width);
+                    entry.message.text.push_str(appended);
+                    entry.message.complete = message.complete;
+                    return Rc::clone(&entry.rendered);
+                }
             }
         }
         let (rendered, stream) = if message.role == Role::Assistant && !message.complete {

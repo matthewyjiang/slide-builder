@@ -5,9 +5,7 @@ impl App {
     pub(super) fn apply_agent_event(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::CompactionStarted => {
-                if let Some(TranscriptItem::Message(message)) = self.transcript.last_mut() {
-                    message.complete = true;
-                }
+                self.finish_message();
                 self.transcript.push(TranscriptItem::Message(Message {
                     role: Role::System,
                     text: "Compacting older conversation to make room. Your transcript stays here."
@@ -37,17 +35,15 @@ impl App {
                     complete: false,
                 })),
             },
-            AgentEvent::MessageFinished => {
-                if let Some(TranscriptItem::Message(message)) = self.transcript.last_mut() {
-                    message.complete = true;
-                }
-            }
+            AgentEvent::MessageFinished => self.finish_message(),
             AgentEvent::ToolProposed {
                 id,
                 name,
                 summary,
                 arguments,
             } => {
+                // Tool activity ends the preceding text segment, not the whole run.
+                self.finish_message();
                 self.tool_activity.run_active = self.run_active;
                 let index = self.transcript.len();
                 self.tool_cards.insert(id.clone(), index);
@@ -69,13 +65,13 @@ impl App {
                 Err(detail) => self.update_tool(&id, ToolStatus::Failed, Some(detail)),
             },
             AgentEvent::RunFinished => {
-                self.finish_tool_activity("Run ended before this operation completed");
+                self.finish_run("Run ended before this operation completed");
             }
             AgentEvent::RunCancelled => {
-                self.finish_tool_activity("Run cancelled before this operation completed");
+                self.finish_run("Run cancelled before this operation completed");
             }
             AgentEvent::RunFailed(error) => {
-                self.finish_tool_activity(&error);
+                self.finish_run(&error);
                 self.transcript.push(TranscriptItem::Message(Message {
                     role: Role::System,
                     text: error,
@@ -86,7 +82,19 @@ impl App {
         self.tool_activity.normalize_focus(&self.transcript);
     }
 
-    fn finish_tool_activity(&mut self, reason: &str) {
+    fn finish_message(&mut self) {
+        if let Some(TranscriptItem::Message(Message {
+            role: Role::Assistant,
+            complete,
+            ..
+        })) = self.transcript.last_mut()
+        {
+            *complete = true;
+        }
+    }
+
+    fn finish_run(&mut self, reason: &str) {
+        self.finish_message();
         self.run_active = false;
         for item in &mut self.transcript {
             if let TranscriptItem::Tool(card) = item {
@@ -111,3 +119,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "app_agent_events_tests.rs"]
+mod tests;
